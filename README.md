@@ -2,7 +2,7 @@
 
 TaskFlow Connect is an ASP.NET Core Web API backend for a university group project. It supports workspaces, channels, messages, projects, tasks, notifications, SignalR hubs, and a Semantic Kernel AI service layer.
 
-Repository: https://github.com/WalterCQ/SWE310-TaskFlow-Connect
+Repository: https://github.com/WalterCQ/SWE310-FinalProject
 
 ## Scope
 
