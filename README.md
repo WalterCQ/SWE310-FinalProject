@@ -10,22 +10,6 @@ Repository: https://github.com/WalterCQ/SWE310-TaskFlow-Connect
 - Not implemented: `AuthController`, register/login API, JWT issuing, password hashing, and user registration flow.
 - Auth integration is prepared through `CurrentUserService`, `PermissionService`, JWT Bearer configuration, and TODO comments where `[Authorize]` should be enabled.
 
-## Collaboration
-
-The repository owner can invite teammates from GitHub:
-
-1. Open the repository page.
-2. Go to `Settings` -> `Collaborators and teams`.
-3. Click `Add people`, enter each teammate's GitHub username or email, and send the invitation.
-
-After accepting the invitation, teammates can clone and work on branches:
-
-```bash
-git clone https://github.com/WalterCQ/SWE310-TaskFlow-Connect.git
-cd SWE310-TaskFlow-Connect
-git checkout -b feature/your-task-name
-```
-
 ## Run Locally
 
 ```bash
