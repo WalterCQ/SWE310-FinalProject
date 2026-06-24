@@ -25,11 +25,13 @@ Development mode uses a temporary fallback user from `appsettings.Development.js
 
 Swagger UI:
 
+- Hosted Azure App Service: https://taskflow-connect-06221341-feb9.azurewebsites.net/swagger/index.html
 - Local `dotnet run`: http://localhost:5134/swagger
 - Docker Compose: http://localhost:5080/swagger
 
 OpenAPI JSON:
 
+- Hosted Azure App Service: https://taskflow-connect-06221341-feb9.azurewebsites.net/swagger/v1/swagger.json
 - Local `dotnet run`: http://localhost:5134/swagger/v1/swagger.json
 - Docker Compose: http://localhost:5080/swagger/v1/swagger.json
 
