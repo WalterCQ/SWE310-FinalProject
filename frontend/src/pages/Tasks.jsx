@@ -1,29 +1,116 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import StatusBadge from "../components/StatusBadge.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
-import { tasks as initialTasks } from "../data/mockData.js";
+import {
+  formatApiError,
+  projects as projectsApi,
+  tasks as tasksApi,
+  workspaces as workspacesApi,
+} from "../api/taskflowApi.js";
+import { asArray, mapProject, mapTask } from "../api/mappers.js";
 
 const blankForm = {
   title: "",
   description: "",
-  status: "To Do",
-  priority: "Medium",
+  priority: "1",
   dueDate: "",
-  assignee: "",
 };
 
+const statusColumns = ["To Do", "In Progress", "Blocked", "Done"];
+const priorityOptions = [
+  { value: "0", label: "Low" },
+  { value: "1", label: "Medium" },
+  { value: "2", label: "High" },
+];
+
+function toDeadlineUtc(dateValue) {
+  if (!dateValue) return null;
+  return new Date(`${dateValue}T00:00:00.000Z`).toISOString();
+}
+
 export default function Tasks() {
-  const [tasks, setTasks] = useState(initialTasks);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [tasks, setTasks] = useState([]);
   const [form, setForm] = useState(blankForm);
   const [errors, setErrors] = useState({});
+  const [loadingProjects, setLoadingProjects] = useState(true);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [apiError, setApiError] = useState("");
+
+  const projectLookup = useMemo(() => {
+    return Object.fromEntries(projects.map((project) => [project.id, project]));
+  }, [projects]);
 
   const groupedTasks = useMemo(() => {
-    return ["To Do", "In Progress", "Done"].map((status) => ({
+    return statusColumns.map((status) => ({
       status,
       items: tasks.filter((task) => task.status === status),
     }));
   }, [tasks]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadProjects() {
+      setLoadingProjects(true);
+      setApiError("");
+
+      try {
+        const workspaceItems = asArray(await workspacesApi.list());
+        const projectGroups = await Promise.all(
+          workspaceItems.map((workspace) => projectsApi.listByWorkspace(workspace.id))
+        );
+        const mappedProjects = projectGroups.flatMap((group) => asArray(group).map(mapProject));
+
+        if (active) {
+          setProjects(mappedProjects);
+          setSelectedProjectId(mappedProjects[0]?.id || "");
+        }
+      } catch (error) {
+        if (active) setApiError(formatApiError(error));
+      } finally {
+        if (active) setLoadingProjects(false);
+      }
+    }
+
+    loadProjects();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTasks() {
+      if (!selectedProjectId) {
+        setTasks([]);
+        return;
+      }
+
+      setLoadingTasks(true);
+      setApiError("");
+
+      try {
+        const data = await tasksApi.listByProject(selectedProjectId);
+        if (active) setTasks(asArray(data).map((task) => mapTask(task, projectLookup)));
+      } catch (error) {
+        if (active) setApiError(formatApiError(error));
+      } finally {
+        if (active) setLoadingTasks(false);
+      }
+    }
+
+    loadTasks();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedProjectId, projectLookup]);
 
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -32,27 +119,41 @@ export default function Tasks() {
 
   function validate() {
     const nextErrors = {};
+    if (!selectedProjectId) nextErrors.project = "Please select a project.";
     if (!form.title.trim()) nextErrors.title = "Please enter a task title.";
     if (!form.description.trim()) nextErrors.description = "Please enter a task description.";
-    if (!form.status) nextErrors.status = "Please select a task status.";
     if (!form.priority) nextErrors.priority = "Please select a task priority.";
     if (!form.dueDate) nextErrors.dueDate = "Please select a due date.";
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
 
-  function addTask(event) {
+  async function loadProjectTasks(projectId) {
+    const data = await tasksApi.listByProject(projectId);
+    setTasks(asArray(data).map((task) => mapTask(task, projectLookup)));
+  }
+
+  async function addTask(event) {
     event.preventDefault();
     if (!validate()) return;
 
-    const newTask = {
-      id: Date.now(),
-      ...form,
-      project: "TaskFlow Connect",
-    };
+    setSaving(true);
+    setApiError("");
 
-    setTasks([newTask, ...tasks]);
-    setForm(blankForm);
+    try {
+      await tasksApi.create(selectedProjectId, {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        priority: Number(form.priority),
+        deadlineUtc: toDeadlineUtc(form.dueDate),
+      });
+      setForm(blankForm);
+      await loadProjectTasks(selectedProjectId);
+    } catch (error) {
+      setApiError(formatApiError(error));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -64,14 +165,34 @@ export default function Tasks() {
         </div>
       </div>
 
+      {apiError && <section className="panel"><strong>Task API error.</strong><p>{apiError}</p></section>}
+
       <section className="task-layout">
         <article className="panel form-panel">
           <div className="panel-header">
             <h3>Create task</h3>
-            <span>Try submitting empty fields during the demo</span>
+            <span>Tasks are created in the selected Azure project</span>
           </div>
 
           <form className="task-form" onSubmit={addTask} noValidate>
+            <label>
+              Project
+              <select
+                value={selectedProjectId}
+                onChange={(event) => {
+                  setSelectedProjectId(event.target.value);
+                  setErrors({ ...errors, project: "" });
+                }}
+                disabled={loadingProjects || projects.length === 0}
+              >
+                {projects.length === 0 && <option value="">No projects available</option>}
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+              <ErrorMessage>{errors.project}</ErrorMessage>
+            </label>
+
             <label>
               Task title
               <input name="title" value={form.title} onChange={updateField} placeholder="Example: Record dashboard walkthrough" />
@@ -86,52 +207,42 @@ export default function Tasks() {
 
             <div className="form-grid-2">
               <label>
-                Status
-                <select name="status" value={form.status} onChange={updateField}>
-                  <option>To Do</option>
-                  <option>In Progress</option>
-                  <option>Done</option>
-                </select>
-                <ErrorMessage>{errors.status}</ErrorMessage>
-              </label>
-
-              <label>
                 Priority
                 <select name="priority" value={form.priority} onChange={updateField}>
-                  <option>Low</option>
-                  <option>Medium</option>
-                  <option>High</option>
+                  {priorityOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
                 <ErrorMessage>{errors.priority}</ErrorMessage>
               </label>
-            </div>
 
-            <div className="form-grid-2">
               <label>
                 Due date
                 <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
                 <ErrorMessage>{errors.dueDate}</ErrorMessage>
               </label>
-
-              <label>
-                Assignee
-                <input name="assignee" value={form.assignee} onChange={updateField} placeholder="Optional" />
-              </label>
             </div>
 
-            <button className="primary-button" type="submit"><Plus size={18} /> Add task</button>
+            <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId}>
+              <Plus size={18} /> {saving ? "Adding..." : "Add task"}
+            </button>
           </form>
         </article>
 
         <section className="kanban-grid">
-          {groupedTasks.map((column) => (
+          {loadingProjects && <article className="panel">Loading projects from Azure...</article>}
+          {!loadingProjects && projects.length === 0 && <article className="panel">No projects found. Create a project before adding tasks.</article>}
+
+          {!loadingProjects && projects.length > 0 && groupedTasks.map((column) => (
             <article className="panel kanban-column" key={column.status}>
               <div className="panel-header">
                 <h3>{column.status}</h3>
                 <span>{column.items.length}</span>
               </div>
               <div className="kanban-list">
-                {column.items.map((task) => (
+                {loadingTasks && column.status === "To Do" && <p>Loading tasks...</p>}
+                {!loadingTasks && column.items.length === 0 && <p>No tasks.</p>}
+                {!loadingTasks && column.items.map((task) => (
                   <div className="task-card" key={task.id}>
                     <div className="task-card-top">
                       <h4>{task.title}</h4>

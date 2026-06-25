@@ -1,0 +1,114 @@
+import axiosClient from "./axiosClient.js";
+
+export function normalizeApiError(error) {
+  const responsePayload = error?.response?.data;
+  const payload = responsePayload && typeof responsePayload === "object" ? responsePayload : error;
+  const message = payload?.message || error?.message || "Request failed.";
+  const normalized = new Error(message);
+
+  normalized.errors = Array.isArray(payload?.errors) && payload.errors.length > 0
+    ? payload.errors
+    : [message];
+  normalized.statusCode = payload?.statusCode || error?.response?.status || 0;
+
+  return normalized;
+}
+
+export function formatApiError(error) {
+  if (!error) return "";
+  if (Array.isArray(error.errors) && error.errors.length > 0) {
+    return error.errors.join(" ");
+  }
+  return error.message || "Request failed.";
+}
+
+function unwrap(response) {
+  const payload = response?.data;
+
+  if (!payload || typeof payload.success === "undefined") {
+    return payload;
+  }
+
+  if (payload.success) {
+    return payload.data;
+  }
+
+  throw normalizeApiError(payload);
+}
+
+async function request(config) {
+  try {
+    const response = await axiosClient.request(config);
+    return unwrap(response);
+  } catch (error) {
+    throw normalizeApiError(error);
+  }
+}
+
+export const workspaces = {
+  list: () => request({ method: "GET", url: "/api/workspaces" }),
+  get: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}` }),
+  create: (payload) => request({ method: "POST", url: "/api/workspaces", data: payload }),
+  update: (workspaceId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}`, data: payload }),
+};
+
+export const dashboard = {
+  workspace: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/dashboard` }),
+  project: (projectId) => request({ method: "GET", url: `/api/projects/${projectId}/dashboard` }),
+};
+
+export const projects = {
+  listByWorkspace: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/projects` }),
+  create: (workspaceId, payload) => request({ method: "POST", url: `/api/workspaces/${workspaceId}/projects`, data: payload }),
+  get: (projectId) => request({ method: "GET", url: `/api/projects/${projectId}` }),
+  update: (projectId, payload) => request({ method: "PUT", url: `/api/projects/${projectId}`, data: payload }),
+  remove: (projectId) => request({ method: "DELETE", url: `/api/projects/${projectId}` }),
+};
+
+export const tasks = {
+  listByProject: (projectId) => request({ method: "GET", url: `/api/projects/${projectId}/tasks` }),
+  create: (projectId, payload) => request({ method: "POST", url: `/api/projects/${projectId}/tasks`, data: payload }),
+  get: (taskId) => request({ method: "GET", url: `/api/tasks/${taskId}` }),
+  update: (taskId, payload) => request({ method: "PUT", url: `/api/tasks/${taskId}`, data: payload }),
+  remove: (taskId) => request({ method: "DELETE", url: `/api/tasks/${taskId}` }),
+  updateStatus: (taskId, status) => request({ method: "PUT", url: `/api/tasks/${taskId}/status`, data: { status } }),
+  assign: (taskId, assigneeId) => request({ method: "PUT", url: `/api/tasks/${taskId}/assign`, data: { assigneeId } }),
+  setDeadline: (taskId, deadlineUtc) => request({ method: "PUT", url: `/api/tasks/${taskId}/deadline`, data: { deadlineUtc } }),
+};
+
+export const channels = {
+  listByWorkspace: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/channels` }),
+  create: (workspaceId, payload) => request({ method: "POST", url: `/api/workspaces/${workspaceId}/channels`, data: payload }),
+  messages: (channelId) => request({ method: "GET", url: `/api/channels/${channelId}/messages` }),
+};
+
+export const messages = {
+  listByChannel: (channelId) => channels.messages(channelId),
+  create: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/messages`, data: payload }),
+  update: (messageId, payload) => request({ method: "PUT", url: `/api/messages/${messageId}`, data: payload }),
+  remove: (messageId) => request({ method: "DELETE", url: `/api/messages/${messageId}` }),
+};
+
+export const notifications = {
+  list: () => request({ method: "GET", url: "/api/notifications" }),
+  markRead: (notificationId) => request({ method: "PUT", url: `/api/notifications/${notificationId}/read` }),
+};
+
+export const ai = {
+  projectSummary: (projectId) => request({ method: "POST", url: "/api/ai/project-summary", data: { projectId } }),
+  riskAnalysis: (projectId) => request({ method: "POST", url: "/api/ai/risk-analysis", data: { projectId } }),
+};
+
+export const getProjectSummary = ai.projectSummary;
+export const getRiskAnalysis = ai.riskAnalysis;
+
+export default {
+  workspaces,
+  dashboard,
+  projects,
+  tasks,
+  channels,
+  messages,
+  notifications,
+  ai,
+};
