@@ -1,4 +1,4 @@
-# TaskFlow Connect - Fake Clean Frontend
+# TaskFlow Connect - Clean Frontend
 
 This is a React/Vite frontend prototype for the SWE310 group project.
 It uses dummy data first, so you can quickly show the dashboard/UI/validation/demo flow.
@@ -13,7 +13,7 @@ npm run dev
 
 Open the localhost link shown in the terminal.
 
-## Fake login
+## login
 
 Use any email/password. Example:
 
