@@ -6,9 +6,8 @@ Repository: https://github.com/WalterCQ/SWE310-FinalProject
 
 ## Scope
 
-- Implemented: backend structure, EF Core models, DbContext, service layer, REST controllers, SignalR hubs, notification reminders, Semantic Kernel plugin/service placeholders, Docker Compose.
-- Not implemented: `AuthController`, register/login API, JWT issuing, password hashing, and user registration flow.
-- Auth integration is prepared through `CurrentUserService`, `PermissionService`, JWT Bearer configuration, and TODO comments where `[Authorize]` should be enabled.
+- Implemented: backend structure, EF Core models, DbContext, service layer, REST controllers, SignalR hubs, notification reminders, Semantic Kernel plugin/service placeholders, Docker Compose, `AuthController` with register/login API, JWT issuing, password hashing, user registration flow, member permission checks via `PermissionService`, `[Authorize]` on all business controllers, and frontend route protection via `ProtectedShell`.
+- Auth integration uses `CurrentUserService`, `PermissionService`, and JWT Bearer configuration. A development-only fallback user is available via `appsettings.Development.json` but is disabled by default.
 
 ## Run Locally
 

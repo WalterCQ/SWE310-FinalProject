@@ -51,7 +51,7 @@ public class CurrentUserService(IHttpContextAccessor httpContextAccessor, IConfi
 
     private bool UseDevelopmentFallback()
     {
-        // TODO: Disable this fallback once the teammate's JWT login flow is connected.
+        // Development-only fallback; disabled by default. JWT login flow is connected.
         return configuration.GetValue("Auth:AllowDevelopmentUserFallback", false);
     }
 }
