@@ -2,7 +2,7 @@ import axios from "axios";
 
 const axiosClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL
-    || (import.meta.env.DEV ? "" : "https://taskflow-connect-06221341-feb9.azurewebsites.net"),
+    || (import.meta.env.DEV ? "http://localhost:5134" : "https://taskflow-connect-06221341-feb9.azurewebsites.net"),
 });
 
 axiosClient.interceptors.request.use((config) => {

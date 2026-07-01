@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Login from "./pages/Login.jsx";
+import Register from "./pages/Register.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Workspaces from "./pages/Workspaces.jsx";
 import Channels from "./pages/Channels.jsx";
@@ -10,12 +11,18 @@ import Notifications from "./pages/Notifications.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Topbar from "./components/Topbar.jsx";
 
-function ProtectedShell({ children }) {
+// Checks if user is logged in. If allowedRoles is provided, also checks role.
+function ProtectedShell({ children, allowedRoles }) {
   const token = localStorage.getItem("token");
+  const userRole = localStorage.getItem("userRole");
   const location = useLocation();
 
   if (!token) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (allowedRoles && !allowedRoles.includes(userRole)) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return (
@@ -33,7 +40,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
       <Route
         path="/dashboard"
         element={
@@ -45,7 +54,7 @@ export default function App() {
       <Route
         path="/workspaces"
         element={
-          <ProtectedShell>
+          <ProtectedShell allowedRoles={["Admin"]}>
             <Workspaces />
           </ProtectedShell>
         }

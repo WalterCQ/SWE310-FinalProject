@@ -1,15 +1,12 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Lock, Mail } from "lucide-react";
+import { Lock, Mail, User } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import axiosClient from "../api/axiosClient.js";
 
-export default function Login() {
+export default function Register() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    email: "",
-    password: "",
-  });
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
 
@@ -20,12 +17,12 @@ export default function Login() {
 
   function validate() {
     const nextErrors = {};
-    if (!form.email.trim())
-      nextErrors.email = "Enter the email used by your team.";
-    if (!form.email.includes("@"))
+    if (!form.name.trim()) nextErrors.name = "Enter your full name.";
+    if (!form.email.trim()) nextErrors.email = "Enter your email address.";
+    if (form.email && !form.email.includes("@"))
       nextErrors.email = "Use an email format, for example john@taskflow.com.";
-    if (!form.password.trim()) nextErrors.password = "Enter your password.";
-    if (form.password.length < 6)
+    if (!form.password.trim()) nextErrors.password = "Enter a password.";
+    if (form.password && form.password.length < 6)
       nextErrors.password = "Password must be at least 6 characters.";
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -37,20 +34,17 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const res = await axiosClient.post("/api/auth/login", {
+      await axiosClient.post("/api/auth/register", {
+        name: form.name,
         email: form.email,
         password: form.password,
       });
 
-      const data = res.data.data;
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("userRole", data.role);
-      localStorage.setItem("userName", data.name);
-      localStorage.setItem("userId", data.userId);
-      navigate("/dashboard");
+      // Registration succeeded — go to login page
+      navigate("/login");
     } catch (err) {
       setErrors({
-        form: err.response?.data?.message || "Invalid email or password.",
+        form: err.response?.data?.message || "Registration failed. Try again.",
       });
     } finally {
       setLoading(false);
@@ -69,41 +63,46 @@ export default function Login() {
         </div>
 
         <div>
-          <span className="hero-kicker">Frontend demo</span>
-          <h2>Know the owner before the deadline.</h2>
+          <span className="hero-kicker">Get started</span>
+          <h2>Join your team workspace.</h2>
           <p>
-            A project management interface for tracking workspaces, tasks,
-            priorities, messages, and the AI project summary required in the
-            final recording.
+            Create an account to manage projects, track tasks, and collaborate
+            with your team in real time.
           </p>
-          <div className="hero-orb">
-            <div className="mini-board">
-              <strong>07</strong>
-              <span>overdue tasks</span>
-            </div>
-            <div className="mini-board">
-              <strong>15</strong>
-              <span>validation checks</span>
-            </div>
-            <div className="mini-board">
-              <strong>04</strong>
-              <span>demo screens</span>
-            </div>
-          </div>
         </div>
       </section>
 
       <section className="login-card">
-        <p className="eyebrow">Welcome back</p>
-        <h2>Sign in to your account</h2>
+        <p className="eyebrow">New account</p>
+        <h2>Create your account</h2>
         <form onSubmit={submit} noValidate>
           <ErrorMessage>{errors.form}</ErrorMessage>
+
+          <label>
+            Full Name
+            <div className="input-shell">
+              <User size={16} />
+              <input
+                name="name"
+                value={form.name}
+                onChange={updateField}
+                placeholder="John Doe"
+              />
+            </div>
+            <ErrorMessage>{errors.name}</ErrorMessage>
+          </label>
 
           <label>
             Email
             <div className="input-shell">
               <Mail size={16} />
-              <input name="email" value={form.email} onChange={updateField} placeholder="john@taskflow.com" />
+              <input
+                name="email"
+                type="email"
+                value={form.email}
+                onChange={updateField}
+                placeholder="john@taskflow.com"
+              />
             </div>
             <ErrorMessage>{errors.email}</ErrorMessage>
           </label>
@@ -117,20 +116,23 @@ export default function Login() {
                 type="password"
                 value={form.password}
                 onChange={updateField}
-                placeholder="••••••"
+                placeholder="At least 6 characters"
               />
             </div>
             <ErrorMessage>{errors.password}</ErrorMessage>
           </label>
 
           <button className="primary-button" type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
+            {loading ? "Creating account..." : "Create account"}
           </button>
         </form>
         <p className="login-note">
-          Don't have an account?{" "}
-          <Link to="/register" style={{ color: "var(--accent)", textDecoration: "underline" }}>
-            Register here
+          Already have an account?{" "}
+          <Link
+            to="/login"
+            style={{ color: "var(--accent)", textDecoration: "underline" }}
+          >
+            Sign in
           </Link>
         </p>
       </section>

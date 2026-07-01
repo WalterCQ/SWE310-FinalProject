@@ -84,23 +84,22 @@ builder.Services.AddCors(options =>
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        // TODO: Connect the teammate's real JWT issuer, audience, and signing key here.
         var signingKey = builder.Configuration["Jwt:SigningKey"];
+        if(string.IsNullOrWhiteSpace(signingKey))
+            signingKey = "superSecretKeyOfAtLeast32CharactersLong!!";
+
         options.RequireHttpsMetadata = builder.Configuration.GetValue("Jwt:RequireHttpsMetadata", false);
 
-        if (!string.IsNullOrWhiteSpace(signingKey))
+        options.TokenValidationParameters = new TokenValidationParameters
         {
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidateLifetime = true,
-                ValidateIssuerSigningKey = true,
-                ValidIssuer = builder.Configuration["Jwt:Issuer"],
-                ValidAudience = builder.Configuration["Jwt:Audience"],
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey))
-            };
-        }
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "TaskFlowConnect",
+            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "TaskFlowConnectClient",
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey))
+        };
     });
 
 builder.Services.AddAuthorization();

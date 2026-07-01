@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using TaskFlow.Api.DTOs.AI;
 using TaskFlow.Api.Helpers;
 using TaskFlow.Api.Services.Interfaces;
@@ -7,7 +8,7 @@ namespace TaskFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/ai")]
-// TODO: Add [Authorize] when the teammate's JWT module is connected.
+[Authorize]
 public class AiController(IAiCommandService aiCommandService) : ControllerBase
 {
     [HttpPost("command")]

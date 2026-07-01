@@ -1,13 +1,15 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using TaskFlow.Api.DTOs.Workspaces;
 using TaskFlow.Api.Helpers;
 using TaskFlow.Api.Services.Interfaces;
+
 
 namespace TaskFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/workspaces")]
-// TODO: Add [Authorize] when the teammate's JWT module is connected.
+[Authorize]
 public class WorkspacesController(IWorkspaceService workspaceService) : ControllerBase
 {
     [HttpGet]
@@ -16,6 +18,7 @@ public class WorkspacesController(IWorkspaceService workspaceService) : Controll
         return this.ToActionResult(await workspaceService.GetWorkspacesAsync());
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<ActionResult> CreateWorkspace(CreateWorkspaceRequest request)
     {

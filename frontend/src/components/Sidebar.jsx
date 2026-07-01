@@ -9,7 +9,6 @@ import {
   MessageSquare,
   SquareCheckBig,
 } from "lucide-react";
-import { currentUser } from "../data/mockData.js";
 
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
@@ -23,9 +22,22 @@ const navItems = [
 
 export default function Sidebar() {
   const navigate = useNavigate();
+  const userName = localStorage.getItem("userName") || "User";
+  const userRole = localStorage.getItem("userRole") || "User";
+
+  // Get initials from name (e.g. "John Doe" → "JD")
+  const initials = userName
+    .split(" ")
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
   function logout() {
     localStorage.removeItem("token");
+    localStorage.removeItem("userRole");
+    localStorage.removeItem("userName");
+    localStorage.removeItem("userId");
     navigate("/login");
   }
 
@@ -43,7 +55,13 @@ export default function Sidebar() {
         {navItems.map((item) => {
           const Icon = item.icon;
           return (
-            <NavLink key={item.path} to={item.path} className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={({ isActive }) =>
+                `nav-item ${isActive ? "active" : ""}`
+              }
+            >
               <Icon size={18} />
               <span>{item.label}</span>
             </NavLink>
@@ -53,10 +71,10 @@ export default function Sidebar() {
 
       <div className="sidebar-footer">
         <div className="profile-card">
-          <div className="avatar">OB</div>
+          <div className="avatar">{initials}</div>
           <div>
-            <strong>{currentUser.name}</strong>
-            <p>{currentUser.role}</p>
+            <strong>{userName}</strong>
+            <p>{userRole}</p>
           </div>
         </div>
         <button onClick={logout} className="logout-btn">
