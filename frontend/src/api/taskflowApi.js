@@ -94,6 +94,10 @@ export const notifications = {
   markRead: (notificationId) => request({ method: "PUT", url: `/api/notifications/${notificationId}/read` }),
 };
 
+export const auth = {
+  me: () => request({ method: "GET", url: "/api/auth/me" }),
+};
+
 export const ai = {
   projectSummary: (projectId) => request({ method: "POST", url: "/api/ai/project-summary", data: { projectId } }),
   riskAnalysis: (projectId) => request({ method: "POST", url: "/api/ai/risk-analysis", data: { projectId } }),
@@ -110,5 +114,6 @@ export default {
   channels,
   messages,
   notifications,
+  auth,
   ai,
 };

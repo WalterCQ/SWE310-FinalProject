@@ -9,6 +9,7 @@ import {
   MessageSquare,
   SquareCheckBig,
 } from "lucide-react";
+import { clearAuthStorage } from "../api/authStorage.js";
 
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
@@ -20,10 +21,11 @@ const navItems = [
   { label: "Notifications", path: "/notifications", icon: Bell },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ user }) {
   const navigate = useNavigate();
-  const userName = localStorage.getItem("userName") || "User";
-  const userRole = localStorage.getItem("userRole") || "User";
+  const userName = user?.name || localStorage.getItem("userName") || "User";
+  const userRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || "User";
+  const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(userRole));
 
   // Get initials from name (e.g. "John Doe" → "JD")
   const initials = userName
@@ -34,10 +36,7 @@ export default function Sidebar() {
     .slice(0, 2);
 
   function logout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userRole");
-    localStorage.removeItem("userName");
-    localStorage.removeItem("userId");
+    clearAuthStorage();
     navigate("/login");
   }
 
@@ -52,7 +51,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="nav-list" aria-label="Main navigation">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const Icon = item.icon;
           return (
             <NavLink

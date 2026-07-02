@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
@@ -10,16 +11,68 @@ import AIAssistant from "./pages/AIAssistant.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Topbar from "./components/Topbar.jsx";
+import { auth } from "./api/taskflowApi.js";
+import { clearAuthStorage, getStoredUser, storeAuthUser } from "./api/authStorage.js";
 
-// Checks if user is logged in. If allowedRoles is provided, also checks role.
 function ProtectedShell({ children, allowedRoles }) {
-  const token = localStorage.getItem("token");
-  const userRole = localStorage.getItem("userRole");
   const location = useLocation();
+  const [authVersion, setAuthVersion] = useState(0);
+  const [session, setSession] = useState({
+    checking: true,
+    user: getStoredUser(),
+  });
+  const token = localStorage.getItem("token");
+
+  useEffect(() => {
+    function handleAuthExpired() {
+      setAuthVersion((version) => version + 1);
+    }
+
+    window.addEventListener("taskflow:auth-expired", handleAuthExpired);
+    return () => window.removeEventListener("taskflow:auth-expired", handleAuthExpired);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function verifySession() {
+      if (!token) {
+        setSession({ checking: false, user: null });
+        return;
+      }
+
+      setSession((current) => ({ ...current, checking: true }));
+
+      try {
+        const user = await auth.me();
+        storeAuthUser(user);
+        if (active) setSession({ checking: false, user });
+      } catch {
+        clearAuthStorage();
+        if (active) setSession({ checking: false, user: null });
+      }
+    }
+
+    verifySession();
+
+    return () => {
+      active = false;
+    };
+  }, [token, location.pathname, authVersion]);
 
   if (!token) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
+
+  if (session.checking) {
+    return <main className="login-page"><section className="login-card">Checking session...</section></main>;
+  }
+
+  if (!session.user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  const userRole = session.user.globalRole || session.user.role || "User";
 
   if (allowedRoles && !allowedRoles.includes(userRole)) {
     return <Navigate to="/dashboard" replace />;
@@ -27,7 +80,7 @@ function ProtectedShell({ children, allowedRoles }) {
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar user={session.user} />
       <main className="main-area">
         <Topbar />
         <section className="page-content">{children}</section>
@@ -54,7 +107,7 @@ export default function App() {
       <Route
         path="/workspaces"
         element={
-          <ProtectedShell allowedRoles={["Admin"]}>
+          <ProtectedShell>
             <Workspaces />
           </ProtectedShell>
         }

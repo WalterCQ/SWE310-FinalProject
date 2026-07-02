@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import axiosClient from "../api/axiosClient.js";
+import { storeAuthUser } from "../api/authStorage.js";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -44,9 +45,7 @@ export default function Login() {
 
       const data = res.data.data;
       localStorage.setItem("token", data.token);
-      localStorage.setItem("userRole", data.role);
-      localStorage.setItem("userName", data.name);
-      localStorage.setItem("userId", data.userId);
+      storeAuthUser(data);
       navigate("/dashboard");
     } catch (err) {
       setErrors({

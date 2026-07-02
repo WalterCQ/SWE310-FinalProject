@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Text;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs.Auth;
 using TaskFlow.Api.Helpers;
@@ -14,7 +14,7 @@ namespace TaskFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/auth")]
-public class AuthController (AppDbContext dbContext, IConfiguration configuration) : ControllerBase
+public class AuthController (AppDbContext dbContext, IConfiguration configuration, IWebHostEnvironment environment) : ControllerBase
 {
     private readonly PasswordHasher<User> _passwordHasher = new();
 
@@ -77,16 +77,44 @@ public class AuthController (AppDbContext dbContext, IConfiguration configuratio
         return Ok(ApiResponse.Ok(response, "Login successful."));
     }
 
+    /// <summary> Return the authenticated user's profile and global role. </summary>
+    [Authorize]
+    [HttpGet("me")]
+    public async Task<ActionResult> Me()
+    {
+        var claimUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+            ?? User.FindFirstValue("userId");
+
+        if (!Guid.TryParse(claimUserId, out var userId))
+        {
+            return Unauthorized(ApiResponse.Fail<object>("Invalid authentication token.", StatusCodes.Status401Unauthorized));
+        }
+
+        var user = await dbContext.Users.AsNoTracking().FirstOrDefaultAsync(item => item.Id == userId);
+        if (user is null)
+        {
+            return Unauthorized(ApiResponse.Fail<object>("Invalid authentication token.", StatusCodes.Status401Unauthorized));
+        }
+
+        var response = new CurrentUserResponse
+        {
+            UserId = userId,
+            Name = user.Name,
+            Email = user.Email,
+            GlobalRole = user.GlobalRole.ToString(),
+            RoleSource = "Database"
+        };
+
+        return Ok(ApiResponse.Ok(response));
+    }
+
     private string GenerateJwtToken(User user)
     {
-        var signingKey = configuration["Jwt:SigningKey"] 
-            ?? "superSecretKeyOfAtLeast32Characters";
-        
-        var key = Encoding.UTF8.GetBytes(signingKey);
-        
         var claims = new[]
         {
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Name, user.Name),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Role, user.GlobalRole.ToString()),
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
@@ -100,7 +128,7 @@ public class AuthController (AppDbContext dbContext, IConfiguration configuratio
             Issuer = configuration["Jwt:Issuer"] ?? "TaskFlowConnect",
             Audience = configuration["Jwt:Audience"] ?? "TaskFlowConnectClient",
             SigningCredentials = new SigningCredentials(
-                new SymmetricSecurityKey(key),
+                new SymmetricSecurityKey(JwtConfiguration.GetSigningKeyBytes(configuration, environment)),
                 SecurityAlgorithms.HmacSha256Signature)
         };
 
