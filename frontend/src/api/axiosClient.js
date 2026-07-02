@@ -1,4 +1,5 @@
 import axios from "axios";
+import { clearAuthStorage } from "./authStorage.js";
 
 const axiosClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL
@@ -14,5 +15,17 @@ axiosClient.interceptors.request.use((config) => {
 
   return config;
 });
+
+axiosClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      clearAuthStorage();
+      window.dispatchEvent(new Event("taskflow:auth-expired"));
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 export default axiosClient;

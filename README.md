@@ -12,13 +12,15 @@ Repository: https://github.com/WalterCQ/SWE310-FinalProject
 ## Run Locally
 
 ```bash
-cd /Users/walter/Code/SWE310/Final_Project/backend/TaskFlow.Api
+cd backend/TaskFlow.Api
 dotnet restore
 dotnet build
-dotnet run
+cp appsettings.Development.example.json appsettings.Development.json
+ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
+dotnet run --launch-profile http
 ```
 
-Development mode uses a temporary fallback user from `appsettings.Development.json` so the backend can be tested before the real JWT module is connected.
+Development mode uses SQL Server LocalDB through your local `appsettings.Development.json`, plus a temporary fallback user so the backend can be tested before the real JWT module is connected. The local file is git-ignored; start from `appsettings.Development.example.json` unless you need custom settings.
 
 ## API Documentation
 
@@ -37,10 +39,12 @@ OpenAPI JSON:
 ## Database
 
 The backend uses SQL Server through `ConnectionStrings:DefaultConnection`.
+For local `dotnet run` on Windows, `appsettings.Development.json` points to `(localdb)\MSSQLLocalDB`.
+Docker Compose overrides the connection string and points the backend container at the `sqlserver` service.
 
 ```bash
 dotnet ef migrations add InitialCreate
-dotnet ef database update
+ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
 ```
 
 If `dotnet ef` is not installed:
