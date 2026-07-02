@@ -1,6 +1,13 @@
 import axiosClient from "./axiosClient.js";
 
 export function normalizeApiError(error) {
+  if (error?.request && !error?.response) {
+    const normalized = new Error("Cannot reach the API server. Make sure the backend is running and try again.");
+    normalized.errors = [normalized.message];
+    normalized.statusCode = 0;
+    return normalized;
+  }
+
   const responsePayload = error?.response?.data;
   const payload = responsePayload && typeof responsePayload === "object" ? responsePayload : error;
   const message = payload?.message || error?.message || "Request failed.";
@@ -95,6 +102,7 @@ export const notifications = {
 };
 
 export const auth = {
+  register: (payload) => request({ method: "POST", url: "/api/auth/register", data: payload }),
   me: () => request({ method: "GET", url: "/api/auth/me" }),
 };
 

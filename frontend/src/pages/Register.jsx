@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Lock, Mail, User } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
-import axiosClient from "../api/axiosClient.js";
+import { auth, formatApiError } from "../api/taskflowApi.js";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -34,7 +34,7 @@ export default function Register() {
 
     setLoading(true);
     try {
-      await axiosClient.post("/api/auth/register", {
+      await auth.register({
         name: form.name,
         email: form.email,
         password: form.password,
@@ -44,7 +44,7 @@ export default function Register() {
       navigate("/login");
     } catch (err) {
       setErrors({
-        form: err.response?.data?.message || "Registration failed. Try again.",
+        form: formatApiError(err) || "Registration failed. Try again.",
       });
     } finally {
       setLoading(false);
