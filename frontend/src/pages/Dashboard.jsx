@@ -60,7 +60,7 @@ function buildStats(summary, statusData) {
 function countPriorities(tasks) {
   return ["High", "Medium", "Low"].map((priority) => ({
     priority,
-    count: tasks.filter((task) => task.priority === priority).length,
+    count: tasks.filter((task) => task.priorityLabel === priority).length,
   }));
 }
 
@@ -151,7 +151,7 @@ export default function Dashboard() {
             <strong>{state.workspaceName || "None"}</strong>
           </div>
           <div className="demo-route" aria-label="Demo route">
-            <span>01 Login with demo token</span>
+            <span>01 Demo login with JWT</span>
             <span>02 Load Azure dashboard</span>
             <span>03 Create task through API</span>
             <span>04 Show AI summary</span>
@@ -248,7 +248,7 @@ export default function Dashboard() {
                   <div className="project-row" key={project.id}>
                     <div>
                       <h4>{project.name}</h4>
-                      <p>{project.status}</p>
+                      <p>{project.statusLabel}</p>
                     </div>
                     <div className="progress-shell"><span style={{ width: `${project.progress}%` }} /></div>
                     <strong>{project.progress}%</strong>
@@ -270,8 +270,8 @@ export default function Dashboard() {
                       <h4>{task.title}</h4>
                       <p>{task.project}</p>
                     </div>
-                    <StatusBadge>{task.priority}</StatusBadge>
-                    <span>{task.dueDate}</span>
+                    <StatusBadge>{task.priorityLabel}</StatusBadge>
+                    <span>{task.deadlineLabel}</span>
                   </div>
                 ))}
               </div>

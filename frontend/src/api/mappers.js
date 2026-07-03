@@ -134,14 +134,17 @@ export function mapWorkspace(workspace) {
 }
 
 export function mapProject(project) {
+  const status = typeof project.status === "undefined" ? 0 : project.status;
+
   return {
     ...project,
     id: project.id,
     name: project.name || "Untitled project",
-    status: mapProjectStatus(project.status),
+    status,
+    statusLabel: mapProjectStatus(status),
     progress: calculateProjectProgress(project),
     owner: project.ownerName || project.createdByUserName || shortId(project.createdByUserId),
-    dueDate: formatDeadline(project.deadlineUtc),
+    deadlineLabel: formatDeadline(project.deadlineUtc),
     taskCount: project.taskCount ?? 0,
     completedTaskCount: project.completedTaskCount ?? 0,
   };
@@ -150,16 +153,20 @@ export function mapProject(project) {
 export function mapTask(task, projectLookup = {}) {
   const projectId = task.projectId;
   const projectName = projectLookup[projectId]?.name || task.projectName || "Unknown project";
+  const status = typeof task.status === "undefined" ? 0 : task.status;
+  const priority = typeof task.priority === "undefined" ? 1 : task.priority;
 
   return {
     ...task,
     id: task.id,
     title: task.title || "Untitled task",
     description: task.description || "No description provided.",
-    status: mapTaskStatus(task.status),
-    priority: mapPriority(task.priority),
+    status,
+    statusLabel: mapTaskStatus(status),
+    priority,
+    priorityLabel: mapPriority(priority),
     project: projectName,
-    dueDate: formatDeadline(task.deadlineUtc),
+    deadlineLabel: formatDeadline(task.deadlineUtc),
     assignee: task.assigneeName || shortId(task.assigneeId),
   };
 }
@@ -186,12 +193,15 @@ export function mapMessage(message) {
 }
 
 export function mapNotification(notification) {
+  const type = typeof notification.type === "undefined" ? 0 : notification.type;
+
   return {
     ...notification,
     id: notification.id,
     title: notification.title || "Notification",
     message: notification.message || "",
-    type: mapNotificationType(notification.type),
+    type,
+    typeLabel: mapNotificationType(type),
     time: formatDateTime(notification.createdAtUtc),
   };
 }

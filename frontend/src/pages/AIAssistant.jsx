@@ -6,15 +6,19 @@ import {
   projects as projectsApi,
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
-import { asArray, mapProject } from "../api/mappers.js";
+import { asArray, mapProject, selectPrimaryWorkspace } from "../api/mappers.js";
 
 export default function AIAssistant() {
   const [projects, setProjects] = useState([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [summary, setSummary] = useState(null);
   const [riskAnalysis, setRiskAnalysis] = useState(null);
+  const [command, setCommand] = useState("Summarize current workspace priorities for the presentation.");
+  const [commandResult, setCommandResult] = useState(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingAi, setLoadingAi] = useState(false);
+  const [commandLoading, setCommandLoading] = useState(false);
   const [error, setError] = useState("");
 
   const selectedProject = useMemo(() => {
@@ -30,6 +34,7 @@ export default function AIAssistant() {
 
       try {
         const workspaceItems = asArray(await workspacesApi.list());
+        const primaryWorkspace = selectPrimaryWorkspace(workspaceItems);
         const projectGroups = await Promise.all(
           workspaceItems.map((workspace) => projectsApi.listByWorkspace(workspace.id))
         );
@@ -37,6 +42,7 @@ export default function AIAssistant() {
 
         if (active) {
           setProjects(mappedProjects);
+          setSelectedWorkspaceId(primaryWorkspace?.id || workspaceItems[0]?.id || "");
           setSelectedProjectId(mappedProjects[0]?.id || "");
         }
       } catch (apiError) {
@@ -110,6 +116,26 @@ export default function AIAssistant() {
     }
   }
 
+  async function runCommand(event) {
+    event.preventDefault();
+    if (!selectedWorkspaceId || !command.trim()) return;
+
+    setCommandLoading(true);
+    setError("");
+
+    try {
+      const result = await ai.command({
+        workspaceId: selectedWorkspaceId,
+        command: command.trim(),
+      });
+      setCommandResult(result);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setCommandLoading(false);
+    }
+  }
+
   return (
     <div className="page-stack">
       <div className="page-heading">
@@ -144,12 +170,21 @@ export default function AIAssistant() {
               <div className="notification-icon ai-chat-icon">AI</div>
               <div>
                 <strong>TaskFlow AI</strong>
-                <p>Project summary and risk analysis are loaded from the deployed AI endpoints.</p>
+                <p>Project summary, risk analysis, and commands are loaded from the deployed AI endpoints.</p>
               </div>
             </div>
             <div className="message-row user-message">
               <p>Summarize the selected project and list the main risks before the presentation.</p>
             </div>
+            {commandResult && (
+              <div className="message-row assistant">
+                <div className="notification-icon ai-chat-icon">AI</div>
+                <div>
+                  <strong>AI command result</strong>
+                  <p>{commandResult.result || "No command result returned yet."}</p>
+                </div>
+              </div>
+            )}
             {summary?.sources?.length > 0 && (
               <div className="message-row">
                 <div className="activity-index message-index">S</div>
@@ -159,10 +194,16 @@ export default function AIAssistant() {
                 </div>
               </div>
             )}
-            <div className="message-input">
-              <input value={selectedProject ? selectedProject.name : "No project selected"} readOnly />
-              <button onClick={refreshAi} disabled={loadingAi || !selectedProjectId}><Send size={18} /></button>
-            </div>
+            <form className="message-input" onSubmit={runCommand}>
+              <input
+                value={command}
+                onChange={(event) => setCommand(event.target.value)}
+                placeholder={selectedProject ? `Ask about ${selectedProject.name}` : "Ask TaskFlow AI"}
+              />
+              <button type="submit" disabled={commandLoading || !selectedWorkspaceId || !command.trim()}>
+                <Send size={18} />
+              </button>
+            </form>
           </article>
         </section>
       )}

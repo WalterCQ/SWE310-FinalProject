@@ -102,11 +102,13 @@ export const notifications = {
 };
 
 export const auth = {
+  login: (payload) => request({ method: "POST", url: "/api/auth/login", data: payload }),
   register: (payload) => request({ method: "POST", url: "/api/auth/register", data: payload }),
   me: () => request({ method: "GET", url: "/api/auth/me" }),
 };
 
 export const ai = {
+  command: (payload) => request({ method: "POST", url: "/api/ai/command", data: payload }),
   projectSummary: (projectId) => request({ method: "POST", url: "/api/ai/project-summary", data: { projectId } }),
   riskAnalysis: (projectId) => request({ method: "POST", url: "/api/ai/risk-analysis", data: { projectId } }),
 };

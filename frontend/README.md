@@ -1,8 +1,7 @@
-# TaskFlow Connect - Clean Frontend
+# TaskFlow Connect - Frontend UI Prototype
 
 This is a React/Vite frontend prototype for the SWE310 group project.
-It uses dummy data first, so you can quickly show the dashboard/UI/validation/demo flow.
-Later, replace the mock data with calls to your deployed backend Swagger APIs.
+It connects the dashboard, projects, tasks, workspaces, notifications, and AI assistant screens to the deployed backend Swagger APIs.
 
 ## Run it
 
@@ -13,12 +12,9 @@ npm run dev
 
 Open the localhost link shown in the terminal.
 
-## login
+## demo login
 
-Use any email/password. Example:
-
-- Email: john@taskflow.com
-- Password: 123456
+Register a demo account, then sign in with that account to load the protected API data.
 
 ## What is included
 
@@ -34,7 +30,7 @@ Use any email/password. Example:
 - Sidebar and topbar
 - Axios client ready for backend connection
 
-## Backend connection later
+## Backend connection
 
 API base URL is configured in:
 
@@ -44,4 +40,4 @@ Current backend base URL:
 
 `https://taskflow-connect-06221341-feb9.azurewebsites.net`
 
-The frontend is currently using mock/dummy data. When your backend endpoints are confirmed, replace mock data in `src/data/mockData.js` or call APIs through `axiosClient`.
+Older mock data remains in `src/data/mockData.js` only as reference data. The main demo pages call the backend through `axiosClient`.

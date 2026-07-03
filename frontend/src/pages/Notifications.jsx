@@ -92,9 +92,9 @@ export default function Notifications() {
                 <div className="notification-icon"><BellRing size={18} /></div>
                 <div>
                   <h4>{notification.title}</h4>
-                  <p>{notification.message || notification.type}</p>
+                  <p>{notification.message || notification.typeLabel}</p>
                 </div>
-                <span>{notification.time || notification.type}</span>
+                <span>{notification.time || notification.typeLabel}</span>
               </div>
             ))}
           </div>

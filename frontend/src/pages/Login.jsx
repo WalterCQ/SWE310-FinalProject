@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
-import axiosClient from "../api/axiosClient.js";
+import { auth, formatApiError } from "../api/taskflowApi.js";
 import { storeAuthUser } from "../api/authStorage.js";
 
 export default function Login() {
@@ -38,18 +38,17 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const res = await axiosClient.post("/api/auth/login", {
+      const data = await auth.login({
         email: form.email,
         password: form.password,
       });
 
-      const data = res.data.data;
       localStorage.setItem("token", data.token);
       storeAuthUser(data);
       navigate("/dashboard");
     } catch (err) {
       setErrors({
-        form: err.response?.data?.message || "Invalid email or password.",
+        form: formatApiError(err) || "Invalid email or password.",
       });
     } finally {
       setLoading(false);

@@ -48,7 +48,7 @@ export default function Projects() {
     if (!query) return projects;
 
     return projects.filter((project) => {
-      return [project.name, project.owner, project.status]
+      return [project.name, project.owner, project.statusLabel]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(query));
     });
@@ -98,7 +98,7 @@ export default function Projects() {
                 {visibleProjects.map((project) => (
                   <tr key={project.id}>
                     <td>{project.name}</td>
-                    <td><StatusBadge>{project.status}</StatusBadge></td>
+                    <td><StatusBadge>{project.statusLabel}</StatusBadge></td>
                     <td>
                       <div className="progress-cell">
                         <div className="progress-shell"><span style={{ width: `${project.progress}%` }} /></div>
@@ -106,7 +106,7 @@ export default function Projects() {
                       </div>
                     </td>
                     <td>{project.owner}</td>
-                    <td>{project.dueDate}</td>
+                    <td>{project.deadlineLabel}</td>
                   </tr>
                 ))}
               </tbody>

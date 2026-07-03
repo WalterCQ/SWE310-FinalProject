@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import StatusBadge from "../components/StatusBadge.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import {
@@ -13,11 +13,18 @@ import { asArray, mapProject, mapTask } from "../api/mappers.js";
 const blankForm = {
   title: "",
   description: "",
+  status: "0",
   priority: "1",
   dueDate: "",
 };
 
 const statusColumns = ["To Do", "In Progress", "Blocked", "Done"];
+const statusOptions = [
+  { value: "0", label: "To Do" },
+  { value: "1", label: "In Progress" },
+  { value: "2", label: "Blocked" },
+  { value: "3", label: "Done" },
+];
 const priorityOptions = [
   { value: "0", label: "Low" },
   { value: "1", label: "Medium" },
@@ -29,6 +36,18 @@ function toDeadlineUtc(dateValue) {
   return new Date(`${dateValue}T00:00:00.000Z`).toISOString();
 }
 
+function buildTaskUpdatePayload(task, updates = {}) {
+  const priority = typeof updates.priority === "undefined" ? task.priority : updates.priority;
+
+  return {
+    title: task.title,
+    description: task.description || "",
+    priority: Number(priority),
+    assigneeId: task.assigneeId || null,
+    deadlineUtc: task.deadlineUtc || null,
+  };
+}
+
 export default function Tasks() {
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -38,6 +57,7 @@ export default function Tasks() {
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [mutatingTaskId, setMutatingTaskId] = useState("");
   const [apiError, setApiError] = useState("");
 
   const projectLookup = useMemo(() => {
@@ -47,7 +67,7 @@ export default function Tasks() {
   const groupedTasks = useMemo(() => {
     return statusColumns.map((status) => ({
       status,
-      items: tasks.filter((task) => task.status === status),
+      items: tasks.filter((task) => task.statusLabel === status),
     }));
   }, [tasks]);
 
@@ -122,13 +142,14 @@ export default function Tasks() {
     if (!selectedProjectId) nextErrors.project = "Please select a project.";
     if (!form.title.trim()) nextErrors.title = "Please enter a task title.";
     if (!form.description.trim()) nextErrors.description = "Please enter a task description.";
+    if (!form.status) nextErrors.status = "Please select a task status.";
     if (!form.priority) nextErrors.priority = "Please select a task priority.";
     if (!form.dueDate) nextErrors.dueDate = "Please select a due date.";
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
 
-  async function loadProjectTasks(projectId) {
+  async function loadProjectTasks(projectId = selectedProjectId) {
     const data = await tasksApi.listByProject(projectId);
     setTasks(asArray(data).map((task) => mapTask(task, projectLookup)));
   }
@@ -141,18 +162,66 @@ export default function Tasks() {
     setApiError("");
 
     try {
-      await tasksApi.create(selectedProjectId, {
+      const createdTask = await tasksApi.create(selectedProjectId, {
         title: form.title.trim(),
         description: form.description.trim(),
         priority: Number(form.priority),
+        assigneeId: null,
         deadlineUtc: toDeadlineUtc(form.dueDate),
       });
+
+      if (createdTask?.id && form.status !== "0") {
+        await tasksApi.updateStatus(createdTask.id, Number(form.status));
+      }
+
       setForm(blankForm);
-      await loadProjectTasks(selectedProjectId);
+      await loadProjectTasks();
     } catch (error) {
       setApiError(formatApiError(error));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function updateTaskStatus(task, status) {
+    setMutatingTaskId(task.id);
+    setApiError("");
+
+    try {
+      await tasksApi.updateStatus(task.id, Number(status));
+      await loadProjectTasks();
+    } catch (error) {
+      setApiError(formatApiError(error));
+    } finally {
+      setMutatingTaskId("");
+    }
+  }
+
+  async function updateTaskPriority(task, priority) {
+    setMutatingTaskId(task.id);
+    setApiError("");
+
+    try {
+      await tasksApi.update(task.id, buildTaskUpdatePayload(task, { priority }));
+      await loadProjectTasks();
+    } catch (error) {
+      setApiError(formatApiError(error));
+    } finally {
+      setMutatingTaskId("");
+    }
+  }
+
+  async function deleteTask(task) {
+    setMutatingTaskId(task.id);
+    setApiError("");
+
+    try {
+      await tasksApi.remove(task.id);
+      await loadProjectTasks();
+    } catch (error) {
+      setApiError(formatApiError(error));
+    } finally {
+      setMutatingTaskId("");
     }
   }
 
@@ -207,6 +276,16 @@ export default function Tasks() {
 
             <div className="form-grid-2">
               <label>
+                Status
+                <select name="status" value={form.status} onChange={updateField}>
+                  {statusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <ErrorMessage>{errors.status}</ErrorMessage>
+              </label>
+
+              <label>
                 Priority
                 <select name="priority" value={form.priority} onChange={updateField}>
                   {priorityOptions.map((option) => (
@@ -246,12 +325,46 @@ export default function Tasks() {
                   <div className="task-card" key={task.id}>
                     <div className="task-card-top">
                       <h4>{task.title}</h4>
-                      <StatusBadge>{task.priority}</StatusBadge>
+                      <StatusBadge>{task.priorityLabel}</StatusBadge>
                     </div>
                     <p>{task.description}</p>
                     <div className="task-meta">
                       <span>{task.project}</span>
-                      <span>{task.dueDate}</span>
+                      <span>{task.deadlineLabel}</span>
+                    </div>
+                    <div className="task-actions">
+                      <label>
+                        <span>Status</span>
+                        <select
+                          value={String(task.status)}
+                          onChange={(event) => updateTaskStatus(task, event.target.value)}
+                          disabled={mutatingTaskId === task.id}
+                        >
+                          {statusOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Priority</span>
+                        <select
+                          value={String(task.priority)}
+                          onChange={(event) => updateTaskPriority(task, event.target.value)}
+                          disabled={mutatingTaskId === task.id}
+                        >
+                          {priorityOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        className="danger-button"
+                        type="button"
+                        onClick={() => deleteTask(task)}
+                        disabled={mutatingTaskId === task.id}
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
                     </div>
                   </div>
                 ))}
