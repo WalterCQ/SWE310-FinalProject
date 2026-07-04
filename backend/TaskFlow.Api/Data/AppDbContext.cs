@@ -248,7 +248,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasOne(chunk => chunk.Attachment)
                 .WithMany(attachment => attachment.KnowledgeChunks)
                 .HasForeignKey(chunk => chunk.AttachmentId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<AgentJob>(entity =>

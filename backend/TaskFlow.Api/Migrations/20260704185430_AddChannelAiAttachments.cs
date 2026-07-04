@@ -70,7 +70,7 @@ namespace TaskFlow.Api.Migrations
                         column: x => x.AttachmentId,
                         principalTable: "ChannelAttachments",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_ChannelKnowledgeChunks_Channels_ChannelId",
                         column: x => x.ChannelId,

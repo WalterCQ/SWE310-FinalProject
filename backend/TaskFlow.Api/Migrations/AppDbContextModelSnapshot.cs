@@ -1107,7 +1107,7 @@ namespace TaskFlow.Api.Migrations
                     b.HasOne("TaskFlow.Api.Models.ChannelAttachment", "Attachment")
                         .WithMany("KnowledgeChunks")
                         .HasForeignKey("AttachmentId")
-                        .OnDelete(DeleteBehavior.Cascade);
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("TaskFlow.Api.Models.Channel", "Channel")
                         .WithMany()
