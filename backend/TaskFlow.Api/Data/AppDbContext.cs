@@ -17,6 +17,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<TaskComment> TaskComments => Set<TaskComment>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
+    public DbSet<AiProviderCredential> AiProviderCredentials => Set<AiProviderCredential>();
+    public DbSet<AgentJob> AgentJobs => Set<AgentJob>();
+    public DbSet<AgentStep> AgentSteps => Set<AgentStep>();
+    public DbSet<AgentSubJob> AgentSubJobs => Set<AgentSubJob>();
+    public DbSet<AgentApproval> AgentApprovals => Set<AgentApproval>();
+    public DbSet<AgentArtifact> AgentArtifacts => Set<AgentArtifact>();
+    public DbSet<AgentEvent> AgentEvents => Set<AgentEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -186,6 +193,112 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(log => log.UserId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AiProviderCredential>(entity =>
+        {
+            entity.HasIndex(credential => new { credential.UserId, credential.IsDefault });
+            entity.Property(credential => credential.ProviderName).HasMaxLength(80);
+            entity.Property(credential => credential.BaseUrl).HasMaxLength(500);
+            entity.Property(credential => credential.Model).HasMaxLength(120);
+            entity.Property(credential => credential.EncryptedApiKey).HasMaxLength(4000);
+            entity.HasOne(credential => credential.User)
+                .WithMany()
+                .HasForeignKey(credential => credential.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentJob>(entity =>
+        {
+            entity.HasIndex(job => new { job.Status, job.LockedAtUtc });
+            entity.Property(job => job.Goal).HasMaxLength(4000);
+            entity.Property(job => job.Status).HasConversion<string>().HasMaxLength(40);
+            entity.Property(job => job.CurrentSubAgent).HasMaxLength(120);
+            entity.Property(job => job.ErrorMessage).HasMaxLength(2000);
+            entity.Property(job => job.LockedBy).HasMaxLength(120);
+            entity.HasOne(job => job.Workspace)
+                .WithMany()
+                .HasForeignKey(job => job.WorkspaceId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(job => job.User)
+                .WithMany()
+                .HasForeignKey(job => job.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(job => job.ProviderCredential)
+                .WithMany()
+                .HasForeignKey(job => job.ProviderCredentialId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AgentStep>(entity =>
+        {
+            entity.HasIndex(step => new { step.AgentJobId, step.Sequence }).IsUnique();
+            entity.Property(step => step.Name).HasMaxLength(160);
+            entity.Property(step => step.SubAgentName).HasMaxLength(120);
+            entity.Property(step => step.Status).HasConversion<string>().HasMaxLength(40);
+            entity.Property(step => step.ErrorMessage).HasMaxLength(2000);
+            entity.HasOne(step => step.AgentJob)
+                .WithMany(job => job.Steps)
+                .HasForeignKey(step => step.AgentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentSubJob>(entity =>
+        {
+            entity.Property(subJob => subJob.SubAgentName).HasMaxLength(120);
+            entity.Property(subJob => subJob.Goal).HasMaxLength(2000);
+            entity.Property(subJob => subJob.Status).HasConversion<string>().HasMaxLength(40);
+            entity.Property(subJob => subJob.ErrorMessage).HasMaxLength(2000);
+            entity.HasOne(subJob => subJob.AgentJob)
+                .WithMany(job => job.SubJobs)
+                .HasForeignKey(subJob => subJob.AgentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentApproval>(entity =>
+        {
+            entity.HasIndex(approval => new { approval.AgentJobId, approval.Status });
+            entity.Property(approval => approval.ApprovalType).HasMaxLength(80);
+            entity.Property(approval => approval.Status).HasConversion<string>().HasMaxLength(40);
+            entity.Property(approval => approval.Title).HasMaxLength(200);
+            entity.Property(approval => approval.ActionName).HasMaxLength(120);
+            entity.Property(approval => approval.TargetEntityType).HasMaxLength(80);
+            entity.Property(approval => approval.DecisionNote).HasMaxLength(1000);
+            entity.HasOne(approval => approval.AgentJob)
+                .WithMany(job => job.Approvals)
+                .HasForeignKey(approval => approval.AgentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(approval => approval.AgentStep)
+                .WithMany()
+                .HasForeignKey(approval => approval.AgentStepId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<AgentArtifact>(entity =>
+        {
+            entity.Property(artifact => artifact.Kind).HasConversion<string>().HasMaxLength(40);
+            entity.Property(artifact => artifact.Name).HasMaxLength(200);
+            entity.Property(artifact => artifact.ContentType).HasMaxLength(120);
+            entity.Property(artifact => artifact.StorageUrl).HasMaxLength(1000);
+            entity.HasOne(artifact => artifact.AgentJob)
+                .WithMany(job => job.Artifacts)
+                .HasForeignKey(artifact => artifact.AgentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(artifact => artifact.AgentStep)
+                .WithMany()
+                .HasForeignKey(artifact => artifact.AgentStepId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<AgentEvent>(entity =>
+        {
+            entity.HasIndex(agentEvent => new { agentEvent.AgentJobId, agentEvent.CreatedAtUtc });
+            entity.Property(agentEvent => agentEvent.EventType).HasConversion<string>().HasMaxLength(40);
+            entity.Property(agentEvent => agentEvent.Message).HasMaxLength(1000);
+            entity.HasOne(agentEvent => agentEvent.AgentJob)
+                .WithMany(job => job.Events)
+                .HasForeignKey(agentEvent => agentEvent.AgentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

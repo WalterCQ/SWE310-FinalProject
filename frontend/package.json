@@ -16,7 +16,8 @@
     "react-router-dom": "latest",
     "axios": "latest",
     "recharts": "latest",
-    "lucide-react": "latest"
+    "lucide-react": "latest",
+    "@microsoft/signalr": "latest"
   },
   "devDependencies": {}
 }

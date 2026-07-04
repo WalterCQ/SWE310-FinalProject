@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using TaskFlow.Api.Data;
+using TaskFlow.Api.Data.DemoData;
 using TaskFlow.Api.DTOs.Auth;
 using TaskFlow.Api.Helpers;
 using TaskFlow.Api.Models;
@@ -38,9 +39,14 @@ public class AuthController (AppDbContext dbContext, IConfiguration configuratio
         user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
 
         dbContext.Users.Add(user);
+        var demoAccessGranted = await DemoDataAccess.GrantUserDemoDataAccessAsync(dbContext, user.Id);
         await dbContext.SaveChangesAsync();
 
-        return Ok(ApiResponse.NoData("Registration successful. Please log in."));
+        var message = demoAccessGranted
+            ? "Registration successful. Please log in."
+            : "Registration successful. Demo workspace is not available yet; run the Azure demo data seeder before showcasing shared data.";
+
+        return Ok(ApiResponse.NoData(message));
     }
 
     /// <summary> Log in and receive JWT </summary>

@@ -40,4 +40,10 @@ public class AiController(IAiCommandService aiCommandService) : ControllerBase
     {
         return this.ToActionResult(await aiCommandService.GenerateTasksFromMessageAsync(request, cancellationToken));
     }
+
+    [HttpPost("workspace-question")]
+    public async Task<ActionResult> AskWorkspaceKnowledge(AiWorkspaceQuestionRequest request, CancellationToken cancellationToken)
+    {
+        return this.ToActionResult(await aiCommandService.AskWorkspaceKnowledgeAsync(request, cancellationToken));
+    }
 }

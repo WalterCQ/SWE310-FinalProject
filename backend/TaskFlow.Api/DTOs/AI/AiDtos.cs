@@ -34,8 +34,17 @@ public class AiGenerateTasksFromMessageRequest
     public string? MessageContent { get; set; }
 }
 
+public class AiWorkspaceQuestionRequest
+{
+    public Guid WorkspaceId { get; set; }
+
+    [Required, StringLength(1000)]
+    public string Question { get; set; } = string.Empty;
+}
+
 public class AiResponse
 {
     public string Result { get; set; } = string.Empty;
     public bool UsedLlm { get; set; }
+    public IReadOnlyCollection<string> Sources { get; set; } = [];
 }

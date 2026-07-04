@@ -1,6 +1,8 @@
 # Build output
 bin/
 obj/
+frontend/dist/
+frontend/node_modules/
 
 # User-specific IDE files
 .vs/

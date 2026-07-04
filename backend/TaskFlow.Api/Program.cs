@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -61,6 +62,13 @@ builder.Services.AddSwaggerGen(options =>
     options.OperationFilter<ApiDocumentationOperationFilter>();
 });
 builder.Services.AddHttpContextAccessor();
+var dataProtectionBuilder = builder.Services.AddDataProtection()
+    .SetApplicationName("TaskFlow");
+var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+{
+    dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+}
 builder.Services.AddSignalR();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -127,6 +135,8 @@ builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAiCommandService, AiCommandService>();
+builder.Services.AddScoped<IAiProviderService, AiProviderService>();
+builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<CollaborationAiPlugin>();
 builder.Services.AddHostedService<ReminderBackgroundService>();
 

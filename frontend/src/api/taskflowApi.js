@@ -111,6 +111,29 @@ export const ai = {
   command: (payload) => request({ method: "POST", url: "/api/ai/command", data: payload }),
   projectSummary: (projectId) => request({ method: "POST", url: "/api/ai/project-summary", data: { projectId } }),
   riskAnalysis: (projectId) => request({ method: "POST", url: "/api/ai/risk-analysis", data: { projectId } }),
+  providers: () => request({ method: "GET", url: "/api/ai/providers" }),
+  saveProvider: (payload) => request({ method: "POST", url: "/api/ai/providers", data: payload }),
+};
+
+export const agent = {
+  createJob: (payload) => request({ method: "POST", url: "/api/agent/jobs", data: payload }),
+  getJob: (jobId) => request({ method: "GET", url: `/api/agent/jobs/${jobId}` }),
+  events: (jobId, sinceUtc) => request({
+    method: "GET",
+    url: `/api/agent/jobs/${jobId}/events`,
+    params: sinceUtc ? { sinceUtc } : undefined,
+  }),
+  cancel: (jobId) => request({ method: "POST", url: `/api/agent/jobs/${jobId}/cancel` }),
+  approve: (approvalId, note = "") => request({
+    method: "POST",
+    url: `/api/agent/approvals/${approvalId}/approve`,
+    data: { note },
+  }),
+  reject: (approvalId, note = "") => request({
+    method: "POST",
+    url: `/api/agent/approvals/${approvalId}/reject`,
+    data: { note },
+  }),
 };
 
 export const getProjectSummary = ai.projectSummary;
@@ -126,4 +149,5 @@ export default {
   notifications,
   auth,
   ai,
+  agent,
 };

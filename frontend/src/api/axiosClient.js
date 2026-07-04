@@ -1,9 +1,11 @@
 import axios from "axios";
 import { clearAuthStorage } from "./authStorage.js";
 
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+  || "";
+
 const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL
-    || "https://taskflow-connect-06221341-feb9.azurewebsites.net",
+  baseURL: API_BASE_URL,
 });
 
 axiosClient.interceptors.request.use((config) => {

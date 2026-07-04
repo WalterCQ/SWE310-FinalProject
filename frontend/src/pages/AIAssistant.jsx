@@ -1,12 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Send, ClipboardCheck } from "lucide-react";
+import { Bot, Check, ClipboardCheck, FileText, KeyRound, Play, RefreshCw, Send, X } from "lucide-react";
 import {
+  agent,
   ai,
   formatApiError,
   projects as projectsApi,
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
 import { asArray, mapProject, selectPrimaryWorkspace } from "../api/mappers.js";
+
+const jobStatusLabels = ["Planning", "AwaitingApproval", "Running", "NeedsApproval", "Paused", "Completed", "Failed", "Canceled"];
+const approvalStatusLabels = ["Pending", "Approved", "Rejected", "Expired"];
+const eventTypeLabels = [
+  "Created",
+  "StatusChanged",
+  "Planning",
+  "ApprovalRequested",
+  "ApprovalApproved",
+  "ApprovalRejected",
+  "StepStarted",
+  "StepCompleted",
+  "ArtifactCreated",
+  "ActionExecuted",
+  "Error",
+  "Canceled",
+];
+const artifactKindLabels = ["Summary", "CodePatch", "Deck", "Report", "TaskFlowAction", "Other"];
 
 export default function AIAssistant() {
   const [projects, setProjects] = useState([]);
@@ -15,10 +34,25 @@ export default function AIAssistant() {
   const [summary, setSummary] = useState(null);
   const [riskAnalysis, setRiskAnalysis] = useState(null);
   const [command, setCommand] = useState("Summarize current workspace priorities for the presentation.");
+  const [agentGoal, setAgentGoal] = useState("Summarize this workspace, create follow-up tasks and reminders for the demo.");
   const [commandResult, setCommandResult] = useState(null);
+  const [providers, setProviders] = useState([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [providerForm, setProviderForm] = useState({
+    providerName: "OpenAICompatible",
+    baseUrl: "",
+    model: "gpt-4o-mini",
+    apiKey: "",
+    supportsToolCalls: false,
+  });
+  const [currentJob, setCurrentJob] = useState(null);
+  const [jobEvents, setJobEvents] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingAi, setLoadingAi] = useState(false);
   const [commandLoading, setCommandLoading] = useState(false);
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [creatingJob, setCreatingJob] = useState(false);
+  const [decidingApprovalId, setDecidingApprovalId] = useState("");
   const [error, setError] = useState("");
 
   const selectedProject = useMemo(() => {
@@ -39,9 +73,12 @@ export default function AIAssistant() {
           workspaceItems.map((workspace) => projectsApi.listByWorkspace(workspace.id))
         );
         const mappedProjects = projectGroups.flatMap((group) => asArray(group).map(mapProject));
+        const providerItems = asArray(await ai.providers());
 
         if (active) {
           setProjects(mappedProjects);
+          setProviders(providerItems);
+          setSelectedProviderId(providerItems.find((provider) => provider.isDefault)?.id || providerItems[0]?.id || "");
           setSelectedWorkspaceId(primaryWorkspace?.id || workspaceItems[0]?.id || "");
           setSelectedProjectId(mappedProjects[0]?.id || "");
         }
@@ -96,6 +133,18 @@ export default function AIAssistant() {
     };
   }, [selectedProjectId]);
 
+  useEffect(() => {
+    if (!currentJob?.id || ["Completed", "Failed", "Canceled", "Paused"].includes(enumLabel(currentJob.status, jobStatusLabels))) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      refreshJob(currentJob.id);
+    }, 3000);
+
+    return () => window.clearInterval(intervalId);
+  }, [currentJob?.id, currentJob?.status]);
+
   async function refreshAi() {
     if (!selectedProjectId) return;
 
@@ -135,6 +184,107 @@ export default function AIAssistant() {
       setCommandLoading(false);
     }
   }
+
+  async function saveProvider(event) {
+    event.preventDefault();
+    if (!providerForm.providerName.trim() || !providerForm.model.trim() || !providerForm.apiKey.trim()) return;
+
+    setSavingProvider(true);
+    setError("");
+
+    try {
+      const saved = await ai.saveProvider({
+        providerName: providerForm.providerName.trim(),
+        baseUrl: providerForm.baseUrl.trim() || null,
+        model: providerForm.model.trim(),
+        apiKey: providerForm.apiKey.trim(),
+        supportsToolCalls: providerForm.supportsToolCalls,
+        isDefault: true,
+      });
+      const providerItems = asArray(await ai.providers());
+      setProviders(providerItems);
+      setSelectedProviderId(saved.id);
+      setProviderForm((current) => ({ ...current, apiKey: "" }));
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setSavingProvider(false);
+    }
+  }
+
+  async function createAgentJob(event) {
+    event.preventDefault();
+    if (!selectedWorkspaceId || !agentGoal.trim()) return;
+
+    setCreatingJob(true);
+    setError("");
+
+    try {
+      const created = await agent.createJob({
+        workspaceId: selectedWorkspaceId,
+        goal: agentGoal.trim(),
+        providerCredentialId: selectedProviderId || null,
+      });
+      setCurrentJob(created);
+      setJobEvents(asArray(await agent.events(created.id)));
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setCreatingJob(false);
+    }
+  }
+
+  async function refreshJob(jobId = currentJob?.id) {
+    if (!jobId) return;
+
+    try {
+      const [job, events] = await Promise.all([
+        agent.getJob(jobId),
+        agent.events(jobId),
+      ]);
+      setCurrentJob(job);
+      setJobEvents(asArray(events));
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    }
+  }
+
+  async function decideApproval(approval, approved) {
+    setDecidingApprovalId(approval.id);
+    setError("");
+
+    try {
+      if (approved) {
+        await agent.approve(approval.id);
+      } else {
+        await agent.reject(approval.id);
+      }
+      await refreshJob(approval.agentJobId);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setDecidingApprovalId("");
+    }
+  }
+
+  async function cancelJob() {
+    if (!currentJob?.id) return;
+
+    setError("");
+    try {
+      const canceled = await agent.cancel(currentJob.id);
+      setCurrentJob(canceled);
+      setJobEvents(asArray(await agent.events(currentJob.id)));
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    }
+  }
+
+  const pendingApprovals = asArray(currentJob?.approvals)
+    .filter((approval) => enumLabel(approval.status, approvalStatusLabels) === "Pending");
+  const artifacts = asArray(currentJob?.artifacts);
+  const currentJobStatus = enumLabel(currentJob?.status, jobStatusLabels);
+  const hasActiveJob = currentJob && !["Completed", "Failed", "Canceled"].includes(currentJobStatus);
 
   return (
     <div className="page-stack">
@@ -207,6 +357,232 @@ export default function AIAssistant() {
           </article>
         </section>
       )}
+
+      {!loadingProjects && (
+        <section className="agent-grid">
+          <article className="panel agent-panel">
+            <div className="panel-header">
+              <div>
+                <h3>Provider</h3>
+                <span>Keys are submitted to the backend and never stored in browser storage.</span>
+              </div>
+              <KeyRound size={20} />
+            </div>
+
+            <form className="agent-form" onSubmit={saveProvider}>
+              <div className="form-grid-2">
+                <label>
+                  Provider
+                  <input
+                    value={providerForm.providerName}
+                    onChange={(event) => setProviderForm((current) => ({ ...current, providerName: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Model
+                  <input
+                    value={providerForm.model}
+                    onChange={(event) => setProviderForm((current) => ({ ...current, model: event.target.value }))}
+                  />
+                </label>
+              </div>
+              <label>
+                Base URL
+                <input
+                  value={providerForm.baseUrl}
+                  onChange={(event) => setProviderForm((current) => ({ ...current, baseUrl: event.target.value }))}
+                  placeholder="https://api.openai.com/v1"
+                />
+              </label>
+              <label>
+                API Key
+                <input
+                  value={providerForm.apiKey}
+                  onChange={(event) => setProviderForm((current) => ({ ...current, apiKey: event.target.value }))}
+                  type="password"
+                  autoComplete="off"
+                />
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={providerForm.supportsToolCalls}
+                  onChange={(event) => setProviderForm((current) => ({ ...current, supportsToolCalls: event.target.checked }))}
+                />
+                Supports tool calls
+              </label>
+              <button className="primary-button" type="submit" disabled={savingProvider || !providerForm.apiKey.trim()}>
+                <KeyRound size={18} />
+                {savingProvider ? "Saving..." : "Save provider"}
+              </button>
+            </form>
+
+            <div className="provider-list">
+              {providers.length === 0 && <p>No provider configured. The worker will use deterministic planning.</p>}
+              {providers.length > 0 && (
+                <label>
+                  Active provider
+                  <select value={selectedProviderId} onChange={(event) => setSelectedProviderId(event.target.value)}>
+                    <option value="">Deterministic local planning</option>
+                    {providers.map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.providerName} / {provider.model} {provider.supportsToolCalls ? "(tools)" : "(no tools)"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          </article>
+
+          <article className="panel agent-panel">
+            <div className="panel-header">
+              <div>
+                <h3>Agent job</h3>
+                <span>Long-running work is queued and processed by TaskFlow.AgentWorker.</span>
+              </div>
+              <Bot size={20} />
+            </div>
+
+            <form className="agent-form" onSubmit={createAgentJob}>
+              <label>
+                Goal
+                <textarea
+                  value={agentGoal}
+                  onChange={(event) => setAgentGoal(event.target.value)}
+                  rows={4}
+                />
+              </label>
+              <div className="button-row">
+                <button className="primary-button" type="submit" disabled={creatingJob || !selectedWorkspaceId || !agentGoal.trim()}>
+                  <Play size={18} />
+                  {creatingJob ? "Queueing..." : "Create job"}
+                </button>
+                {currentJob && (
+                  <button className="secondary-button" type="button" onClick={() => refreshJob()}>
+                    <RefreshCw size={17} />
+                    Refresh
+                  </button>
+                )}
+                {hasActiveJob && (
+                  <button className="secondary-button danger" type="button" onClick={cancelJob}>
+                    <X size={17} />
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+
+            {currentJob && (
+              <div className="agent-job-card">
+                <div className="agent-status-row">
+                  <span className={`status-badge ${currentJobStatus.toLowerCase()}`}>{currentJobStatus}</span>
+                  <span>{currentJob.currentSubAgent || "MainAgent"}</span>
+                </div>
+                {currentJob.errorMessage && <p className="error-text">{currentJob.errorMessage}</p>}
+                {currentJob.planJson && (
+                  <div className="agent-json-block">
+                    <strong>Plan</strong>
+                    <pre>{formatJson(currentJob.planJson)}</pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </article>
+        </section>
+      )}
+
+      {currentJob && (
+        <section className="agent-grid">
+          <article className="panel agent-panel">
+            <div className="panel-header">
+              <div>
+                <h3>Approvals</h3>
+                <span>Every write action must be previewed and confirmed.</span>
+              </div>
+              <ClipboardCheck size={20} />
+            </div>
+
+            <div className="approval-list">
+              {pendingApprovals.length === 0 && <p>No pending approvals.</p>}
+              {pendingApprovals.map((approval) => (
+                <div className="approval-card" key={approval.id}>
+                  <div className="agent-status-row">
+                    <strong>{approval.title}</strong>
+                    <span className="status-badge planning">{approval.approvalType}</span>
+                  </div>
+                  <pre>{formatJson(approval.previewJson)}</pre>
+                  <div className="button-row">
+                    <button
+                      className="primary-button small"
+                      type="button"
+                      disabled={decidingApprovalId === approval.id}
+                      onClick={() => decideApproval(approval, true)}
+                    >
+                      <Check size={16} />
+                      Approve
+                    </button>
+                    <button
+                      className="secondary-button danger"
+                      type="button"
+                      disabled={decidingApprovalId === approval.id}
+                      onClick={() => decideApproval(approval, false)}
+                    >
+                      <X size={16} />
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel agent-panel">
+            <div className="panel-header">
+              <div>
+                <h3>Artifacts & events</h3>
+                <span>Worker output and audit timeline.</span>
+              </div>
+              <FileText size={20} />
+            </div>
+
+            <div className="artifact-list">
+              {artifacts.length === 0 && <p>No artifacts yet.</p>}
+              {artifacts.map((artifact) => (
+                <details key={artifact.id} className="artifact-card">
+                  <summary>{artifact.name} · {enumLabel(artifact.kind, artifactKindLabels)}</summary>
+                  <pre>{artifact.content || artifact.storageUrl || "No artifact content."}</pre>
+                </details>
+              ))}
+            </div>
+
+            <div className="event-list">
+              {jobEvents.map((event) => (
+                <div className="event-row" key={event.id}>
+                  <span>{enumLabel(event.eventType, eventTypeLabels)}</span>
+                  <p>{event.message}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+      )}
     </div>
   );
+}
+
+function formatJson(value) {
+  if (!value) return "";
+
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+function enumLabel(value, labels) {
+  if (typeof value === "number") return labels[value] || String(value);
+  if (typeof value === "string") return value;
+  return "";
 }

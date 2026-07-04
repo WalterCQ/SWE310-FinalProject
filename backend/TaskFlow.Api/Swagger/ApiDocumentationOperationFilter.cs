@@ -44,6 +44,11 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Turns message content into concise task suggestions for a project. The current user must be allowed to create tasks in the project. If MessageContent is empty, the fallback asks the frontend to send message content or wire MessageId lookup.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
+            ["Ai.AskWorkspaceKnowledge"] = new(
+                "Ask a retrieval-grounded workspace question",
+                "Retrieves relevant workspace records from projects, tasks, and accessible channel messages, adds them as grounded context, then asks the LLM to answer only from that context. This is a lightweight RAG-style endpoint that avoids extra vector database dependencies while keeping private channel messages permission-filtered. If AI:ApiKey is missing or the LLM call fails, the response still returns the matched source labels with UsedLlm=false.",
+                StatusCodes.Status200OK,
+                typeof(AiResponse)),
 
             ["Workspaces.GetWorkspaces"] = new(
                 "List accessible workspaces",

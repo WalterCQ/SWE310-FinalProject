@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
@@ -14,7 +14,7 @@ import Topbar from "./components/Topbar.jsx";
 import { auth } from "./api/taskflowApi.js";
 import { clearAuthStorage, getStoredUser, storeAuthUser } from "./api/authStorage.js";
 
-function ProtectedShell({ children, allowedRoles }) {
+function ProtectedShell({ allowedRoles }) {
   const location = useLocation();
   const [authVersion, setAuthVersion] = useState(0);
   const [session, setSession] = useState({
@@ -58,7 +58,7 @@ function ProtectedShell({ children, allowedRoles }) {
     return () => {
       active = false;
     };
-  }, [token, location.pathname, authVersion]);
+  }, [token, authVersion]);
 
   if (!token) {
     return <Navigate to="/login" state={{ from: location }} replace />;
@@ -83,7 +83,9 @@ function ProtectedShell({ children, allowedRoles }) {
       <Sidebar user={session.user} />
       <main className="main-area">
         <Topbar />
-        <section className="page-content">{children}</section>
+        <section className="page-content">
+          <Outlet />
+        </section>
       </main>
     </div>
   );
@@ -96,62 +98,15 @@ export default function App() {
       <Route path="/register" element={<Register />} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedShell>
-            <Dashboard />
-          </ProtectedShell>
-        }
-      />
-      <Route
-        path="/workspaces"
-        element={
-          <ProtectedShell>
-            <Workspaces />
-          </ProtectedShell>
-        }
-      />
-      <Route
-        path="/channels"
-        element={
-          <ProtectedShell>
-            <Channels />
-          </ProtectedShell>
-        }
-      />
-      <Route
-        path="/projects"
-        element={
-          <ProtectedShell>
-            <Projects />
-          </ProtectedShell>
-        }
-      />
-      <Route
-        path="/tasks"
-        element={
-          <ProtectedShell>
-            <Tasks />
-          </ProtectedShell>
-        }
-      />
-      <Route
-        path="/ai-assistant"
-        element={
-          <ProtectedShell>
-            <AIAssistant />
-          </ProtectedShell>
-        }
-      />
-      <Route
-        path="/notifications"
-        element={
-          <ProtectedShell>
-            <Notifications />
-          </ProtectedShell>
-        }
-      />
+      <Route element={<ProtectedShell />}>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/workspaces" element={<Workspaces />} />
+        <Route path="/channels" element={<Channels />} />
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/tasks" element={<Tasks />} />
+        <Route path="/ai-assistant" element={<AIAssistant />} />
+        <Route path="/notifications" element={<Notifications />} />
+      </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
