@@ -1,6 +1,8 @@
 using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using TaskFlow.Api.DTOs.AI;
+using TaskFlow.Api.DTOs.Agent;
+using TaskFlow.Api.DTOs.Auth;
 using TaskFlow.Api.DTOs.Channels;
 using TaskFlow.Api.DTOs.Dashboard;
 using TaskFlow.Api.DTOs.Messages;
@@ -19,6 +21,22 @@ public class ApiDocumentationOperationFilter : IOperationFilter
     private static readonly IReadOnlyDictionary<string, EndpointDoc> Docs =
         new Dictionary<string, EndpointDoc>(StringComparer.OrdinalIgnoreCase)
         {
+            ["Auth.Register"] = new(
+                "Register a new user",
+                "Creates a user account after validating name, email, and password. Duplicate email addresses return 400. Newly registered users are granted access to the shared demo workspace when seeded demo data is available.",
+                StatusCodes.Status200OK,
+                typeof(object)),
+            ["Auth.Login"] = new(
+                "Log in and receive a JWT",
+                "Authenticates an email and password against the stored password hash. A valid login returns a short-lived Bearer token plus the user's id, name, email, and global role.",
+                StatusCodes.Status200OK,
+                typeof(AuthResponse)),
+            ["Auth.Me"] = new(
+                "Get the current user profile",
+                "Reads the authenticated Bearer token, verifies that the user still exists, and returns the current user's profile and global role from the database.",
+                StatusCodes.Status200OK,
+                typeof(CurrentUserResponse)),
+
             ["Ai.ExecuteCommand"] = new(
                 "Execute an AI collaboration command",
                 "Runs a natural-language command inside a workspace. The Semantic Kernel plugin can read or modify real collaboration data only when the current user has workspace access. If AI:ApiKey is missing or the LLM call fails, the endpoint returns a deterministic fallback with UsedLlm=false.",
@@ -49,6 +67,48 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Retrieves relevant workspace records from projects, tasks, and accessible channel messages, adds them as grounded context, then asks the LLM to answer only from that context. This is a lightweight RAG-style endpoint that avoids extra vector database dependencies while keeping private channel messages permission-filtered. If AI:ApiKey is missing or the LLM call fails, the response still returns the matched source labels with UsedLlm=false.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
+
+            ["AiProviders.GetProviders"] = new(
+                "List configured AI providers",
+                "Returns the current user's saved AI provider credentials with provider name, model, base URL, tool-call support, default-provider flag, and HasApiKey. Secret API key values are never returned.",
+                StatusCodes.Status200OK,
+                typeof(IReadOnlyCollection<AiProviderResponse>)),
+            ["AiProviders.SaveProvider"] = new(
+                "Save an AI provider credential",
+                "Creates or updates an AI provider credential after validating provider name, model, and API key. The API key is stored server-side and the response only reports whether a key exists.",
+                StatusCodes.Status200OK,
+                typeof(AiProviderResponse)),
+
+            ["Agent.CreateJob"] = new(
+                "Create an agent job",
+                "Starts a multi-step AI agent job for a workspace goal. The current user must have workspace access, and the optional provider credential must be available to the user.",
+                StatusCodes.Status200OK,
+                typeof(AgentJobResponse)),
+            ["Agent.GetJob"] = new(
+                "Get an agent job",
+                "Returns the current state of an agent job, including steps, approval requests, generated artifacts, status timestamps, and any error message.",
+                StatusCodes.Status200OK,
+                typeof(AgentJobResponse)),
+            ["Agent.GetJobEvents"] = new(
+                "List agent job events",
+                "Returns timeline events for an agent job. The optional sinceUtc query parameter filters events created after the supplied UTC timestamp.",
+                StatusCodes.Status200OK,
+                typeof(IReadOnlyCollection<AgentEventResponse>)),
+            ["Agent.CancelJob"] = new(
+                "Cancel an agent job",
+                "Requests cancellation for a queued or running agent job and returns the updated job state. Completed jobs remain unchanged.",
+                StatusCodes.Status200OK,
+                typeof(AgentJobResponse)),
+            ["Agent.ApproveApproval"] = new(
+                "Approve an agent action",
+                "Approves a pending agent approval request, optionally recording a short decision note. The server then allows the approved action to proceed.",
+                StatusCodes.Status200OK,
+                typeof(AgentApprovalResponse)),
+            ["Agent.RejectApproval"] = new(
+                "Reject an agent action",
+                "Rejects a pending agent approval request, optionally recording a short decision note. The rejected action is not executed.",
+                StatusCodes.Status200OK,
+                typeof(AgentApprovalResponse)),
 
             ["Workspaces.GetWorkspaces"] = new(
                 "List accessible workspaces",
