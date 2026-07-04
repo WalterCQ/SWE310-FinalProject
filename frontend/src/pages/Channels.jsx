@@ -8,6 +8,7 @@ import {
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
 import { asArray, mapChannel, mapMessage, mapWorkspace, selectPrimaryWorkspace } from "../api/mappers.js";
+import { useI18n } from "../i18n.jsx";
 
 const connectionLabels = {
   connecting: "Connecting",
@@ -50,6 +51,7 @@ function formatRealtimeError(error) {
 }
 
 export default function Channels() {
+  const { t } = useI18n();
   const [workspaceName, setWorkspaceName] = useState("");
   const [channels, setChannels] = useState([]);
   const [activeChannelId, setActiveChannelId] = useState("");
@@ -283,7 +285,7 @@ export default function Channels() {
     if (!content || !activeChannelId) return;
 
     if (!connection || connection.state !== chatConnectionState.connected) {
-      setChatError("Realtime connection is not ready yet.");
+      setChatError(t("channel.readyError"));
       return;
     }
 
@@ -300,7 +302,7 @@ export default function Channels() {
   }
 
   const activeChannel = channels.find((channel) => channel.id === activeChannelId);
-  const connectionLabel = connectionLabels[connectionStatus] || connectionLabels.offline;
+  const connectionLabel = t(`channel.${connectionStatus}`);
   const isConnected = connectionStatus === "connected";
   const canSend = Boolean(activeChannel && draft.trim() && isConnected);
 
@@ -308,24 +310,24 @@ export default function Channels() {
     <div className="page-stack">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Channels</p>
-          <h1>Team chat</h1>
+          <p className="eyebrow">{t("channel.eyebrow")}</p>
+          <h1>{t("channel.title")}</h1>
         </div>
       </div>
 
-      {loading && <section className="panel">Loading channels from Azure...</section>}
-      {loadError && <section className="panel"><strong>Unable to load chat data.</strong><p>{loadError}</p></section>}
+      {loading && <section className="panel">{t("channel.loading")}</section>}
+      {loadError && <section className="panel"><strong>{t("channel.unableLoad")}</strong><p>{loadError}</p></section>}
       {!loading && !loadError && !workspaceName && (
-        <section className="panel">No workspace data is available yet.</section>
+        <section className="panel">{t("channel.emptyWorkspace")}</section>
       )}
 
       {!loading && !loadError && workspaceName && (
         <section className="chat-layout">
-          <aside className="panel channel-list" aria-label="Workspace channels">
+          <aside className="panel channel-list" aria-label={t("channel.workspaceList")}>
             {channels.length === 0 && (
               <div className="chat-empty compact">
-                <strong>No channels found.</strong>
-                <p>Create a workspace channel before starting a team chat.</p>
+                <strong>{t("channel.empty")}</strong>
+                <p>{t("channel.emptyHelp")}</p>
               </div>
             )}
             {channels.map((channel) => (
@@ -344,8 +346,8 @@ export default function Channels() {
           <article className="panel chat-panel">
             <div className="panel-header chat-header">
               <div>
-                <h3>{activeChannel ? `# ${activeChannel.name}` : "No channel selected"}</h3>
-                <span>{activeChannel ? `${activeChannel.memberCount} members` : workspaceName}</span>
+                <h3>{activeChannel ? `# ${activeChannel.name}` : t("channel.noneSelected")}</h3>
+                <span>{activeChannel ? t("channel.members", { count: activeChannel.memberCount }) : workspaceName}</span>
               </div>
               <span className={`connection-pill ${connectionStatus}`} role="status" aria-live="polite">
                 {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />} {connectionLabel}
@@ -354,7 +356,7 @@ export default function Channels() {
 
             {chatError && <div className="chat-alert" role="alert">{chatError}</div>}
 
-            <div className="message-list" aria-label="Messages" aria-live="polite" aria-busy={messageLoading}>
+            <div className="message-list" aria-label={t("channel.messages")} aria-live="polite" aria-busy={messageLoading}>
               {messageLoading && (
                 <div className="chat-loading">
                   <span />
@@ -364,8 +366,8 @@ export default function Channels() {
               )}
               {!messageLoading && activeChannel && messages.length === 0 && (
                 <div className="chat-empty">
-                  <strong>No messages in this channel yet.</strong>
-                  <p>Start with a short update so teammates can follow the work.</p>
+                  <strong>{t("channel.noMessages")}</strong>
+                  <p>{t("channel.noMessagesHelp")}</p>
                 </div>
               )}
               {!messageLoading && messages.map((message, index) => (
@@ -381,23 +383,23 @@ export default function Channels() {
             </div>
 
             <div className="typing-indicator" aria-live="polite">
-              {typingUserId ? "A teammate is typing..." : ""}
+              {typingUserId ? t("channel.typing") : ""}
             </div>
 
             <form className="message-input" onSubmit={sendMessage}>
-              <label className="sr-only" htmlFor="channel-message">Message</label>
+              <label className="sr-only" htmlFor="channel-message">{t("channel.message")}</label>
               <input
                 id="channel-message"
-                placeholder={activeChannel ? `Message #${activeChannel.name}` : "Select a channel"}
+                placeholder={activeChannel ? t("channel.messagePlaceholder", { name: activeChannel.name }) : t("channel.selectChannel")}
                 value={draft}
                 onChange={handleDraftChange}
                 disabled={!activeChannel || !isConnected}
                 aria-describedby="chat-helper"
               />
-              <button disabled={!canSend} aria-label="Send message" type="submit"><Send size={18} /></button>
+              <button disabled={!canSend} aria-label={t("channel.send")} type="submit"><Send size={18} /></button>
             </form>
             <p className="chat-helper" id="chat-helper">
-              {isConnected ? "Messages are delivered live to everyone in this channel." : "Waiting for realtime connection before sending."}
+              {isConnected ? t("channel.liveHelper") : t("channel.waitingHelper")}
             </p>
           </article>
         </section>

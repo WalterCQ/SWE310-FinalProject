@@ -30,6 +30,7 @@ import {
   mapWorkspace,
   selectPrimaryWorkspace,
 } from "../api/mappers.js";
+import { enumPriorityKey, enumProjectStatusKey, enumTaskStatusKey, useI18n } from "../i18n.jsx";
 
 const pieColors = ["#07998d", "#ef6845", "#e5b544", "#b4ef40"];
 const emptyState = {
@@ -49,11 +50,11 @@ function buildStats(summary, statusData) {
   const inProgress = statusData.find((item) => item.name === "In Progress")?.value || 0;
 
   return [
-    { label: "Total projects", value: summary.projectCount || 0, change: "+0", tone: "amber" },
-    { label: "Total tasks", value: summary.taskCount || 0, change: "+0", tone: "green" },
-    { label: "In progress", value: inProgress, change: "+0", tone: "yellow" },
-    { label: "Completed", value: summary.completedTaskCount || 0, change: "+0", tone: "done" },
-    { label: "Overdue", value: summary.overdueTaskCount || 0, change: "+0", tone: "red" },
+    { labelKey: "stats.totalProjects", value: summary.projectCount || 0, change: "+0", tone: "amber", icon: "projects" },
+    { labelKey: "stats.totalTasks", value: summary.taskCount || 0, change: "+0", tone: "green", icon: "tasks" },
+    { labelKey: "stats.inProgress", value: inProgress, change: "+0", tone: "yellow", icon: "progress" },
+    { labelKey: "stats.completed", value: summary.completedTaskCount || 0, change: "+0", tone: "done", icon: "completed" },
+    { labelKey: "stats.overdue", value: summary.overdueTaskCount || 0, change: "+0", tone: "red", icon: "overdue" },
   ];
 }
 
@@ -65,6 +66,7 @@ function countPriorities(tasks) {
 }
 
 export default function Dashboard() {
+  const { t } = useI18n();
   const [state, setState] = useState(emptyState);
 
   useEffect(() => {
@@ -131,65 +133,74 @@ export default function Dashboard() {
   const totalStatusCount = state.taskStatusData.reduce((sum, item) => sum + item.value, 0);
   const totalPriorityCount = state.priorityData.reduce((sum, item) => sum + item.count, 0);
   const activityItems = state.activities.length > 0
-    ? state.activities.map((title, index) => ({ id: `activity-${index}`, title, time: "Recent" }))
+    ? state.activities.map((title, index) => ({ id: `activity-${index}`, title, time: t("dashboard.recent") }))
     : state.notifications.slice(0, 4);
+  const priorityChartData = state.priorityData.map((item) => ({
+    ...item,
+    priorityLabel: t(enumPriorityKey(item.priority)),
+  }));
 
   return (
     <div className="page-stack">
       <section className="dashboard-hero">
         <div className="hero-copy">
-          <span className="hero-kicker">Frontend scope</span>
-          <h1>Dashboard, validation, demo.</h1>
-          <p>
-            This board tracks the live Azure workspace data used by TaskFlow: dashboard charts, task forms, clean errors, and AI project summary evidence.
-          </p>
+          <span className="hero-kicker">{t("dashboard.heroKicker")}</span>
+          <h1>{t("dashboard.heroTitle")}</h1>
+          <p>{t("dashboard.heroBody")}</p>
         </div>
 
         <aside className="deadline-card">
           <div>
-            <small>Active workspace</small>
-            <strong>{state.workspaceName || "None"}</strong>
+            <small>{t("dashboard.activeWorkspace")}</small>
+            <strong>{state.workspaceName || t("dashboard.none")}</strong>
           </div>
-          <div className="demo-route" aria-label="Demo route">
-            <span>01 Demo login with JWT</span>
-            <span>02 Load Azure dashboard</span>
-            <span>03 Create task through API</span>
-            <span>04 Show AI summary</span>
+          <div className="demo-route" aria-label={t("dashboard.demoRoute")}>
+            <span>{t("dashboard.route.login")}</span>
+            <span>{t("dashboard.route.dashboard")}</span>
+            <span>{t("dashboard.route.task")}</span>
+            <span>{t("dashboard.route.ai")}</span>
           </div>
         </aside>
       </section>
 
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Dashboard</p>
-          <h1>Build status</h1>
+          <p className="eyebrow">{t("dashboard.eyebrow")}</p>
+          <h1>{t("dashboard.title")}</h1>
         </div>
-        <button className="secondary-button">Export report</button>
+        <button className="secondary-button">{t("dashboard.export")}</button>
       </div>
 
-      {state.loading && <section className="panel">Loading dashboard from Azure...</section>}
-      {state.error && <section className="panel"><ErrorBlock message={state.error} /></section>}
+      {state.loading && <section className="panel">{t("dashboard.loading")}</section>}
+      {state.error && <section className="panel"><ErrorBlock message={state.error} t={t} /></section>}
       {!state.loading && !state.error && !state.workspaceName && (
-        <section className="panel">No workspace data is available yet.</section>
+        <section className="panel">{t("dashboard.emptyWorkspace")}</section>
       )}
 
       {!state.loading && !state.error && state.workspaceName && (
         <>
           <section className="stats-grid">
-            {state.stats.map((stat) => <StatCard key={stat.label} {...stat} />)}
+            {state.stats.map((stat) => (
+              <StatCard
+                key={stat.labelKey}
+                {...stat}
+                label={t(stat.labelKey)}
+                sinceText={t("stats.since", { change: stat.change })}
+              />
+            ))}
           </section>
 
           <section className="dashboard-grid">
             <article className="panel large-panel">
               <div className="panel-header">
                 <div>
-                  <h3>Task status</h3>
-                  <span>Live status values returned by the backend.</span>
+                  <h3>{t("dashboard.taskStatus")}</h3>
+                  <span>{t("dashboard.taskStatusHelp")}</span>
                 </div>
                 <span>{state.workspaceName}</span>
               </div>
               {totalStatusCount === 0 ? (
-                <p>No task status data yet.</p>
+                <p>{t("dashboard.noTaskStatus")}</p>
               ) : (
                 <div className="chart-row">
                   <ResponsiveContainer width="100%" height={260}>
@@ -203,8 +214,8 @@ export default function Dashboard() {
                   <div className="chart-legend">
                     {state.taskStatusData.map((item) => (
                       <div key={item.name}>
-                        <span>{item.name}</span>
-                        <strong>{item.value} tasks</strong>
+                        <span>{t(enumTaskStatusKey(item.name))}</span>
+                        <strong>{t("dashboard.taskCount", { count: item.value })}</strong>
                       </div>
                     ))}
                   </div>
@@ -215,18 +226,18 @@ export default function Dashboard() {
             <article className="panel large-panel">
               <div className="panel-header">
                 <div>
-                  <h3>Priority load</h3>
-                  <span>Priority counts are calculated from project tasks.</span>
+                  <h3>{t("dashboard.priorityLoad")}</h3>
+                  <span>{t("dashboard.priorityHelp")}</span>
                 </div>
                 <span>{state.workspaceName}</span>
               </div>
               {totalPriorityCount === 0 ? (
-                <p>No task priority data yet.</p>
+                <p>{t("dashboard.noPriority")}</p>
               ) : (
                 <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={state.priorityData}>
+                  <BarChart data={priorityChartData}>
                     <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#dedbd2" />
-                    <XAxis dataKey="priority" stroke="#666a65" />
+                    <XAxis dataKey="priorityLabel" stroke="#666a65" />
                     <YAxis stroke="#666a65" />
                     <Tooltip />
                     <Bar dataKey="count" radius={[10, 10, 0, 0]} fill="#07998d" />
@@ -239,16 +250,16 @@ export default function Dashboard() {
           <section className="bottom-grid">
             <article className="panel">
               <div className="panel-header">
-                <h3>Active projects</h3>
-                <a>View all</a>
+                <h3>{t("dashboard.activeProjects")}</h3>
+                <a>{t("dashboard.viewAll")}</a>
               </div>
               <div className="project-list compact">
-                {state.projects.length === 0 && <p>No projects found.</p>}
+                {state.projects.length === 0 && <p>{t("dashboard.noProjects")}</p>}
                 {state.projects.slice(0, 3).map((project) => (
                   <div className="project-row" key={project.id}>
                     <div>
                       <h4>{project.name}</h4>
-                      <p>{project.statusLabel}</p>
+                      <p>{t(enumProjectStatusKey(project.statusLabel))}</p>
                     </div>
                     <div className="progress-shell"><span style={{ width: `${project.progress}%` }} /></div>
                     <strong>{project.progress}%</strong>
@@ -259,18 +270,18 @@ export default function Dashboard() {
 
             <article className="panel">
               <div className="panel-header">
-                <h3>Demo checklist</h3>
-                <a>View all</a>
+                <h3>{t("dashboard.demoChecklist")}</h3>
+                <a>{t("dashboard.viewAll")}</a>
               </div>
               <div className="task-list compact">
-                {state.tasks.length === 0 && <p>No tasks found.</p>}
+                {state.tasks.length === 0 && <p>{t("dashboard.noTasks")}</p>}
                 {state.tasks.slice(0, 4).map((task) => (
                   <div className="task-line" key={task.id}>
                     <div>
                       <h4>{task.title}</h4>
                       <p>{task.project}</p>
                     </div>
-                    <StatusBadge>{task.priorityLabel}</StatusBadge>
+                    <StatusBadge variant={task.priorityLabel}>{t(enumPriorityKey(task.priorityLabel))}</StatusBadge>
                     <span>{task.deadlineLabel}</span>
                   </div>
                 ))}
@@ -279,10 +290,10 @@ export default function Dashboard() {
 
             <article className="panel">
               <div className="panel-header">
-                <h3>Recent activity</h3>
+                <h3>{t("dashboard.recentActivity")}</h3>
               </div>
               <div className="activity-list">
-                {activityItems.length === 0 && <p>No recent activity yet.</p>}
+                {activityItems.length === 0 && <p>{t("dashboard.noActivity")}</p>}
                 {activityItems.map((item, index) => (
                   <div className="activity-item" key={item.id}>
                     <div className="activity-index">{String(index + 1).padStart(2, "0")}</div>
@@ -301,10 +312,10 @@ export default function Dashboard() {
   );
 }
 
-function ErrorBlock({ message }) {
+function ErrorBlock({ message, t }) {
   return (
     <div>
-      <strong>Unable to load dashboard.</strong>
+      <strong>{t("dashboard.unable")}</strong>
       <p>{message}</p>
     </div>
   );

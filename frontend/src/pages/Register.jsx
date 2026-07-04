@@ -3,8 +3,10 @@ import { useNavigate, Link } from "react-router-dom";
 import { Lock, Mail, User } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import { auth, formatApiError } from "../api/taskflowApi.js";
+import { useI18n } from "../i18n.jsx";
 
 export default function Register() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [errors, setErrors] = useState({});
@@ -17,13 +19,13 @@ export default function Register() {
 
   function validate() {
     const nextErrors = {};
-    if (!form.name.trim()) nextErrors.name = "Enter your full name.";
-    if (!form.email.trim()) nextErrors.email = "Enter your email address.";
+    if (!form.name.trim()) nextErrors.name = t("auth.register.nameRequired");
+    if (!form.email.trim()) nextErrors.email = t("auth.register.emailRequired");
     if (form.email && !form.email.includes("@"))
-      nextErrors.email = "Use an email format, for example john@taskflow.com.";
-    if (!form.password.trim()) nextErrors.password = "Enter a password.";
+      nextErrors.email = t("auth.emailFormat");
+    if (!form.password.trim()) nextErrors.password = t("auth.register.passwordRequired");
     if (form.password && form.password.length < 6)
-      nextErrors.password = "Password must be at least 6 characters.";
+      nextErrors.password = t("auth.passwordMin");
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
@@ -44,7 +46,7 @@ export default function Register() {
       navigate("/login");
     } catch (err) {
       setErrors({
-        form: formatApiError(err) || "Registration failed. Try again.",
+        form: formatApiError(err) || t("auth.register.failed"),
       });
     } finally {
       setLoading(false);
@@ -58,42 +60,39 @@ export default function Register() {
           <div className="brand-mark">TF</div>
           <div>
             <h1>TaskFlow</h1>
-            <span>Project board for SWE310</span>
+            <span>{t("app.brand.projectBoardSwe310")}</span>
           </div>
         </div>
 
         <div>
-          <span className="hero-kicker">Get started</span>
-          <h2>Join your team workspace.</h2>
-          <p>
-            Create an account to manage projects, track tasks, and collaborate
-            with your team in real time.
-          </p>
+          <span className="hero-kicker">{t("auth.register.heroKicker")}</span>
+          <h2>{t("auth.register.heroTitle")}</h2>
+          <p>{t("auth.register.heroBody")}</p>
         </div>
       </section>
 
       <section className="login-card">
-        <p className="eyebrow">New account</p>
-        <h2>Create your account</h2>
+        <p className="eyebrow">{t("auth.register.eyebrow")}</p>
+        <h2>{t("auth.register.title")}</h2>
         <form onSubmit={submit} noValidate>
           <ErrorMessage>{errors.form}</ErrorMessage>
 
           <label>
-            Full Name
+            {t("auth.fullName")}
             <div className="input-shell">
               <User size={16} />
               <input
                 name="name"
                 value={form.name}
                 onChange={updateField}
-                placeholder="John Doe"
+                placeholder={t("auth.placeholder.name")}
               />
             </div>
             <ErrorMessage>{errors.name}</ErrorMessage>
           </label>
 
           <label>
-            Email
+            {t("auth.email")}
             <div className="input-shell">
               <Mail size={16} />
               <input
@@ -108,7 +107,7 @@ export default function Register() {
           </label>
 
           <label>
-            Password
+            {t("auth.password")}
             <div className="input-shell">
               <Lock size={16} />
               <input
@@ -116,23 +115,23 @@ export default function Register() {
                 type="password"
                 value={form.password}
                 onChange={updateField}
-                placeholder="At least 6 characters"
+                placeholder={t("auth.placeholder.passwordMin")}
               />
             </div>
             <ErrorMessage>{errors.password}</ErrorMessage>
           </label>
 
           <button className="primary-button" type="submit" disabled={loading}>
-            {loading ? "Creating account..." : "Create account"}
+            {loading ? t("auth.register.submitting") : t("auth.register.submit")}
           </button>
         </form>
         <p className="login-note">
-          Already have an account?{" "}
+          {t("auth.register.note")}{" "}
           <Link
             to="/login"
             style={{ color: "var(--accent)", textDecoration: "underline" }}
           >
-            Sign in
+            {t("auth.register.loginLink")}
           </Link>
         </p>
       </section>

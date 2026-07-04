@@ -4,8 +4,10 @@ import { Lock, Mail } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import { auth, formatApiError } from "../api/taskflowApi.js";
 import { storeAuthUser } from "../api/authStorage.js";
+import { useI18n } from "../i18n.jsx";
 
 export default function Login() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [form, setForm] = useState({
     email: "",
@@ -21,13 +23,14 @@ export default function Login() {
 
   function validate() {
     const nextErrors = {};
-    if (!form.email.trim())
-      nextErrors.email = "Enter the email used by your team.";
-    if (!form.email.includes("@"))
-      nextErrors.email = "Use an email format, for example john@taskflow.com.";
-    if (!form.password.trim()) nextErrors.password = "Enter your password.";
+    if (!form.email.trim()) {
+      nextErrors.email = t("auth.login.emailRequired");
+    } else if (!form.email.includes("@")) {
+      nextErrors.email = t("auth.emailFormat");
+    }
+    if (!form.password.trim()) nextErrors.password = t("auth.passwordRequired");
     if (form.password.length < 6)
-      nextErrors.password = "Password must be at least 6 characters.";
+      nextErrors.password = t("auth.passwordMin");
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
@@ -48,7 +51,7 @@ export default function Login() {
       navigate("/dashboard");
     } catch (err) {
       setErrors({
-        form: formatApiError(err) || "Invalid email or password.",
+        form: formatApiError(err) || t("auth.login.invalid"),
       });
     } finally {
       setLoading(false);
@@ -62,43 +65,39 @@ export default function Login() {
           <div className="brand-mark">TF</div>
           <div>
             <h1>TaskFlow</h1>
-            <span>Project board for SWE310</span>
+            <span>{t("app.brand.projectBoardSwe310")}</span>
           </div>
         </div>
 
         <div>
-          <span className="hero-kicker">Frontend demo</span>
-          <h2>Know the owner before the deadline.</h2>
-          <p>
-            A project management interface for tracking workspaces, tasks,
-            priorities, messages, and the AI project summary required in the
-            final recording.
-          </p>
+          <span className="hero-kicker">{t("auth.login.heroKicker")}</span>
+          <h2>{t("auth.login.heroTitle")}</h2>
+          <p>{t("auth.login.heroBody")}</p>
           <div className="hero-orb">
             <div className="mini-board">
               <strong>07</strong>
-              <span>overdue tasks</span>
+              <span>{t("auth.login.overdueTasks")}</span>
             </div>
             <div className="mini-board">
               <strong>15</strong>
-              <span>validation checks</span>
+              <span>{t("auth.login.validationChecks")}</span>
             </div>
             <div className="mini-board">
               <strong>04</strong>
-              <span>demo screens</span>
+              <span>{t("auth.login.demoScreens")}</span>
             </div>
           </div>
         </div>
       </section>
 
       <section className="login-card">
-        <p className="eyebrow">Welcome back</p>
-        <h2>Sign in to your account</h2>
+        <p className="eyebrow">{t("auth.login.eyebrow")}</p>
+        <h2>{t("auth.login.title")}</h2>
         <form onSubmit={submit} noValidate>
           <ErrorMessage>{errors.form}</ErrorMessage>
 
           <label>
-            Email
+            {t("auth.email")}
             <div className="input-shell">
               <Mail size={16} />
               <input name="email" value={form.email} onChange={updateField} placeholder="john@taskflow.com" />
@@ -107,7 +106,7 @@ export default function Login() {
           </label>
 
           <label>
-            Password
+            {t("auth.password")}
             <div className="input-shell">
               <Lock size={16} />
               <input
@@ -122,13 +121,13 @@ export default function Login() {
           </label>
 
           <button className="primary-button" type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
+            {loading ? t("auth.login.submitting") : t("auth.login.submit")}
           </button>
         </form>
         <p className="login-note">
-          Don't have an account?{" "}
+          {t("auth.login.note")}{" "}
           <Link to="/register" style={{ color: "var(--accent)", textDecoration: "underline" }}>
-            Register here
+            {t("auth.login.registerLink")}
           </Link>
         </p>
       </section>

@@ -1,8 +1,9 @@
 import axiosClient from "./axiosClient.js";
+import { translateKey } from "../i18n.jsx";
 
 export function normalizeApiError(error) {
   if (error?.request && !error?.response) {
-    const normalized = new Error("Cannot reach the API server. Make sure the backend is running and try again.");
+    const normalized = new Error(translateKey("api.unreachable"));
     normalized.errors = [normalized.message];
     normalized.statusCode = 0;
     return normalized;
@@ -10,7 +11,7 @@ export function normalizeApiError(error) {
 
   const responsePayload = error?.response?.data;
   const payload = responsePayload && typeof responsePayload === "object" ? responsePayload : error;
-  const message = payload?.message || error?.message || "Request failed.";
+  const message = payload?.message || error?.message || translateKey("api.requestFailed");
   const normalized = new Error(message);
 
   normalized.errors = Array.isArray(payload?.errors) && payload.errors.length > 0
@@ -26,7 +27,7 @@ export function formatApiError(error) {
   if (Array.isArray(error.errors) && error.errors.length > 0) {
     return error.errors.join(" ");
   }
-  return error.message || "Request failed.";
+  return error.message || translateKey("api.requestFailed");
 }
 
 function unwrap(response) {

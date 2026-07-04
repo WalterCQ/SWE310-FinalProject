@@ -10,21 +10,23 @@ import {
   SquareCheckBig,
 } from "lucide-react";
 import { clearAuthStorage } from "../api/authStorage.js";
+import { useI18n } from "../i18n.jsx";
 
 const navItems = [
-  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-  { label: "Workspaces", path: "/workspaces", icon: Boxes },
-  { label: "Channels", path: "/channels", icon: MessageSquare },
-  { label: "Projects", path: "/projects", icon: KanbanSquare },
-  { label: "Tasks", path: "/tasks", icon: SquareCheckBig },
-  { label: "AI Assistant", path: "/ai-assistant", icon: Bot },
-  { label: "Notifications", path: "/notifications", icon: Bell },
+  { labelKey: "nav.dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { labelKey: "nav.workspaces", path: "/workspaces", icon: Boxes },
+  { labelKey: "nav.channels", path: "/channels", icon: MessageSquare },
+  { labelKey: "nav.projects", path: "/projects", icon: KanbanSquare },
+  { labelKey: "nav.tasks", path: "/tasks", icon: SquareCheckBig },
+  { labelKey: "nav.aiAssistant", path: "/ai-assistant", icon: Bot },
+  { labelKey: "nav.notifications", path: "/notifications", icon: Bell },
 ];
 
 export default function Sidebar({ user }) {
   const navigate = useNavigate();
-  const userName = user?.name || localStorage.getItem("userName") || "User";
-  const userRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || "User";
+  const { t } = useI18n();
+  const userName = user?.name || localStorage.getItem("userName") || t("app.user.default");
+  const userRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || t("app.role.default");
   const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(userRole));
 
   // Get initials from name (e.g. "John Doe" → "JD")
@@ -46,11 +48,11 @@ export default function Sidebar({ user }) {
         <div className="brand-mark">TF</div>
         <div>
           <h1>TaskFlow</h1>
-          <span>Project board</span>
+          <span>{t("app.brand.projectBoard")}</span>
         </div>
       </div>
 
-      <nav className="nav-list" aria-label="Main navigation">
+      <nav className="nav-list" aria-label={t("nav.label")}>
         {visibleNavItems.map((item) => {
           const Icon = item.icon;
           return (
@@ -62,7 +64,7 @@ export default function Sidebar({ user }) {
               }
             >
               <Icon size={18} />
-              <span>{item.label}</span>
+              <span>{t(item.labelKey)}</span>
             </NavLink>
           );
         })}
@@ -77,7 +79,7 @@ export default function Sidebar({ user }) {
           </div>
         </div>
         <button onClick={logout} className="logout-btn">
-          <LogOut size={16} /> Log out
+          <LogOut size={16} /> {t("nav.logout")}
         </button>
       </div>
     </aside>

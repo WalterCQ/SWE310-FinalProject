@@ -9,6 +9,7 @@ import {
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
 import { asArray, mapProject, mapTask } from "../api/mappers.js";
+import { enumPriorityKey, enumTaskStatusKey, useI18n } from "../i18n.jsx";
 
 const blankForm = {
   title: "",
@@ -49,6 +50,7 @@ function buildTaskUpdatePayload(task, updates = {}) {
 }
 
 export default function Tasks() {
+  const { t } = useI18n();
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState([]);
@@ -139,12 +141,12 @@ export default function Tasks() {
 
   function validate() {
     const nextErrors = {};
-    if (!selectedProjectId) nextErrors.project = "Please select a project.";
-    if (!form.title.trim()) nextErrors.title = "Please enter a task title.";
-    if (!form.description.trim()) nextErrors.description = "Please enter a task description.";
-    if (!form.status) nextErrors.status = "Please select a task status.";
-    if (!form.priority) nextErrors.priority = "Please select a task priority.";
-    if (!form.dueDate) nextErrors.dueDate = "Please select a due date.";
+    if (!selectedProjectId) nextErrors.project = t("task.projectRequired");
+    if (!form.title.trim()) nextErrors.title = t("task.titleRequired");
+    if (!form.description.trim()) nextErrors.description = t("task.descriptionRequired");
+    if (!form.status) nextErrors.status = t("task.statusRequired");
+    if (!form.priority) nextErrors.priority = t("task.priorityRequired");
+    if (!form.dueDate) nextErrors.dueDate = t("task.dueDateRequired");
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
@@ -229,23 +231,23 @@ export default function Tasks() {
     <div className="page-stack">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Tasks</p>
-          <h1>Create tasks your team can actually follow</h1>
+          <p className="eyebrow">{t("task.eyebrow")}</p>
+          <h1>{t("task.title")}</h1>
         </div>
       </div>
 
-      {apiError && <section className="panel"><strong>Task API error.</strong><p>{apiError}</p></section>}
+      {apiError && <section className="panel"><strong>{t("task.apiError")}</strong><p>{apiError}</p></section>}
 
       <section className="task-layout">
         <article className="panel form-panel">
           <div className="panel-header">
-            <h3>Create task</h3>
-            <span>Tasks are created in the selected Azure project</span>
+            <h3>{t("task.createTitle")}</h3>
+            <span>{t("task.createHelp")}</span>
           </div>
 
           <form className="task-form" onSubmit={addTask} noValidate>
             <label>
-              Project
+              {t("task.project")}
               <select
                 value={selectedProjectId}
                 onChange={(event) => {
@@ -254,7 +256,7 @@ export default function Tasks() {
                 }}
                 disabled={loadingProjects || projects.length === 0}
               >
-                {projects.length === 0 && <option value="">No projects available</option>}
+                {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>{project.name}</option>
                 ))}
@@ -263,69 +265,69 @@ export default function Tasks() {
             </label>
 
             <label>
-              Task title
-              <input name="title" value={form.title} onChange={updateField} placeholder="Example: Record dashboard walkthrough" />
+              {t("task.taskTitle")}
+              <input name="title" value={form.title} onChange={updateField} placeholder={t("task.placeholder.title")} />
               <ErrorMessage>{errors.title}</ErrorMessage>
             </label>
 
             <label>
-              Description
-              <textarea name="description" value={form.description} onChange={updateField} placeholder="What needs to be done, and what will count as finished?" />
+              {t("task.description")}
+              <textarea name="description" value={form.description} onChange={updateField} placeholder={t("task.placeholder.description")} />
               <ErrorMessage>{errors.description}</ErrorMessage>
             </label>
 
             <div className="form-grid-2">
               <label>
-                Status
+                {t("task.status")}
                 <select name="status" value={form.status} onChange={updateField}>
                   {statusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
+                    <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
                   ))}
                 </select>
                 <ErrorMessage>{errors.status}</ErrorMessage>
               </label>
 
               <label>
-                Priority
+                {t("task.priority")}
                 <select name="priority" value={form.priority} onChange={updateField}>
                   {priorityOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
+                    <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
                   ))}
                 </select>
                 <ErrorMessage>{errors.priority}</ErrorMessage>
               </label>
 
               <label>
-                Due date
+                {t("task.dueDate")}
                 <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
                 <ErrorMessage>{errors.dueDate}</ErrorMessage>
               </label>
             </div>
 
             <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId}>
-              <Plus size={18} /> {saving ? "Adding..." : "Add task"}
+              <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
             </button>
           </form>
         </article>
 
         <section className="kanban-grid">
-          {loadingProjects && <article className="panel">Loading projects from Azure...</article>}
-          {!loadingProjects && projects.length === 0 && <article className="panel">No projects found. Create a project before adding tasks.</article>}
+          {loadingProjects && <article className="panel">{t("task.loadingProjects")}</article>}
+          {!loadingProjects && projects.length === 0 && <article className="panel">{t("task.noProjects")}</article>}
 
           {!loadingProjects && projects.length > 0 && groupedTasks.map((column) => (
             <article className="panel kanban-column" key={column.status}>
               <div className="panel-header">
-                <h3>{column.status}</h3>
+                <h3>{t(enumTaskStatusKey(column.status))}</h3>
                 <span>{column.items.length}</span>
               </div>
               <div className="kanban-list">
-                {loadingTasks && column.status === "To Do" && <p>Loading tasks...</p>}
-                {!loadingTasks && column.items.length === 0 && <p>No tasks.</p>}
+                {loadingTasks && column.status === "To Do" && <p>{t("task.loadingTasks")}</p>}
+                {!loadingTasks && column.items.length === 0 && <p>{t("task.noTasks")}</p>}
                 {!loadingTasks && column.items.map((task) => (
                   <div className="task-card" key={task.id}>
                     <div className="task-card-top">
                       <h4>{task.title}</h4>
-                      <StatusBadge>{task.priorityLabel}</StatusBadge>
+                      <StatusBadge variant={task.priorityLabel}>{t(enumPriorityKey(task.priorityLabel))}</StatusBadge>
                     </div>
                     <p>{task.description}</p>
                     <div className="task-meta">
@@ -334,26 +336,26 @@ export default function Tasks() {
                     </div>
                     <div className="task-actions">
                       <label>
-                        <span>Status</span>
+                        <span>{t("task.status")}</span>
                         <select
                           value={String(task.status)}
                           onChange={(event) => updateTaskStatus(task, event.target.value)}
                           disabled={mutatingTaskId === task.id}
                         >
                           {statusOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
+                            <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
                           ))}
                         </select>
                       </label>
                       <label>
-                        <span>Priority</span>
+                        <span>{t("task.priority")}</span>
                         <select
                           value={String(task.priority)}
                           onChange={(event) => updateTaskPriority(task, event.target.value)}
                           disabled={mutatingTaskId === task.id}
                         >
                           {priorityOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
+                            <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
                           ))}
                         </select>
                       </label>
@@ -363,7 +365,7 @@ export default function Tasks() {
                         onClick={() => deleteTask(task)}
                         disabled={mutatingTaskId === task.id}
                       >
-                        <Trash2 size={14} /> Delete
+                        <Trash2 size={14} /> {t("task.delete")}
                       </button>
                     </div>
                   </div>

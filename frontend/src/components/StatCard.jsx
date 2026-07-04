@@ -1,15 +1,15 @@
 import { Briefcase, CheckCircle2, Clock3, ListTodo, TriangleAlert } from "lucide-react";
 
 const icons = {
-  "Total projects": Briefcase,
-  "Total tasks": ListTodo,
-  "In progress": Clock3,
-  Completed: CheckCircle2,
-  Overdue: TriangleAlert,
+  projects: Briefcase,
+  tasks: ListTodo,
+  progress: Clock3,
+  completed: CheckCircle2,
+  overdue: TriangleAlert,
 };
 
-export default function StatCard({ label, value, change, tone }) {
-  const Icon = icons[label] || Briefcase;
+export default function StatCard({ label, value, change, tone, icon = "projects", sinceText }) {
+  const Icon = icons[icon] || Briefcase;
 
   return (
     <article className={`stat-card ${tone}`}>
@@ -18,7 +18,7 @@ export default function StatCard({ label, value, change, tone }) {
         <p>{label}</p>
         <h3>{value}</h3>
         <span className={change.startsWith("-") ? "negative" : "positive"}>
-          {change} since last update
+          {sinceText}
         </span>
       </div>
     </article>

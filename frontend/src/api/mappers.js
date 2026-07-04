@@ -1,3 +1,12 @@
+import {
+  dateLocale,
+  enumNotificationKey,
+  enumPriorityKey,
+  enumProjectStatusKey,
+  enumTaskStatusKey,
+  translateKey,
+} from "../i18n.jsx";
+
 const taskStatusLabels = {
   0: "To Do",
   todo: "To Do",
@@ -66,12 +75,12 @@ export function mapNotificationType(value) {
 }
 
 export function formatDeadline(deadlineUtc) {
-  if (!deadlineUtc) return "No deadline";
+  if (!deadlineUtc) return translateKey("mapper.noDeadline");
 
   const date = new Date(deadlineUtc);
-  if (Number.isNaN(date.getTime())) return "No deadline";
+  if (Number.isNaN(date.getTime())) return translateKey("mapper.noDeadline");
 
-  return date.toLocaleDateString("en-GB", {
+  return date.toLocaleDateString(dateLocale(), {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -84,7 +93,7 @@ export function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
 
-  return date.toLocaleString("en-GB", {
+  return date.toLocaleString(dateLocale(), {
     day: "numeric",
     month: "short",
     hour: "2-digit",
@@ -116,7 +125,7 @@ export function selectPrimaryWorkspace(workspaces) {
 }
 
 export function shortId(value) {
-  if (!value) return "Unassigned";
+  if (!value) return translateKey("mapper.unassigned");
   return String(value).slice(0, 8);
 }
 
@@ -124,7 +133,7 @@ export function mapWorkspace(workspace) {
   return {
     ...workspace,
     id: workspace.id,
-    name: workspace.name || "Untitled workspace",
+    name: workspace.name || translateKey("mapper.untitledWorkspace"),
     description: workspace.description || "",
     members: workspace.memberCount ?? workspace.members ?? 0,
     projects: workspace.projectCount ?? workspace.projects ?? 0,
@@ -139,7 +148,7 @@ export function mapProject(project) {
   return {
     ...project,
     id: project.id,
-    name: project.name || "Untitled project",
+    name: project.name || translateKey("mapper.untitledProject"),
     status,
     statusLabel: mapProjectStatus(status),
     progress: calculateProjectProgress(project),
@@ -152,15 +161,15 @@ export function mapProject(project) {
 
 export function mapTask(task, projectLookup = {}) {
   const projectId = task.projectId;
-  const projectName = projectLookup[projectId]?.name || task.projectName || "Unknown project";
+  const projectName = projectLookup[projectId]?.name || task.projectName || translateKey("mapper.unknownProject");
   const status = typeof task.status === "undefined" ? 0 : task.status;
   const priority = typeof task.priority === "undefined" ? 1 : task.priority;
 
   return {
     ...task,
     id: task.id,
-    title: task.title || "Untitled task",
-    description: task.description || "No description provided.",
+    title: task.title || translateKey("mapper.untitledTask"),
+    description: task.description || translateKey("mapper.noDescription"),
     status,
     statusLabel: mapTaskStatus(status),
     priority,
@@ -198,7 +207,7 @@ export function mapNotification(notification) {
   return {
     ...notification,
     id: notification.id,
-    title: notification.title || "Notification",
+    title: notification.title || translateKey("mapper.notification"),
     message: notification.message || "",
     type,
     typeLabel: mapNotificationType(type),
@@ -219,4 +228,20 @@ export function mapTasksByStatus(tasksByStatus = {}) {
   });
 
   return Object.entries(counts).map(([name, value]) => ({ name, value }));
+}
+
+export function translateTaskStatus(value) {
+  return translateKey(enumTaskStatusKey(value));
+}
+
+export function translatePriority(value) {
+  return translateKey(enumPriorityKey(value));
+}
+
+export function translateProjectStatus(value) {
+  return translateKey(enumProjectStatusKey(value));
+}
+
+export function translateNotificationType(value) {
+  return translateKey(enumNotificationKey(value));
 }

@@ -8,6 +8,7 @@ import {
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
 import { asArray, mapProject, mapWorkspace } from "../api/mappers.js";
+import { enumProjectStatusKey, useI18n } from "../i18n.jsx";
 
 const blankForm = {
   workspaceId: "",
@@ -22,6 +23,7 @@ function toDeadlineUtc(dateValue) {
 }
 
 export default function Projects() {
+  const { t } = useI18n();
   const [workspaces, setWorkspaces] = useState([]);
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState("");
@@ -78,8 +80,8 @@ export default function Projects() {
 
   function validateForm() {
     const nextErrors = {};
-    if (!form.workspaceId) nextErrors.workspaceId = "Please select a workspace.";
-    if (!form.name.trim()) nextErrors.name = "Please enter a project name.";
+    if (!form.workspaceId) nextErrors.workspaceId = t("project.workspaceRequired");
+    if (!form.name.trim()) nextErrors.name = t("project.nameRequired");
 
     setFormErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -126,8 +128,8 @@ export default function Projects() {
     <div className="page-stack">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Projects</p>
-          <h1>Every deadline needs an owner</h1>
+          <p className="eyebrow">{t("project.eyebrow")}</p>
+          <h1>{t("project.title")}</h1>
         </div>
         <button
           className="primary-button small"
@@ -137,30 +139,30 @@ export default function Projects() {
             setCreateError("");
           }}
         >
-          <Plus size={18} /> New Project
+          <Plus size={18} /> {t("project.new")}
         </button>
       </div>
 
       {formOpen && (
         <section className="panel create-panel">
           <div className="panel-header">
-            <h3>Create project</h3>
-            <span>Projects are created in the selected Azure workspace.</span>
+            <h3>{t("project.createTitle")}</h3>
+            <span>{t("project.createHelp")}</span>
           </div>
 
-          {createError && <div className="error-text"><strong>Unable to create project.</strong> {createError}</div>}
+          {createError && <div className="error-text"><strong>{t("project.unableCreate")}</strong> {createError}</div>}
 
           <form className="task-form" onSubmit={createProject} noValidate>
             <div className="form-grid-2">
               <label>
-                Workspace
+                {t("project.workspace")}
                 <select
                   name="workspaceId"
                   value={form.workspaceId}
                   onChange={updateField}
                   disabled={loading || workspaces.length === 0}
                 >
-                  {workspaces.length === 0 && <option value="">No workspace available</option>}
+                  {workspaces.length === 0 && <option value="">{t("project.noWorkspace")}</option>}
                   {workspaces.map((workspace) => (
                     <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
                   ))}
@@ -169,35 +171,35 @@ export default function Projects() {
               </label>
 
               <label>
-                Due date
+                {t("project.dueDate")}
                 <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
               </label>
             </div>
 
             <label>
-              Project name
+              {t("project.name")}
               <input
                 name="name"
                 value={form.name}
                 onChange={updateField}
-                placeholder="Example: Presentation prep"
+                placeholder={t("project.placeholder.name")}
               />
               <ErrorMessage>{formErrors.name}</ErrorMessage>
             </label>
 
             <label>
-              Description
+              {t("project.description")}
               <textarea
                 name="description"
                 value={form.description}
                 onChange={updateField}
-                placeholder="What should this project deliver?"
+                placeholder={t("project.placeholder.description")}
               />
             </label>
 
             <div className="button-row">
               <button className="primary-button" type="submit" disabled={saving || loading || workspaces.length === 0}>
-                <Plus size={18} /> {saving ? "Creating..." : "Create project"}
+                <Plus size={18} /> {saving ? t("project.creating") : t("project.create")}
               </button>
               <button
                 className="secondary-button"
@@ -209,7 +211,7 @@ export default function Projects() {
                   setCreateError("");
                 }}
               >
-                Cancel
+                {t("workspace.cancel")}
               </button>
             </div>
           </form>
@@ -221,36 +223,36 @@ export default function Projects() {
           <div className="search-box inline">
             <Search size={18} />
             <input
-              placeholder="Search by project or owner..."
+              placeholder={t("project.search")}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-          <button className="secondary-button">Filter</button>
+          <button className="secondary-button">{t("project.filter")}</button>
         </div>
 
-        {loading && <p>Loading projects from Azure...</p>}
-        {error && <div><strong>Unable to load projects.</strong><p>{error}</p></div>}
-        {!loading && !error && projects.length === 0 && <p>No projects found.</p>}
-        {!loading && !error && projects.length > 0 && visibleProjects.length === 0 && <p>No projects match your search.</p>}
+        {loading && <p>{t("project.loading")}</p>}
+        {error && <div><strong>{t("project.unableLoad")}</strong><p>{error}</p></div>}
+        {!loading && !error && projects.length === 0 && <p>{t("project.empty")}</p>}
+        {!loading && !error && projects.length > 0 && visibleProjects.length === 0 && <p>{t("project.noMatch")}</p>}
 
         {!loading && !error && visibleProjects.length > 0 && (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Project</th>
-                  <th>Status</th>
-                  <th>Progress</th>
-                  <th>Owner</th>
-                  <th>Due date</th>
+                  <th>{t("project.column.project")}</th>
+                  <th>{t("project.column.status")}</th>
+                  <th>{t("project.column.progress")}</th>
+                  <th>{t("project.column.owner")}</th>
+                  <th>{t("project.dueDate")}</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleProjects.map((project) => (
                   <tr key={project.id}>
                     <td>{project.name}</td>
-                    <td><StatusBadge>{project.statusLabel}</StatusBadge></td>
+                    <td><StatusBadge variant={project.statusLabel}>{t(enumProjectStatusKey(project.statusLabel))}</StatusBadge></td>
                     <td>
                       <div className="progress-cell">
                         <div className="progress-shell"><span style={{ width: `${project.progress}%` }} /></div>

@@ -13,8 +13,10 @@ import Sidebar from "./components/Sidebar.jsx";
 import Topbar from "./components/Topbar.jsx";
 import { auth } from "./api/taskflowApi.js";
 import { clearAuthStorage, getStoredUser, storeAuthUser } from "./api/authStorage.js";
+import { useI18n } from "./i18n.jsx";
 
 function ProtectedShell({ allowedRoles }) {
+  const { t } = useI18n();
   const location = useLocation();
   const [authVersion, setAuthVersion] = useState(0);
   const [session, setSession] = useState({
@@ -65,7 +67,7 @@ function ProtectedShell({ allowedRoles }) {
   }
 
   if (session.checking) {
-    return <main className="login-page"><section className="login-card">Checking session...</section></main>;
+    return <main className="login-page"><section className="login-card">{t("app.loading.session")}</section></main>;
   }
 
   if (!session.user) {
