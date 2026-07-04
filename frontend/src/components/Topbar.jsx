@@ -1,21 +1,21 @@
-import { Bell, CalendarDays, Search, ClipboardList, Globe2 } from "lucide-react";
+import { ClipboardList, Globe2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import GlobalSearch from "./GlobalSearch.jsx";
 import { LOCALES, useI18n } from "../i18n.jsx";
 
-export default function Topbar() {
+export default function Topbar({ pageMeta }) {
   const { locale, setLocale, t } = useI18n();
+  const navigate = useNavigate();
 
   return (
     <header className="topbar">
-      <div>
-        <p className="eyebrow">{t("topbar.eyebrow")}</p>
-        <h2>{t("topbar.title")}</h2>
+      <div className="topbar-title">
+        <p className="eyebrow">{pageMeta?.eyebrow || t("topbar.eyebrow")}</p>
+        <h2>{pageMeta?.title || t("topbar.title")}</h2>
       </div>
 
       <div className="topbar-actions">
-        <div className="search-box">
-          <Search size={18} />
-          <input placeholder={t("topbar.search")} />
-        </div>
+        <GlobalSearch />
         <label className="language-control" aria-label={t("topbar.language")}>
           <Globe2 size={18} />
           <select value={locale} onChange={(event) => setLocale(event.target.value)}>
@@ -23,9 +23,15 @@ export default function Topbar() {
             <option value={LOCALES.zh}>中文</option>
           </select>
         </label>
-        <button className="icon-button" aria-label={t("topbar.checklist")}><ClipboardList size={18} /></button>
-        <button className="icon-button notification-dot" aria-label={t("topbar.notifications")}><Bell size={18} /></button>
-        <button className="week-button"><CalendarDays size={18} /> {t("topbar.week")}</button>
+        <button
+          className="icon-button"
+          aria-label={t("topbar.myTasks")}
+          title={t("topbar.myTasks")}
+          type="button"
+          onClick={() => navigate("/tasks?view=mine")}
+        >
+          <ClipboardList size={18} />
+        </button>
       </div>
     </header>
   );

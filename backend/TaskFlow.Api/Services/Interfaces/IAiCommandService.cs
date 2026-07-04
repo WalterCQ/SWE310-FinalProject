@@ -11,4 +11,7 @@ public interface IAiCommandService
     Task<ApiResponse<AiResponse>> AnalyzeProjectRiskAsync(AiRiskAnalysisRequest request, CancellationToken cancellationToken = default);
     Task<ApiResponse<AiResponse>> GenerateTasksFromMessageAsync(AiGenerateTasksFromMessageRequest request, CancellationToken cancellationToken = default);
     Task<ApiResponse<AiResponse>> AskWorkspaceKnowledgeAsync(AiWorkspaceQuestionRequest request, CancellationToken cancellationToken = default);
+    Task<ApiResponse<AiChannelCommandResponse>> HandleChannelMentionAsync(Guid channelId, AiChannelCommandRequest request, CancellationToken cancellationToken = default);
+    Task<ApiResponse<ChannelAttachmentResponse>> IndexChannelAttachmentAsync(Guid channelId, IFormFile file, CancellationToken cancellationToken = default);
+    Task<ApiResponse<IReadOnlyCollection<ChannelAttachmentResponse>>> ListChannelAttachmentsAsync(Guid channelId, CancellationToken cancellationToken = default);
 }

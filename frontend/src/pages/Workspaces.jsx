@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Plus, FolderKanban, Users } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import { formatApiError, workspaces as workspacesApi } from "../api/taskflowApi.js";
 import { asArray, mapWorkspace } from "../api/mappers.js";
@@ -10,6 +11,8 @@ const blankForm = { name: "", description: "" };
 
 export default function Workspaces() {
   const { t } = useI18n();
+  const [searchParams] = useSearchParams();
+  const selectedWorkspaceId = searchParams.get("workspaceId") || "";
   const [workspaces, setWorkspaces] = useState([]);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(blankForm);
@@ -44,6 +47,15 @@ export default function Workspaces() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId || loading) return;
+
+    document.getElementById(`workspace-${selectedWorkspaceId}`)?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  }, [selectedWorkspaceId, loading, workspaces]);
 
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -85,11 +97,7 @@ export default function Workspaces() {
 
   return (
     <div className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">{t("workspace.eyebrow")}</p>
-          <h1>{t("workspace.title")}</h1>
-        </div>
+      <div className="page-actions">
         <button
           className="primary-button small"
           type="button"
@@ -163,7 +171,11 @@ export default function Workspaces() {
       {!loading && !error && workspaces.length > 0 && (
         <section className="workspace-grid">
           {workspaces.map((workspace, index) => (
-            <article className={`panel workspace-card ${colors[index % colors.length]}`} key={workspace.id}>
+            <article
+              className={`panel workspace-card ${colors[index % colors.length]} ${workspace.id === selectedWorkspaceId ? "target-highlight" : ""}`}
+              id={`workspace-${workspace.id}`}
+              key={workspace.id}
+            >
               <div className="workspace-card-top">
                 <div className="workspace-icon">{String(index + 1).padStart(2, "0")}</div>
                 <span className="workspace-tag">{t("workspace.active")}</span>

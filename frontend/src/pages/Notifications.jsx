@@ -68,11 +68,7 @@ export default function Notifications() {
 
   return (
     <div className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">{t("notifications.eyebrow")}</p>
-          <h1>{t("notifications.title")}</h1>
-        </div>
+      <div className="page-actions">
         <button
           className="secondary-button"
           onClick={markAllAsRead}

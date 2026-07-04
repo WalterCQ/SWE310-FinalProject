@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
@@ -15,6 +15,10 @@ export default function Login() {
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    document.title = `${t("auth.login.title")} | TaskFlow`;
+  }, [t]);
 
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });

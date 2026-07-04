@@ -163,14 +163,6 @@ export default function Dashboard() {
         </aside>
       </section>
 
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">{t("dashboard.eyebrow")}</p>
-          <h1>{t("dashboard.title")}</h1>
-        </div>
-        <button className="secondary-button">{t("dashboard.export")}</button>
-      </div>
-
       {state.loading && <section className="panel">{t("dashboard.loading")}</section>}
       {state.error && <section className="panel"><ErrorBlock message={state.error} t={t} /></section>}
       {!state.loading && !state.error && !state.workspaceName && (

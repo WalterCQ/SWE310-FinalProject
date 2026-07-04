@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import ErrorMessage from "../components/ErrorMessage.jsx";
+import Avatar from "../components/Avatar.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import {
   formatApiError,
@@ -24,6 +26,8 @@ function toDeadlineUtc(dateValue) {
 
 export default function Projects() {
   const { t } = useI18n();
+  const [searchParams] = useSearchParams();
+  const selectedProjectId = searchParams.get("projectId") || "";
   const [workspaces, setWorkspaces] = useState([]);
   const [projects, setProjects] = useState([]);
   const [search, setSearch] = useState("");
@@ -71,6 +75,15 @@ export default function Projects() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedProjectId || loading) return;
+
+    document.getElementById(`project-${selectedProjectId}`)?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  }, [selectedProjectId, loading, projects]);
 
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -126,11 +139,7 @@ export default function Projects() {
 
   return (
     <div className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">{t("project.eyebrow")}</p>
-          <h1>{t("project.title")}</h1>
-        </div>
+      <div className="page-actions">
         <button
           className="primary-button small"
           type="button"
@@ -250,7 +259,11 @@ export default function Projects() {
               </thead>
               <tbody>
                 {visibleProjects.map((project) => (
-                  <tr key={project.id}>
+                  <tr
+                    className={project.id === selectedProjectId ? "target-highlight" : ""}
+                    id={`project-${project.id}`}
+                    key={project.id}
+                  >
                     <td>{project.name}</td>
                     <td><StatusBadge variant={project.statusLabel}>{t(enumProjectStatusKey(project.statusLabel))}</StatusBadge></td>
                     <td>
@@ -259,7 +272,12 @@ export default function Projects() {
                         <span>{project.progress}%</span>
                       </div>
                     </td>
-                    <td>{project.owner}</td>
+                    <td>
+                      <span className="person-cell">
+                        <Avatar className="mini-avatar" seed={project.createdByUserId || project.owner} name={project.owner} ariaHidden />
+                        <span className="person-name">{project.owner}</span>
+                      </span>
+                    </td>
                     <td>{project.deadlineLabel}</td>
                   </tr>
                 ))}

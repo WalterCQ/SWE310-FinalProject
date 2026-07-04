@@ -110,6 +110,9 @@ export const auth = {
 
 export const ai = {
   command: (payload) => request({ method: "POST", url: "/api/ai/command", data: payload }),
+  channelCommand: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/ai`, data: payload }),
+  channelAttachments: (channelId) => request({ method: "GET", url: `/api/channels/${channelId}/attachments` }),
+  uploadChannelAttachment: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/attachments`, data: payload }),
   projectSummary: (projectId) => request({ method: "POST", url: "/api/ai/project-summary", data: { projectId } }),
   riskAnalysis: (projectId) => request({ method: "POST", url: "/api/ai/risk-analysis", data: { projectId } }),
   providers: () => request({ method: "GET", url: "/api/ai/providers" }),

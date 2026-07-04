@@ -98,7 +98,8 @@ export function formatDateTime(value) {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-  });
+    hour12: true,
+  }).replace(/\b(am|pm)\b/i, (period) => period.toUpperCase());
 }
 
 export function calculateProjectProgress(project) {

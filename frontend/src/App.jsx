@@ -7,7 +7,6 @@ import Workspaces from "./pages/Workspaces.jsx";
 import Channels from "./pages/Channels.jsx";
 import Projects from "./pages/Projects.jsx";
 import Tasks from "./pages/Tasks.jsx";
-import AIAssistant from "./pages/AIAssistant.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Topbar from "./components/Topbar.jsx";
@@ -15,9 +14,38 @@ import { auth } from "./api/taskflowApi.js";
 import { clearAuthStorage, getStoredUser, storeAuthUser } from "./api/authStorage.js";
 import { useI18n } from "./i18n.jsx";
 
+const routeMeta = {
+  "/dashboard": { eyebrowKey: "dashboard.eyebrow", titleKey: "dashboard.title" },
+  "/workspaces": { eyebrowKey: "workspace.eyebrow", titleKey: "workspace.title" },
+  "/channels": { eyebrowKey: "channel.eyebrow", titleKey: "channel.title" },
+  "/projects": { eyebrowKey: "project.eyebrow", titleKey: "project.title" },
+  "/tasks": { eyebrowKey: "task.eyebrow", titleKey: "task.title" },
+  "/notifications": { eyebrowKey: "notifications.eyebrow", titleKey: "notifications.title" },
+};
+
+function getPageMeta(pathname, search, t) {
+  const path = `/${pathname.split("/").filter(Boolean)[0] || "dashboard"}`;
+  const query = new URLSearchParams(search);
+
+  if (path === "/tasks" && query.get("view") === "mine") {
+    return {
+      eyebrow: t("task.eyebrow"),
+      title: t("task.myTasksTitle"),
+    };
+  }
+
+  const meta = routeMeta[path] || routeMeta["/dashboard"];
+
+  return {
+    eyebrow: t(meta.eyebrowKey),
+    title: t(meta.titleKey),
+  };
+}
+
 function ProtectedShell({ allowedRoles }) {
   const { t } = useI18n();
   const location = useLocation();
+  const pageMeta = getPageMeta(location.pathname, location.search, t);
   const [authVersion, setAuthVersion] = useState(0);
   const [session, setSession] = useState({
     checking: true,
@@ -33,6 +61,10 @@ function ProtectedShell({ allowedRoles }) {
     window.addEventListener("taskflow:auth-expired", handleAuthExpired);
     return () => window.removeEventListener("taskflow:auth-expired", handleAuthExpired);
   }, []);
+
+  useEffect(() => {
+    document.title = `${pageMeta.title} | TaskFlow`;
+  }, [pageMeta.title]);
 
   useEffect(() => {
     let active = true;
@@ -84,7 +116,7 @@ function ProtectedShell({ allowedRoles }) {
     <div className="app-shell">
       <Sidebar user={session.user} />
       <main className="main-area">
-        <Topbar />
+        <Topbar pageMeta={pageMeta} />
         <section className="page-content">
           <Outlet />
         </section>
@@ -106,7 +138,6 @@ export default function App() {
         <Route path="/channels" element={<Channels />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/tasks" element={<Tasks />} />
-        <Route path="/ai-assistant" element={<AIAssistant />} />
         <Route path="/notifications" element={<Notifications />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

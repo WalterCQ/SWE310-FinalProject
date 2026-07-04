@@ -138,6 +138,7 @@ builder.Services.AddScoped<IAiCommandService, AiCommandService>();
 builder.Services.AddScoped<IAiProviderService, AiProviderService>();
 builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<CollaborationAiPlugin>();
+builder.Services.AddHttpClient();
 builder.Services.AddHostedService<ReminderBackgroundService>();
 
 var app = builder.Build();

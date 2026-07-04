@@ -1,22 +1,38 @@
 import { useEffect, useRef, useState } from "react";
-import { Hash, Send, Wifi, WifiOff } from "lucide-react";
-import { createChatConnection, chatConnectionState } from "../api/chatConnection.js";
+import { useSearchParams } from "react-router-dom";
 import {
+  AtSign,
+  Bot,
+  Code2,
+  FileText,
+  Hash,
+  Image,
+  ListTodo,
+  Paperclip,
+  Send,
+  Sparkles,
+  Wifi,
+  WifiOff,
+  X,
+} from "lucide-react";
+import { createChatConnection, chatConnectionState } from "../api/chatConnection.js";
+import Avatar from "../components/Avatar.jsx";
+import {
+  ai as aiApi,
   channels as channelsApi,
   formatApiError,
   messages as messagesApi,
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
-import { asArray, mapChannel, mapMessage, mapWorkspace, selectPrimaryWorkspace } from "../api/mappers.js";
+import {
+  asArray,
+  formatDateTime,
+  mapChannel,
+  mapMessage,
+  mapWorkspace,
+  selectPrimaryWorkspace,
+} from "../api/mappers.js";
 import { useI18n } from "../i18n.jsx";
-
-const connectionLabels = {
-  connecting: "Connecting",
-  connected: "Live",
-  reconnecting: "Reconnecting",
-  offline: "Offline",
-  error: "Realtime unavailable",
-};
 
 function normalizeRealtimeMessage(message) {
   return {
@@ -50,25 +66,71 @@ function formatRealtimeError(error) {
   return error?.message || "Realtime chat request failed.";
 }
 
+function normalizeAttachment(attachment) {
+  return {
+    ...attachment,
+    id: attachment.id,
+    fileName: attachment.fileName || "attachment",
+    contentType: attachment.contentType || "application/octet-stream",
+    sizeBytes: Number(attachment.sizeBytes || 0),
+    summary: attachment.summary || "",
+    time: formatDateTime(attachment.createdAtUtc),
+  };
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return "0 KB";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function isAiMention(content) {
+  return content.includes("@TaskFlow AI") || content.toLowerCase().includes("@taskflow ai");
+}
+
+function getMessageTimestamp(message) {
+  const date = new Date(message?.createdAtUtc || 0);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
 export default function Channels() {
   const { t } = useI18n();
+  const [searchParams] = useSearchParams();
+  const selectedChannelId = searchParams.get("channelId") || "";
   const [workspaceName, setWorkspaceName] = useState("");
   const [channels, setChannels] = useState([]);
   const [activeChannelId, setActiveChannelId] = useState("");
   const [messages, setMessages] = useState([]);
+  const [aiMessages, setAiMessages] = useState([]);
+  const [attachments, setAttachments] = useState([]);
+  const [selectedAttachmentId, setSelectedAttachmentId] = useState("");
+  const [selectedFile, setSelectedFile] = useState(null);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [messageLoading, setMessageLoading] = useState(false);
+  const [attachmentLoading, setAttachmentLoading] = useState(false);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [chatError, setChatError] = useState("");
+  const [aiError, setAiError] = useState("");
   const [connection, setConnection] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState("connecting");
   const [typingUserId, setTypingUserId] = useState("");
   const activeChannelRef = useRef("");
   const messageEndRef = useRef(null);
+  const fileInputRef = useRef(null);
   const typingClearTimerRef = useRef(null);
   const typingStopTimerRef = useRef(null);
   const lastTypingSentRef = useRef(0);
+
+  const quickActions = [
+    { key: "summary", label: t("channel.quickSummary"), command: t("channel.commandSummary"), icon: Sparkles },
+    { key: "tasks", label: t("channel.quickTasks"), command: t("channel.commandTasks"), icon: ListTodo },
+    { key: "report", label: t("channel.quickReport"), command: t("channel.commandReport"), icon: FileText },
+    { key: "ppt", label: t("channel.quickPpt"), command: t("channel.commandPpt"), icon: FileText },
+    { key: "code", label: t("channel.quickCode"), command: t("channel.commandCode"), icon: Code2 },
+  ];
 
   useEffect(() => {
     activeChannelRef.current = activeChannelId;
@@ -99,7 +161,11 @@ export default function Channels() {
         if (active) {
           setWorkspaceName(workspace.name);
           setChannels(channelItems);
-          setActiveChannelId(channelItems[0]?.id || "");
+          setActiveChannelId(
+            channelItems.some((channel) => channel.id === selectedChannelId)
+              ? selectedChannelId
+              : channelItems[0]?.id || ""
+          );
         }
       } catch (apiError) {
         if (active) setLoadError(formatApiError(apiError));
@@ -113,7 +179,14 @@ export default function Channels() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (!selectedChannelId || channels.length === 0) return;
+    if (channels.some((channel) => channel.id === selectedChannelId)) {
+      setActiveChannelId(selectedChannelId);
+    }
+  }, [selectedChannelId, channels]);
 
   useEffect(() => {
     let active = true;
@@ -138,6 +211,41 @@ export default function Channels() {
     }
 
     loadMessages();
+
+    return () => {
+      active = false;
+    };
+  }, [activeChannelId]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAttachments() {
+      if (!activeChannelId) {
+        setAttachments([]);
+        setSelectedAttachmentId("");
+        return;
+      }
+
+      setAttachmentLoading(true);
+      setAiError("");
+
+      try {
+        const attachmentItems = asArray(await aiApi.channelAttachments(activeChannelId)).map(normalizeAttachment);
+        if (active) {
+          setAttachments(attachmentItems);
+          setSelectedAttachmentId((current) =>
+            attachmentItems.some((attachment) => attachment.id === current) ? current : attachmentItems[0]?.id || ""
+          );
+        }
+      } catch (apiError) {
+        if (active) setAiError(formatApiError(apiError));
+      } finally {
+        if (active) setAttachmentLoading(false);
+      }
+    }
+
+    loadAttachments();
 
     return () => {
       active = false;
@@ -248,7 +356,7 @@ export default function Channels() {
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, activeChannelId]);
+  }, [messages, aiMessages, activeChannelId]);
 
   function notifyTyping(nextValue) {
     if (!connection || !activeChannelId || connection.state !== chatConnectionState.connected) return;
@@ -279,42 +387,145 @@ export default function Channels() {
     notifyTyping(nextValue);
   }
 
+  function insertMention() {
+    setDraft((current) => {
+      if (isAiMention(current)) return current;
+      return `${current.trim() ? `${current.trim()} ` : ""}@TaskFlow AI `;
+    });
+  }
+
+  function handleComposerKeyDown(event) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent?.isComposing) return;
+
+    event.preventDefault();
+    if (canSubmit) event.currentTarget.form?.requestSubmit();
+  }
+
+  function handleFileChange(event) {
+    const file = event.target.files?.[0] || null;
+    setSelectedFile(file);
+    setAiError("");
+  }
+
+  function clearSelectedFile() {
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function uploadSelectedAttachment() {
+    if (!selectedFile || !activeChannelId) return null;
+
+    setUploadingAttachment(true);
+    setAiError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      const attachment = normalizeAttachment(await aiApi.uploadChannelAttachment(activeChannelId, formData));
+      setAttachments((current) => [attachment, ...current.filter((item) => item.id !== attachment.id)]);
+      setSelectedAttachmentId(attachment.id);
+      clearSelectedFile();
+      return attachment;
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+      throw apiError;
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
+
+  async function runAiCommand(command, attachmentId = "") {
+    if (!activeChannelId || !command.trim()) return null;
+
+    setAiLoading(true);
+    setAiError("");
+
+    try {
+      const response = await aiApi.channelCommand(activeChannelId, {
+        command: command.trim(),
+        attachmentId: attachmentId || null,
+      });
+      const createdAtUtc = response?.createdAtUtc || new Date().toISOString();
+      const aiMessage = {
+        id: `ai-${activeChannelId}-${Date.now()}`,
+        channelId: activeChannelId,
+        sender: "TaskFlow AI",
+        text: response?.result || t("channel.aiEmpty"),
+        createdAtUtc,
+        time: formatDateTime(createdAtUtc),
+        isAi: true,
+        artifactType: response?.artifactType || "answer",
+        sources: response?.sources || [],
+        suggestedTasks: response?.suggestedTasks || [],
+        createdTaskTitle: response?.createdTaskTitle || "",
+      };
+      setAiMessages((current) => [...current, aiMessage]);
+      return response;
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+      return null;
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   async function sendMessage(event) {
     event.preventDefault();
     const content = draft.trim();
-    if (!content || !activeChannelId) return;
-
-    if (!connection || connection.state !== chatConnectionState.connected) {
-      setChatError(t("channel.readyError"));
-      return;
-    }
+    if ((!content && !selectedFile) || !activeChannelId) return;
 
     setChatError("");
+    setAiError("");
 
+    let uploadedAttachment = null;
     try {
-      await connection.invoke("SendMessage", activeChannelId, content);
-      setDraft("");
-      clearTimeout(typingStopTimerRef.current);
-      await connection.invoke("StopTyping", activeChannelId);
-    } catch (hubError) {
-      setChatError(formatRealtimeError(hubError));
+      if (selectedFile) {
+        uploadedAttachment = await uploadSelectedAttachment();
+      }
+
+      if (content) {
+        if (!connection || connection.state !== chatConnectionState.connected) {
+          setChatError(t("channel.readyError"));
+          return;
+        }
+
+        await connection.invoke("SendMessage", activeChannelId, content);
+        setDraft("");
+        clearTimeout(typingStopTimerRef.current);
+        await connection.invoke("StopTyping", activeChannelId);
+      }
+
+      if (isAiMention(content) || (!content && uploadedAttachment)) {
+        const command = content || t("channel.commandAttachment");
+        await runAiCommand(command, uploadedAttachment?.id || selectedAttachmentId);
+      }
+    } catch (error) {
+      if (error?.errors || error?.statusCode) {
+        setAiError(formatApiError(error));
+      } else {
+        setChatError(formatRealtimeError(error));
+      }
     }
   }
 
   const activeChannel = channels.find((channel) => channel.id === activeChannelId);
+  const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId);
   const connectionLabel = t(`channel.${connectionStatus}`);
   const isConnected = connectionStatus === "connected";
-  const canSend = Boolean(activeChannel && draft.trim() && isConnected);
+  const combinedMessages = [
+    ...messages,
+    ...aiMessages.filter((message) => message.channelId === activeChannelId),
+  ].sort((left, right) => getMessageTimestamp(left) - getMessageTimestamp(right));
+  const canSubmit = Boolean(
+    activeChannel
+      && (draft.trim() || selectedFile)
+      && !uploadingAttachment
+      && !aiLoading
+      && (isConnected || !draft.trim())
+  );
 
   return (
     <div className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">{t("channel.eyebrow")}</p>
-          <h1>{t("channel.title")}</h1>
-        </div>
-      </div>
-
       {loading && <section className="panel">{t("channel.loading")}</section>}
       {loadError && <section className="panel"><strong>{t("channel.unableLoad")}</strong><p>{loadError}</p></section>}
       {!loading && !loadError && !workspaceName && (
@@ -322,8 +533,12 @@ export default function Channels() {
       )}
 
       {!loading && !loadError && workspaceName && (
-        <section className="chat-layout">
+        <section className="channel-workspace">
           <aside className="panel channel-list" aria-label={t("channel.workspaceList")}>
+            <div className="channel-list-header">
+              <span>{workspaceName}</span>
+              <strong>{channels.length}</strong>
+            </div>
             {channels.length === 0 && (
               <div className="chat-empty compact">
                 <strong>{t("channel.empty")}</strong>
@@ -349,14 +564,18 @@ export default function Channels() {
                 <h3>{activeChannel ? `# ${activeChannel.name}` : t("channel.noneSelected")}</h3>
                 <span>{activeChannel ? t("channel.members", { count: activeChannel.memberCount }) : workspaceName}</span>
               </div>
-              <span className={`connection-pill ${connectionStatus}`} role="status" aria-live="polite">
-                {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />} {connectionLabel}
-              </span>
+              <div className="chat-header-actions">
+                <span className="ai-member-pill"><Bot size={14} /> {t("channel.aiMember")}</span>
+                <span className={`connection-pill ${connectionStatus}`} role="status" aria-live="polite">
+                  {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />} {connectionLabel}
+                </span>
+              </div>
             </div>
 
             {chatError && <div className="chat-alert" role="alert">{chatError}</div>}
+            {aiError && <div className="chat-alert ai-error" role="alert">{aiError}</div>}
 
-            <div className="message-list" aria-label={t("channel.messages")} aria-live="polite" aria-busy={messageLoading}>
+            <div className="message-list" aria-label={t("channel.messages")} aria-live="polite" aria-busy={messageLoading || aiLoading}>
               {messageLoading && (
                 <div className="chat-loading">
                   <span />
@@ -364,21 +583,45 @@ export default function Channels() {
                   <span />
                 </div>
               )}
-              {!messageLoading && activeChannel && messages.length === 0 && (
+              {!messageLoading && activeChannel && combinedMessages.length === 0 && (
                 <div className="chat-empty">
                   <strong>{t("channel.noMessages")}</strong>
                   <p>{t("channel.noMessagesHelp")}</p>
                 </div>
               )}
-              {!messageLoading && messages.map((message, index) => (
-                <div className="message-row" key={message.id}>
-                  <div className="activity-index message-index">{String(index + 1).padStart(2, "0")}</div>
+              {!messageLoading && combinedMessages.map((message) => (
+                <div className={`message-row ${message.isAi ? "ai-message-row" : ""}`} key={message.id}>
+                  {message.isAi ? (
+                    <div className="message-avatar" aria-hidden="true"><Bot size={17} /></div>
+                  ) : (
+                    <Avatar className="message-avatar" seed={message.senderId || message.sender} name={message.sender} ariaHidden />
+                  )}
                   <div className="message-body">
                     <strong>{message.sender} <span className="message-time">{message.time}</span></strong>
                     <p>{message.text}</p>
+                    {message.isAi && message.sources.length > 0 && (
+                      <div className="message-sources">
+                        <span>{t("channel.sources")}</span>
+                        {message.sources.slice(0, 4).map((source) => <small key={source}>{source}</small>)}
+                      </div>
+                    )}
+                    {message.isAi && message.createdTaskTitle && (
+                      <div className="created-task-chip">
+                        <ListTodo size={14} /> {t("channel.createdTask", { title: message.createdTaskTitle })}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
+              {aiLoading && (
+                <div className="message-row ai-message-row">
+                  <div className="message-avatar" aria-hidden="true"><Bot size={17} /></div>
+                  <div className="message-body">
+                    <strong>TaskFlow AI</strong>
+                    <p>{t("channel.aiThinking")}</p>
+                  </div>
+                </div>
+              )}
               <div ref={messageEndRef} />
             </div>
 
@@ -386,22 +629,122 @@ export default function Channels() {
               {typingUserId ? t("channel.typing") : ""}
             </div>
 
-            <form className="message-input" onSubmit={sendMessage}>
+            <form className="message-composer" onSubmit={sendMessage}>
+              <div className="composer-actions" role="toolbar" aria-label={t("channel.composeActions")}>
+                <button type="button" onClick={insertMention} disabled={!activeChannel} aria-label={t("channel.mentionAi")} title={t("channel.mentionAi")}>
+                  <AtSign size={16} />
+                  <span>{t("channel.mentionAi")}</span>
+                </button>
+                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={!activeChannel || uploadingAttachment} aria-label={t("channel.attach")} title={t("channel.attach")}>
+                  <Paperclip size={16} />
+                  <span>{t("channel.attach")}</span>
+                </button>
+                <input ref={fileInputRef} className="sr-only" type="file" onChange={handleFileChange} />
+              </div>
               <label className="sr-only" htmlFor="channel-message">{t("channel.message")}</label>
-              <input
+              <textarea
                 id="channel-message"
                 placeholder={activeChannel ? t("channel.messagePlaceholder", { name: activeChannel.name }) : t("channel.selectChannel")}
                 value={draft}
                 onChange={handleDraftChange}
-                disabled={!activeChannel || !isConnected}
+                onKeyDown={handleComposerKeyDown}
+                disabled={!activeChannel}
                 aria-describedby="chat-helper"
+                rows={2}
               />
-              <button disabled={!canSend} aria-label={t("channel.send")} type="submit"><Send size={18} /></button>
+              {selectedFile && (
+                <div className="selected-file-chip">
+                  <FileText size={16} />
+                  <span>{selectedFile.name} · {formatFileSize(selectedFile.size)}</span>
+                  <button type="button" onClick={clearSelectedFile} aria-label={t("channel.clearAttachment")}><X size={14} /></button>
+                </div>
+              )}
+              <div className="composer-footer">
+                <p className="chat-helper" id="chat-helper">
+                  {isConnected ? t("channel.enterHelper") : t("channel.waitingHelper")}
+                </p>
+                <button
+                  disabled={!canSubmit}
+                  className="composer-send"
+                  type="submit"
+                  aria-label={uploadingAttachment ? t("channel.uploading") : t("channel.send")}
+                  title={uploadingAttachment ? t("channel.uploading") : t("channel.send")}
+                >
+                  <Send size={17} />
+                  <span className="sr-only">{uploadingAttachment ? t("channel.uploading") : t("channel.send")}</span>
+                </button>
+              </div>
             </form>
-            <p className="chat-helper" id="chat-helper">
-              {isConnected ? t("channel.liveHelper") : t("channel.waitingHelper")}
-            </p>
           </article>
+
+          <aside className="panel channel-inspector" aria-label={t("channel.aiPanel")}>
+            <div className="ai-member-card">
+              <div className="ai-member-icon"><Bot size={19} /></div>
+              <div>
+                <strong>{t("channel.aiMember")}</strong>
+                <p>{t("channel.aiMemberHelp")}</p>
+              </div>
+            </div>
+
+            <div className="quick-action-grid">
+              {quickActions.map((action) => {
+                const Icon = action.icon;
+                return (
+                  <button
+                    key={action.key}
+                    type="button"
+                    onClick={() => runAiCommand(action.command, selectedAttachmentId)}
+                    disabled={!activeChannel || aiLoading}
+                  >
+                    <Icon size={16} />
+                    <span>{action.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="inspector-section">
+              <div className="inspector-heading">
+                <strong>{t("channel.attachments")}</strong>
+                <span>{attachments.length}</span>
+              </div>
+              {attachmentLoading && <p className="muted-small">{t("channel.loadingAttachments")}</p>}
+              {!attachmentLoading && attachments.length === 0 && <p className="muted-small">{t("channel.noAttachments")}</p>}
+              <div className="attachment-list">
+                {attachments.map((attachment) => {
+                  const isImage = attachment.contentType.startsWith("image/");
+                  return (
+                    <button
+                      key={attachment.id}
+                      type="button"
+                      className={attachment.id === selectedAttachmentId ? "active" : ""}
+                      onClick={() => setSelectedAttachmentId(attachment.id)}
+                    >
+                      {isImage ? <Image size={16} /> : <FileText size={16} />}
+                      <span>
+                        <strong>{attachment.fileName}</strong>
+                        <small>{formatFileSize(attachment.sizeBytes)} · {attachment.time}</small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="inspector-section selected-context">
+              <div className="inspector-heading">
+                <strong>{t("channel.selectedContext")}</strong>
+              </div>
+              {selectedAttachment ? (
+                <div className="attachment-summary-card">
+                  <strong>{selectedAttachment.fileName}</strong>
+                  <p>{selectedAttachment.summary || t("channel.noAttachmentSummary")}</p>
+                </div>
+              ) : (
+                <p className="muted-small">{t("channel.noSelectedContext")}</p>
+              )}
+            </div>
+          </aside>
         </section>
       )}
     </div>

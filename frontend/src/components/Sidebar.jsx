@@ -1,7 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   Bell,
-  Bot,
   Boxes,
   KanbanSquare,
   LayoutDashboard,
@@ -11,6 +10,7 @@ import {
 } from "lucide-react";
 import { clearAuthStorage } from "../api/authStorage.js";
 import { useI18n } from "../i18n.jsx";
+import Avatar from "./Avatar.jsx";
 
 const navItems = [
   { labelKey: "nav.dashboard", path: "/dashboard", icon: LayoutDashboard },
@@ -18,7 +18,6 @@ const navItems = [
   { labelKey: "nav.channels", path: "/channels", icon: MessageSquare },
   { labelKey: "nav.projects", path: "/projects", icon: KanbanSquare },
   { labelKey: "nav.tasks", path: "/tasks", icon: SquareCheckBig },
-  { labelKey: "nav.aiAssistant", path: "/ai-assistant", icon: Bot },
   { labelKey: "nav.notifications", path: "/notifications", icon: Bell },
 ];
 
@@ -27,15 +26,8 @@ export default function Sidebar({ user }) {
   const { t } = useI18n();
   const userName = user?.name || localStorage.getItem("userName") || t("app.user.default");
   const userRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || t("app.role.default");
+  const userSeed = user?.userId || localStorage.getItem("userId") || userName;
   const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(userRole));
-
-  // Get initials from name (e.g. "John Doe" → "JD")
-  const initials = userName
-    .split(" ")
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
 
   function logout() {
     clearAuthStorage();
@@ -72,7 +64,7 @@ export default function Sidebar({ user }) {
 
       <div className="sidebar-footer">
         <div className="profile-card">
-          <div className="avatar">{initials}</div>
+          <Avatar className="avatar" seed={userSeed} name={userName} ariaHidden />
           <div>
             <strong>{userName}</strong>
             <p>{userRole}</p>

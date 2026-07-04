@@ -48,3 +48,34 @@ public class AiResponse
     public bool UsedLlm { get; set; }
     public IReadOnlyCollection<string> Sources { get; set; } = [];
 }
+
+public class AiChannelCommandRequest
+{
+    [Required, StringLength(4000)]
+    public string Command { get; set; } = string.Empty;
+
+    public Guid? AttachmentId { get; set; }
+}
+
+public class AiChannelCommandResponse
+{
+    public string Result { get; set; } = string.Empty;
+    public string ArtifactType { get; set; } = "answer";
+    public bool UsedLlm { get; set; }
+    public IReadOnlyCollection<string> Sources { get; set; } = [];
+    public IReadOnlyCollection<string> SuggestedTasks { get; set; } = [];
+    public Guid? CreatedTaskId { get; set; }
+    public string? CreatedTaskTitle { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class ChannelAttachmentResponse
+{
+    public Guid Id { get; set; }
+    public Guid ChannelId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    public string Summary { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; }
+}

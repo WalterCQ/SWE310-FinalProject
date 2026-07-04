@@ -18,6 +18,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
     public DbSet<AiProviderCredential> AiProviderCredentials => Set<AiProviderCredential>();
+    public DbSet<ChannelAttachment> ChannelAttachments => Set<ChannelAttachment>();
+    public DbSet<ChannelKnowledgeChunk> ChannelKnowledgeChunks => Set<ChannelKnowledgeChunk>();
     public DbSet<AgentJob> AgentJobs => Set<AgentJob>();
     public DbSet<AgentStep> AgentSteps => Set<AgentStep>();
     public DbSet<AgentSubJob> AgentSubJobs => Set<AgentSubJob>();
@@ -205,6 +207,47 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasOne(credential => credential.User)
                 .WithMany()
                 .HasForeignKey(credential => credential.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ChannelAttachment>(entity =>
+        {
+            entity.HasIndex(attachment => new { attachment.ChannelId, attachment.CreatedAtUtc });
+            entity.Property(attachment => attachment.FileName).HasMaxLength(260);
+            entity.Property(attachment => attachment.ContentType).HasMaxLength(160);
+            entity.Property(attachment => attachment.Summary).HasMaxLength(4000);
+            entity.HasOne(attachment => attachment.Workspace)
+                .WithMany()
+                .HasForeignKey(attachment => attachment.WorkspaceId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(attachment => attachment.Channel)
+                .WithMany()
+                .HasForeignKey(attachment => attachment.ChannelId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(attachment => attachment.UploadedByUser)
+                .WithMany()
+                .HasForeignKey(attachment => attachment.UploadedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ChannelKnowledgeChunk>(entity =>
+        {
+            entity.HasIndex(chunk => new { chunk.WorkspaceId, chunk.ChannelId });
+            entity.HasIndex(chunk => chunk.AttachmentId);
+            entity.Property(chunk => chunk.SourceType).HasMaxLength(40);
+            entity.Property(chunk => chunk.SourceLabel).HasMaxLength(320);
+            entity.Property(chunk => chunk.Content).HasMaxLength(2500);
+            entity.HasOne(chunk => chunk.Workspace)
+                .WithMany()
+                .HasForeignKey(chunk => chunk.WorkspaceId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(chunk => chunk.Channel)
+                .WithMany()
+                .HasForeignKey(chunk => chunk.ChannelId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(chunk => chunk.Attachment)
+                .WithMany(attachment => attachment.KnowledgeChunks)
+                .HasForeignKey(chunk => chunk.AttachmentId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

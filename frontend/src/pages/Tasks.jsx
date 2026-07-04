@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import Avatar from "../components/Avatar.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import {
@@ -49,8 +51,19 @@ function buildTaskUpdatePayload(task, updates = {}) {
   };
 }
 
+function compareTasksByDeadline(left, right) {
+  const leftTime = left.deadlineUtc ? new Date(left.deadlineUtc).getTime() : Number.MAX_SAFE_INTEGER;
+  const rightTime = right.deadlineUtc ? new Date(right.deadlineUtc).getTime() : Number.MAX_SAFE_INTEGER;
+  return leftTime - rightTime;
+}
+
 export default function Tasks() {
   const { t } = useI18n();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedProjectParam = searchParams.get("projectId") || "";
+  const selectedTaskId = searchParams.get("taskId") || "";
+  const isMyTasksView = searchParams.get("view") === "mine";
+  const currentUserId = localStorage.getItem("userId") || "";
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState([]);
@@ -89,7 +102,11 @@ export default function Tasks() {
 
         if (active) {
           setProjects(mappedProjects);
-          setSelectedProjectId(mappedProjects[0]?.id || "");
+          setSelectedProjectId(
+            mappedProjects.some((project) => project.id === selectedProjectParam)
+              ? selectedProjectParam
+              : mappedProjects[0]?.id || ""
+          );
         }
       } catch (error) {
         if (active) setApiError(formatApiError(error));
@@ -106,20 +123,22 @@ export default function Tasks() {
   }, []);
 
   useEffect(() => {
+    if (!selectedProjectParam || projects.length === 0) return;
+    if (projects.some((project) => project.id === selectedProjectParam)) {
+      setSelectedProjectId(selectedProjectParam);
+    }
+  }, [selectedProjectParam, projects]);
+
+  useEffect(() => {
     let active = true;
 
     async function loadTasks() {
-      if (!selectedProjectId) {
-        setTasks([]);
-        return;
-      }
-
       setLoadingTasks(true);
       setApiError("");
 
       try {
-        const data = await tasksApi.listByProject(selectedProjectId);
-        if (active) setTasks(asArray(data).map((task) => mapTask(task, projectLookup)));
+        const visibleTasks = await fetchVisibleTasks();
+        if (active) setTasks(visibleTasks);
       } catch (error) {
         if (active) setApiError(formatApiError(error));
       } finally {
@@ -132,7 +151,16 @@ export default function Tasks() {
     return () => {
       active = false;
     };
-  }, [selectedProjectId, projectLookup]);
+  }, [selectedProjectId, projectLookup, projects, isMyTasksView, currentUserId]);
+
+  useEffect(() => {
+    if (!selectedTaskId || loadingTasks) return;
+
+    document.getElementById(`task-${selectedTaskId}`)?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  }, [selectedTaskId, loadingTasks, tasks]);
 
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -151,9 +179,25 @@ export default function Tasks() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  async function loadProjectTasks(projectId = selectedProjectId) {
+  async function fetchVisibleTasks(projectId = selectedProjectId) {
+    if (isMyTasksView) {
+      if (!currentUserId || projects.length === 0) return [];
+
+      const taskGroups = await Promise.all(projects.map((project) => tasksApi.listByProject(project.id)));
+      return taskGroups
+        .flatMap((group) => asArray(group).map((task) => mapTask(task, projectLookup)))
+        .filter((task) => task.assigneeId === currentUserId)
+        .sort(compareTasksByDeadline);
+    }
+
+    if (!projectId) return [];
+
     const data = await tasksApi.listByProject(projectId);
-    setTasks(asArray(data).map((task) => mapTask(task, projectLookup)));
+    return asArray(data).map((task) => mapTask(task, projectLookup));
+  }
+
+  async function loadProjectTasks(projectId = selectedProjectId) {
+    setTasks(await fetchVisibleTasks(projectId));
   }
 
   async function addTask(event) {
@@ -229,86 +273,89 @@ export default function Tasks() {
 
   return (
     <div className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">{t("task.eyebrow")}</p>
-          <h1>{t("task.title")}</h1>
+      {isMyTasksView && (
+        <div className="page-actions">
+          <button className="secondary-button" type="button" onClick={() => setSearchParams({})}>
+            {t("task.viewAll")}
+          </button>
         </div>
-      </div>
+      )}
 
       {apiError && <section className="panel"><strong>{t("task.apiError")}</strong><p>{apiError}</p></section>}
 
-      <section className="task-layout">
-        <article className="panel form-panel">
-          <div className="panel-header">
-            <h3>{t("task.createTitle")}</h3>
-            <span>{t("task.createHelp")}</span>
-          </div>
-
-          <form className="task-form" onSubmit={addTask} noValidate>
-            <label>
-              {t("task.project")}
-              <select
-                value={selectedProjectId}
-                onChange={(event) => {
-                  setSelectedProjectId(event.target.value);
-                  setErrors({ ...errors, project: "" });
-                }}
-                disabled={loadingProjects || projects.length === 0}
-              >
-                {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-              <ErrorMessage>{errors.project}</ErrorMessage>
-            </label>
-
-            <label>
-              {t("task.taskTitle")}
-              <input name="title" value={form.title} onChange={updateField} placeholder={t("task.placeholder.title")} />
-              <ErrorMessage>{errors.title}</ErrorMessage>
-            </label>
-
-            <label>
-              {t("task.description")}
-              <textarea name="description" value={form.description} onChange={updateField} placeholder={t("task.placeholder.description")} />
-              <ErrorMessage>{errors.description}</ErrorMessage>
-            </label>
-
-            <div className="form-grid-2">
-              <label>
-                {t("task.status")}
-                <select name="status" value={form.status} onChange={updateField}>
-                  {statusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
-                  ))}
-                </select>
-                <ErrorMessage>{errors.status}</ErrorMessage>
-              </label>
-
-              <label>
-                {t("task.priority")}
-                <select name="priority" value={form.priority} onChange={updateField}>
-                  {priorityOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
-                  ))}
-                </select>
-                <ErrorMessage>{errors.priority}</ErrorMessage>
-              </label>
-
-              <label>
-                {t("task.dueDate")}
-                <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
-                <ErrorMessage>{errors.dueDate}</ErrorMessage>
-              </label>
+      <section className={`task-layout ${isMyTasksView ? "wide" : ""}`}>
+        {!isMyTasksView && (
+          <article className="panel form-panel">
+            <div className="panel-header">
+              <h3>{t("task.createTitle")}</h3>
+              <span>{t("task.createHelp")}</span>
             </div>
 
-            <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId}>
-              <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
-            </button>
-          </form>
-        </article>
+            <form className="task-form" onSubmit={addTask} noValidate>
+              <label>
+                {t("task.project")}
+                <select
+                  value={selectedProjectId}
+                  onChange={(event) => {
+                    setSelectedProjectId(event.target.value);
+                    setErrors({ ...errors, project: "" });
+                  }}
+                  disabled={loadingProjects || projects.length === 0}
+                >
+                  {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+                <ErrorMessage>{errors.project}</ErrorMessage>
+              </label>
+
+              <label>
+                {t("task.taskTitle")}
+                <input name="title" value={form.title} onChange={updateField} placeholder={t("task.placeholder.title")} />
+                <ErrorMessage>{errors.title}</ErrorMessage>
+              </label>
+
+              <label>
+                {t("task.description")}
+                <textarea name="description" value={form.description} onChange={updateField} placeholder={t("task.placeholder.description")} />
+                <ErrorMessage>{errors.description}</ErrorMessage>
+              </label>
+
+              <div className="form-grid-2">
+                <label>
+                  {t("task.status")}
+                  <select name="status" value={form.status} onChange={updateField}>
+                    {statusOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
+                    ))}
+                  </select>
+                  <ErrorMessage>{errors.status}</ErrorMessage>
+                </label>
+
+                <label>
+                  {t("task.priority")}
+                  <select name="priority" value={form.priority} onChange={updateField}>
+                    {priorityOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
+                    ))}
+                  </select>
+                  <ErrorMessage>{errors.priority}</ErrorMessage>
+                </label>
+
+                <label>
+                  {t("task.dueDate")}
+                  <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
+                  <ErrorMessage>{errors.dueDate}</ErrorMessage>
+                </label>
+              </div>
+
+              <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId}>
+                <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
+              </button>
+            </form>
+          </article>
+        )}
 
         <section className="kanban-grid">
           {loadingProjects && <article className="panel">{t("task.loadingProjects")}</article>}
@@ -324,7 +371,11 @@ export default function Tasks() {
                 {loadingTasks && column.status === "To Do" && <p>{t("task.loadingTasks")}</p>}
                 {!loadingTasks && column.items.length === 0 && <p>{t("task.noTasks")}</p>}
                 {!loadingTasks && column.items.map((task) => (
-                  <div className="task-card" key={task.id}>
+                  <div
+                    className={`task-card ${task.id === selectedTaskId ? "target-highlight" : ""}`}
+                    id={`task-${task.id}`}
+                    key={task.id}
+                  >
                     <div className="task-card-top">
                       <h4>{task.title}</h4>
                       <StatusBadge variant={task.priorityLabel}>{t(enumPriorityKey(task.priorityLabel))}</StatusBadge>
@@ -334,6 +385,12 @@ export default function Tasks() {
                       <span>{task.project}</span>
                       <span>{task.deadlineLabel}</span>
                     </div>
+                    {task.assigneeId && (
+                      <div className="task-assignee">
+                        <Avatar className="mini-avatar" seed={task.assigneeId} name={task.assignee} ariaHidden />
+                        <span className="person-name">{task.assignee}</span>
+                      </div>
+                    )}
                     <div className="task-actions">
                       <label>
                         <span>{t("task.status")}</span>
