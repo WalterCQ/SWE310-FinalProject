@@ -18,7 +18,6 @@ public class WorkspacesController(IWorkspaceService workspaceService) : Controll
         return this.ToActionResult(await workspaceService.GetWorkspacesAsync());
     }
 
-    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<ActionResult> CreateWorkspace(CreateWorkspaceRequest request)
     {
