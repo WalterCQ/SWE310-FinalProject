@@ -201,7 +201,7 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
             return fallback;
         }
 
-        return value.ToString() ?? fallback;
+        return value.IsT0 ? value.AsT0 : value.ToString() ?? fallback;
     }
 
     private static string TrimTo(string value, int maxLength)

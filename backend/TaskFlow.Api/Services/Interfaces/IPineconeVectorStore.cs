@@ -1,5 +1,3 @@
-using TaskFlow.Api.Models;
-
 namespace TaskFlow.Api.Services.Interfaces;
 
 public interface IPineconeVectorStore

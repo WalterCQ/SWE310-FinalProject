@@ -17,6 +17,10 @@ services:
       AI__ApiKey: ""
       AI__Model: "gpt-4o-mini"
       AI__Endpoint: ""
+      Pinecone__Enabled: "false"
+      Pinecone__ApiKey: ""
+      Pinecone__IndexName: ""
+      Pinecone__NamespacePrefix: "taskflow"
     depends_on:
       - sqlserver
 

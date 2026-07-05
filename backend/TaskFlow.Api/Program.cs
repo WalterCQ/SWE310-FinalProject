@@ -136,6 +136,7 @@ builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAiCommandService, AiCommandService>();
 builder.Services.AddScoped<IAiProviderService, AiProviderService>();
+builder.Services.AddScoped<IPineconeVectorStore, PineconeVectorStore>();
 builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<CollaborationAiPlugin>();
 builder.Services.AddHttpClient();

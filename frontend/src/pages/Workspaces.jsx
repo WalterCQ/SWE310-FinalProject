@@ -601,6 +601,7 @@ export default function Workspaces() {
                     <div className="ai-key-status">
                       {aiProviderState.hasApiKey ? "API key configured. Leave blank to keep current key." : "No API key configured."}
                     </div>
+                    <p className="muted-small">Channel attachment RAG uses the backend Pinecone index.</p>
 
                     <div className="ai-key-field">
                       <label>

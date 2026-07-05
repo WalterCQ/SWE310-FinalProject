@@ -27,6 +27,7 @@ public class AiCommandService(
     IDashboardService dashboardService,
     IAiProviderService aiProviderService,
     CollaborationAiPlugin collaborationAiPlugin,
+    IPineconeVectorStore pineconeVectorStore,
     IHttpClientFactory httpClientFactory) : IAiCommandService
 {
     private const int MaxUploadBytes = 20_000_000;
@@ -287,7 +288,7 @@ public class AiCommandService(
                 cancellationToken);
             var attachmentSnippets = await RetrieveChannelKnowledgeAsync(
                 channel.WorkspaceId,
-                userId,
+                channelId,
                 command,
                 request.AttachmentId,
                 provider,
@@ -339,6 +340,10 @@ public class AiCommandService(
         catch (AttachmentProcessingException ex)
         {
             return ApiResponse.Fail<AiChannelCommandResponse>(ex.Message, ex.StatusCode);
+        }
+        catch (PineconeVectorStoreException ex)
+        {
+            return ApiResponse.Fail<AiChannelCommandResponse>(ex.Message, StatusCodes.Status502BadGateway);
         }
         catch (AiProviderException ex)
         {
@@ -398,29 +403,52 @@ public class AiCommandService(
                 ExtractedText = TrimTo(processed.IndexText, MaxExtractedTextLength)
             };
 
-            dbContext.ChannelAttachments.Add(attachment);
-            foreach (var chunk in chunks)
+            var chunkEntities = new List<ChannelKnowledgeChunk>();
+            var pineconeChunks = new List<PineconeKnowledgeChunk>();
+            for (var index = 0; index < chunks.Length; index++)
             {
+                var chunk = chunks[index];
+                var chunkId = Guid.NewGuid();
                 var embedding = await GenerateEmbeddingAsync(chunk, provider, cancellationToken);
-                dbContext.ChannelKnowledgeChunks.Add(new ChannelKnowledgeChunk
+                chunkEntities.Add(new ChannelKnowledgeChunk
                 {
-                    Id = Guid.NewGuid(),
+                    Id = chunkId,
                     WorkspaceId = channel.WorkspaceId,
                     ChannelId = channelId,
                     AttachmentId = attachment.Id,
                     SourceType = processed.SourceType,
                     SourceLabel = attachment.FileName,
-                    Content = TrimTo(chunk, 2500),
-                    EmbeddingJson = JsonSerializer.Serialize(embedding, JsonOptions)
+                    Content = TrimTo(chunk, 2500)
                 });
+                pineconeChunks.Add(new PineconeKnowledgeChunk(
+                    chunkId,
+                    processed.SourceType,
+                    attachment.FileName,
+                    channel.Name,
+                    TrimTo(chunk, 2500),
+                    index + 1,
+                    embedding));
             }
 
+            await pineconeVectorStore.UpsertChunksAsync(
+                channel.WorkspaceId,
+                channelId,
+                attachment.Id,
+                pineconeChunks,
+                cancellationToken);
+
+            dbContext.ChannelAttachments.Add(attachment);
+            dbContext.ChannelKnowledgeChunks.AddRange(chunkEntities);
             await dbContext.SaveChangesAsync(cancellationToken);
             return ApiResponse.Created(ToAttachmentResponse(attachment), "Attachment indexed for channel AI.");
         }
         catch (AttachmentProcessingException ex)
         {
             return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, ex.StatusCode);
+        }
+        catch (PineconeVectorStoreException ex)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
         }
         catch (AiProviderException ex)
         {
@@ -528,7 +556,7 @@ public class AiCommandService(
 
     private async Task<IReadOnlyList<KnowledgeSnippet>> RetrieveChannelKnowledgeAsync(
         Guid workspaceId,
-        Guid userId,
+        Guid channelId,
         string query,
         Guid? attachmentId,
         AiProviderRuntime provider,
@@ -538,62 +566,29 @@ public class AiCommandService(
             .AsNoTracking()
             .Where(chunk =>
                 chunk.WorkspaceId == workspaceId
-                && (!chunk.Channel!.IsPrivate || chunk.Channel.Members.Any(member => member.UserId == userId)));
+                && chunk.ChannelId == channelId);
 
         if (attachmentId.HasValue)
         {
             chunksQuery = chunksQuery.Where(chunk => chunk.AttachmentId == attachmentId.Value);
         }
 
-        var chunks = await chunksQuery
-            .OrderByDescending(chunk => chunk.CreatedAtUtc)
-            .Take(160)
-            .Select(chunk => new
-            {
-                chunk.SourceLabel,
-                chunk.SourceType,
-                chunk.Content,
-                chunk.EmbeddingJson,
-                ChannelName = chunk.Channel!.Name,
-                chunk.CreatedAtUtc
-            })
-            .ToListAsync(cancellationToken);
-
-        if (chunks.Count == 0)
+        if (!await chunksQuery.AnyAsync(cancellationToken))
         {
             return [];
         }
 
-        var tokens = Tokenize(query);
-        float[]? queryEmbedding = null;
-        if (chunks.Any(chunk => !string.IsNullOrWhiteSpace(chunk.EmbeddingJson)))
-        {
-            queryEmbedding = await GenerateEmbeddingAsync(query, provider, cancellationToken);
-        }
+        var queryEmbedding = await GenerateEmbeddingAsync(query, provider, cancellationToken);
+        var matches = await pineconeVectorStore.SearchAsync(
+            workspaceId,
+            channelId,
+            attachmentId,
+            queryEmbedding,
+            topK: 8,
+            cancellationToken);
 
-        return chunks
-            .Select(chunk =>
-            {
-                var embedding = ParseEmbedding(chunk.EmbeddingJson);
-                var keywordScore = tokens.Sum(token =>
-                    CountMatches(chunk.Content, token) + CountMatches(chunk.SourceLabel, token) * 2);
-                var embeddingScore = queryEmbedding is not null && embedding is not null
-                    ? Math.Max(0, CosineSimilarity(queryEmbedding, embedding)) * 12
-                    : 0;
-                var recencyScore = Math.Max(0, 1 - (DateTime.UtcNow - chunk.CreatedAtUtc).TotalDays / 30);
-
-                return new
-                {
-                    Snippet = new KnowledgeSnippet(
-                        $"{chunk.SourceType}: {chunk.SourceLabel} in #{chunk.ChannelName}",
-                        chunk.Content),
-                    Score = keywordScore + embeddingScore + recencyScore
-                };
-            })
-            .Where(item => item.Score > 0 || tokens.Length == 0)
-            .OrderByDescending(item => item.Score)
-            .Take(8)
-            .Select(item => item.Snippet)
+        return matches
+            .Select(match => new KnowledgeSnippet(match.Source, match.Text))
             .ToArray();
     }
 
@@ -1091,48 +1086,6 @@ public class AiCommandService(
             Summary = attachment.Summary,
             CreatedAtUtc = attachment.CreatedAtUtc
         };
-    }
-
-    private static float[]? ParseEmbedding(string? embeddingJson)
-    {
-        if (string.IsNullOrWhiteSpace(embeddingJson))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<float[]>(embeddingJson, JsonOptions);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static double CosineSimilarity(float[] left, float[] right)
-    {
-        if (left.Length == 0 || left.Length != right.Length)
-        {
-            return 0;
-        }
-
-        double dot = 0;
-        double leftMagnitude = 0;
-        double rightMagnitude = 0;
-        for (var index = 0; index < left.Length; index++)
-        {
-            dot += left[index] * right[index];
-            leftMagnitude += left[index] * left[index];
-            rightMagnitude += right[index] * right[index];
-        }
-
-        if (leftMagnitude == 0 || rightMagnitude == 0)
-        {
-            return 0;
-        }
-
-        return dot / (Math.Sqrt(leftMagnitude) * Math.Sqrt(rightMagnitude));
     }
 
     private static string TrimProviderError(string body, string apiKey)

@@ -10,7 +10,8 @@ namespace TaskFlow.Api.Services;
 public class WorkspaceService(
     AppDbContext dbContext,
     ICurrentUserService currentUser,
-    IPermissionService permissionService) : IWorkspaceService
+    IPermissionService permissionService,
+    IPineconeVectorStore pineconeVectorStore) : IWorkspaceService
 {
     public async Task<ApiResponse<IEnumerable<WorkspaceResponse>>> GetWorkspacesAsync()
     {
@@ -132,6 +133,18 @@ public class WorkspaceService(
         var attachments = await dbContext.ChannelAttachments
             .Where(attachment => attachment.WorkspaceId == workspaceId)
             .ToListAsync();
+
+        if (knowledgeChunks.Count > 0)
+        {
+            try
+            {
+                await pineconeVectorStore.DeleteByWorkspaceAsync(workspaceId);
+            }
+            catch (PineconeVectorStoreException ex)
+            {
+                return ApiResponse.Fail<bool>(ex.Message, StatusCodes.Status502BadGateway);
+            }
+        }
 
         dbContext.ChannelKnowledgeChunks.RemoveRange(knowledgeChunks);
         dbContext.ChannelAttachments.RemoveRange(attachments);
