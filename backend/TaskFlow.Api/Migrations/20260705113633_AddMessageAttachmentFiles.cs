@@ -53,7 +53,7 @@ namespace TaskFlow.Api.Migrations
                 column: "MessageId",
                 principalTable: "Messages",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
+                onDelete: ReferentialAction.NoAction);
         }
 
         /// <inheritdoc />

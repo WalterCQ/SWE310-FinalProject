@@ -251,7 +251,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasOne(attachment => attachment.Message)
                 .WithMany(message => message.Attachments)
                 .HasForeignKey(attachment => attachment.MessageId)
-                .OnDelete(DeleteBehavior.SetNull);
+                .OnDelete(DeleteBehavior.NoAction);
             entity.HasOne(attachment => attachment.UploadedByUser)
                 .WithMany()
                 .HasForeignKey(attachment => attachment.UploadedByUserId)

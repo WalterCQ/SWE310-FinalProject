@@ -1166,7 +1166,7 @@ namespace TaskFlow.Api.Migrations
                     b.HasOne("TaskFlow.Api.Models.Message", "Message")
                         .WithMany("Attachments")
                         .HasForeignKey("MessageId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("TaskFlow.Api.Models.User", "UploadedByUser")
                         .WithMany()
