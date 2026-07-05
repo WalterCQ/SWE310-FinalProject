@@ -9,7 +9,8 @@ import {
   projects as projectsApi,
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
-import { asArray, mapProject, mapProjectMember, mapWorkspace } from "../api/mappers.js";
+import { asArray, mapProject, mapProjectMember, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
+import { canManageProjectMembers, canManageWorkspaceMembers } from "../api/permissions.js";
 import { enumProjectStatusKey, useI18n } from "../i18n.jsx";
 
 const blankForm = {
@@ -41,7 +42,9 @@ export default function Projects() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedProjectParam = searchParams.get("projectId") || "";
+  const currentUserId = localStorage.getItem("userId") || "";
   const [workspaces, setWorkspaces] = useState([]);
+  const [workspaceRolesById, setWorkspaceRolesById] = useState({});
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState(selectedProjectParam);
   const [members, setMembers] = useState([]);
@@ -62,6 +65,25 @@ export default function Projects() {
   const selectedProject = useMemo(() => {
     return projects.find((project) => project.id === selectedProjectId);
   }, [projects, selectedProjectId]);
+
+  function isCurrentUser(userId) {
+    return Boolean(userId && currentUserId && String(userId).toLowerCase() === currentUserId.toLowerCase());
+  }
+
+  const manageableWorkspaces = useMemo(() => {
+    return workspaces.filter((workspace) => canManageWorkspaceMembers(workspaceRolesById[workspace.id]));
+  }, [workspaces, workspaceRolesById]);
+
+  const canCreateProject = manageableWorkspaces.length > 0;
+
+  const currentProjectRole = useMemo(() => {
+    return members.find((member) => isCurrentUser(member.userId))?.roleInProject;
+  }, [members, currentUserId]);
+
+  const canManageSelectedProjectMembers = Boolean(selectedProject) && canManageProjectMembers(
+    workspaceRolesById[selectedProject.workspaceId],
+    currentProjectRole
+  );
 
   useEffect(() => {
     const nextSearch = searchParams.get("search") || "";
@@ -90,6 +112,21 @@ export default function Projects() {
       try {
         const workspaceItems = asArray(await workspacesApi.list());
         const mappedWorkspaces = workspaceItems.map(mapWorkspace);
+        const workspaceRoleEntries = await Promise.all(
+          mappedWorkspaces.map(async (workspace) => {
+            try {
+              const workspaceMembers = asArray(await workspacesApi.members(workspace.id)).map(mapWorkspaceMember);
+              const currentMember = workspaceMembers.find((member) => isCurrentUser(member.userId));
+              return [workspace.id, currentMember?.role ?? ""];
+            } catch {
+              return [workspace.id, ""];
+            }
+          })
+        );
+        const workspaceRoleMap = Object.fromEntries(workspaceRoleEntries);
+        const manageableWorkspaceItems = mappedWorkspaces.filter((workspace) =>
+          canManageWorkspaceMembers(workspaceRoleMap[workspace.id])
+        );
         const projectGroups = await Promise.all(
           workspaceItems.map((workspace) => projectsApi.listByWorkspace(workspace.id))
         );
@@ -97,13 +134,14 @@ export default function Projects() {
 
         if (active) {
           setWorkspaces(mappedWorkspaces);
+          setWorkspaceRolesById(workspaceRoleMap);
           setProjects(mappedProjects);
           setSelectedProjectId((current) => mappedProjects.some((project) => project.id === current)
             ? current
             : mappedProjects[0]?.id || "");
           setForm((current) => {
-            const hasWorkspace = mappedWorkspaces.some((workspace) => workspace.id === current.workspaceId);
-            return hasWorkspace ? current : { ...current, workspaceId: mappedWorkspaces[0]?.id || "" };
+            const hasWorkspace = manageableWorkspaceItems.some((workspace) => workspace.id === current.workspaceId);
+            return hasWorkspace ? current : { ...current, workspaceId: manageableWorkspaceItems[0]?.id || "" };
           });
         }
       } catch (apiError) {
@@ -118,7 +156,13 @@ export default function Projects() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!canCreateProject && formOpen) {
+      setFormOpen(false);
+    }
+  }, [canCreateProject, formOpen]);
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
@@ -138,6 +182,7 @@ export default function Projects() {
         return;
       }
 
+      setMembers([]);
       setMemberLoading(true);
       setMemberError("");
 
@@ -166,6 +211,8 @@ export default function Projects() {
 
   function selectProject(projectId) {
     setSelectedProjectId(projectId);
+    setMembers([]);
+    setMemberForm(memberBlankForm);
 
     const nextParams = {};
     if (projectId) nextParams.projectId = projectId;
@@ -305,20 +352,22 @@ export default function Projects() {
 
   return (
     <div className="page-stack">
-      <div className="page-actions">
-        <button
-          className="primary-button small"
-          type="button"
-          onClick={() => {
-            setFormOpen((open) => !open);
-            setCreateError("");
-          }}
-        >
-          <Plus size={18} /> {t("project.new")}
-        </button>
-      </div>
+      {canCreateProject && (
+        <div className="page-actions">
+          <button
+            className="primary-button small"
+            type="button"
+            onClick={() => {
+              setFormOpen((open) => !open);
+              setCreateError("");
+            }}
+          >
+            <Plus size={18} /> {t("project.new")}
+          </button>
+        </div>
+      )}
 
-      {formOpen && (
+      {canCreateProject && formOpen && (
         <section className="panel create-panel">
           <div className="panel-header">
             <h3>{t("project.createTitle")}</h3>
@@ -337,8 +386,8 @@ export default function Projects() {
                   onChange={updateField}
                   disabled={loading || workspaces.length === 0}
                 >
-                  {workspaces.length === 0 && <option value="">{t("project.noWorkspace")}</option>}
-                  {workspaces.map((workspace) => (
+                  {manageableWorkspaces.length === 0 && <option value="">{t("project.noWorkspace")}</option>}
+                  {manageableWorkspaces.map((workspace) => (
                     <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
                   ))}
                 </select>
@@ -373,7 +422,7 @@ export default function Projects() {
             </label>
 
             <div className="button-row">
-              <button className="primary-button" type="submit" disabled={saving || loading || workspaces.length === 0}>
+              <button className="primary-button" type="submit" disabled={saving || loading || manageableWorkspaces.length === 0}>
                 <Plus size={18} /> {saving ? t("project.creating") : t("project.create")}
               </button>
               <button
@@ -487,49 +536,57 @@ export default function Projects() {
                   <strong>{member.name}</strong>
                   <span>{member.email}</span>
                 </div>
-                <select
-                  value={String(member.roleInProject)}
-                  onChange={(event) => updateProjectMemberRole(member, event.target.value)}
-                  disabled={memberSaving}
-                >
-                  {projectRoleOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-                <button
-                  className="danger-button icon-only"
-                  type="button"
-                  aria-label={`Remove ${member.name}`}
-                  onClick={() => removeProjectMember(member)}
-                  disabled={memberSaving}
-                >
-                  <Trash2 size={14} />
-                </button>
+                {canManageSelectedProjectMembers ? (
+                  <>
+                    <select
+                      value={String(member.roleInProject)}
+                      onChange={(event) => updateProjectMemberRole(member, event.target.value)}
+                      disabled={memberSaving}
+                    >
+                      {projectRoleOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="danger-button icon-only"
+                      type="button"
+                      aria-label={`Remove ${member.name}`}
+                      onClick={() => removeProjectMember(member)}
+                      disabled={memberSaving}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                ) : (
+                  <span className="member-role-badge">{member.roleLabel}</span>
+                )}
               </div>
             ))}
           </div>
 
-          <form className="member-add-row wide" onSubmit={addProjectMember}>
-            <input
-              value={memberForm.email}
-              onChange={(event) => {
-                setMemberForm({ ...memberForm, email: event.target.value });
-                setMemberError("");
-              }}
-              placeholder="workspace.member@email.com"
-            />
-            <select
-              value={memberForm.roleInProject}
-              onChange={(event) => setMemberForm({ ...memberForm, roleInProject: event.target.value })}
-            >
-              {projectRoleOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <button className="primary-button compact" type="submit" disabled={memberSaving}>
-              <UserPlus size={16} /> Add to project
-            </button>
-          </form>
+          {canManageSelectedProjectMembers && (
+            <form className="member-add-row wide" onSubmit={addProjectMember}>
+              <input
+                value={memberForm.email}
+                onChange={(event) => {
+                  setMemberForm({ ...memberForm, email: event.target.value });
+                  setMemberError("");
+                }}
+                placeholder="workspace.member@email.com"
+              />
+              <select
+                value={memberForm.roleInProject}
+                onChange={(event) => setMemberForm({ ...memberForm, roleInProject: event.target.value })}
+              >
+                {projectRoleOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <button className="primary-button compact" type="submit" disabled={memberSaving}>
+                <UserPlus size={16} /> Add to project
+              </button>
+            </form>
+          )}
         </section>
       )}
     </div>

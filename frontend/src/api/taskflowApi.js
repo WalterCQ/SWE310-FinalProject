@@ -58,6 +58,7 @@ export const workspaces = {
   get: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}` }),
   create: (payload) => request({ method: "POST", url: "/api/workspaces", data: payload }),
   update: (workspaceId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}`, data: payload }),
+  remove: (workspaceId) => request({ method: "DELETE", url: `/api/workspaces/${workspaceId}` }),
   members: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/members` }),
   addMember: (workspaceId, payload) => request({ method: "POST", url: `/api/workspaces/${workspaceId}/members`, data: payload }),
   updateMember: (workspaceId, userId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}/members/${userId}`, data: payload }),

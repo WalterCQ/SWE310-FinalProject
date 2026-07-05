@@ -36,6 +36,12 @@ public class WorkspacesController(IWorkspaceService workspaceService) : Controll
         return this.ToActionResult(await workspaceService.UpdateWorkspaceAsync(workspaceId, request));
     }
 
+    [HttpDelete("{workspaceId:guid}")]
+    public async Task<ActionResult> DeleteWorkspace(Guid workspaceId)
+    {
+        return this.ToActionResult(await workspaceService.DeleteWorkspaceAsync(workspaceId));
+    }
+
     [HttpGet("{workspaceId:guid}/members")]
     public async Task<ActionResult> GetWorkspaceMembers(Guid workspaceId)
     {

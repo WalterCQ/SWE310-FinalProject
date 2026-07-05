@@ -16,7 +16,14 @@ import {
   mapProjectMember,
   mapTask,
   mapTaskComment,
+  mapWorkspace,
+  mapWorkspaceMember,
 } from "../api/mappers.js";
+import {
+  canCreateProjectTask,
+  canDeleteTaskComment,
+  canShowTaskMutationControls,
+} from "../api/permissions.js";
 import { enumPriorityKey, enumTaskStatusKey, useI18n } from "../i18n.jsx";
 
 const blankForm = {
@@ -72,6 +79,9 @@ export default function Tasks() {
   const isMyTasksView = searchParams.get("view") === "mine";
   const currentUserId = localStorage.getItem("userId") || "";
   const [projects, setProjects] = useState([]);
+  const [workspaceRolesById, setWorkspaceRolesById] = useState({});
+  const [projectRolesById, setProjectRolesById] = useState({});
+  const [projectMembersById, setProjectMembersById] = useState({});
   const [selectedProjectId, setSelectedProjectId] = useState(selectedProjectParam);
   const [projectMembers, setProjectMembers] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -90,6 +100,17 @@ export default function Tasks() {
   const projectLookup = useMemo(() => {
     return Object.fromEntries(projects.map((project) => [project.id, project]));
   }, [projects]);
+
+  function isCurrentUser(userId) {
+    return Boolean(userId && currentUserId && String(userId).toLowerCase() === currentUserId.toLowerCase());
+  }
+
+  const selectedProject = projectLookup[selectedProjectId];
+  const selectedWorkspaceRole = selectedProject ? workspaceRolesById[selectedProject.workspaceId] : "";
+  const selectedProjectRole = projectRolesById[selectedProjectId]
+    ?? projectMembers.find((member) => isCurrentUser(member.userId))?.roleInProject;
+  const canCreateSelectedProjectTask = canCreateProjectTask(selectedWorkspaceRole, selectedProjectRole);
+  const showCreateTaskForm = !isMyTasksView && canCreateSelectedProjectTask;
 
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -138,13 +159,43 @@ export default function Tasks() {
 
       try {
         const workspaceItems = asArray(await workspacesApi.list());
+        const mappedWorkspaces = workspaceItems.map(mapWorkspace);
+        const workspaceRoleEntries = await Promise.all(
+          mappedWorkspaces.map(async (workspace) => {
+            try {
+              const workspaceMembers = asArray(await workspacesApi.members(workspace.id)).map(mapWorkspaceMember);
+              const currentMember = workspaceMembers.find((member) => isCurrentUser(member.userId));
+              return [workspace.id, currentMember?.role ?? ""];
+            } catch {
+              return [workspace.id, ""];
+            }
+          })
+        );
         const projectGroups = await Promise.all(
           workspaceItems.map((workspace) => projectsApi.listByWorkspace(workspace.id))
         );
         const mappedProjects = projectGroups.flatMap((group) => asArray(group).map(mapProject));
+        const projectMemberEntries = await Promise.all(
+          mappedProjects.map(async (project) => {
+            try {
+              const members = asArray(await projectsApi.members(project.id)).map(mapProjectMember);
+              const currentMember = members.find((member) => isCurrentUser(member.userId));
+              return [project.id, { members, role: currentMember?.roleInProject ?? "" }];
+            } catch {
+              return [project.id, { members: [], role: "" }];
+            }
+          })
+        );
 
         if (active) {
           setProjects(mappedProjects);
+          setWorkspaceRolesById(Object.fromEntries(workspaceRoleEntries));
+          setProjectMembersById(Object.fromEntries(
+            projectMemberEntries.map(([projectId, state]) => [projectId, state.members])
+          ));
+          setProjectRolesById(Object.fromEntries(
+            projectMemberEntries.map(([projectId, state]) => [projectId, state.role])
+          ));
           setSelectedProjectId((current) => {
             if (mappedProjects.some((project) => project.id === current)) return current;
             if (mappedProjects.some((project) => project.id === selectedProjectParam)) return selectedProjectParam;
@@ -163,7 +214,7 @@ export default function Tasks() {
     return () => {
       active = false;
     };
-  }, [selectedProjectParam]);
+  }, [selectedProjectParam, currentUserId]);
 
   useEffect(() => {
     if (!selectedProjectParam || projects.length === 0) return;
@@ -181,11 +232,20 @@ export default function Tasks() {
         return;
       }
 
+      setProjectMembers(projectMembersById[selectedProjectId] || []);
       setLoadingMembers(true);
 
       try {
         const data = await projectsApi.members(selectedProjectId);
-        if (active) setProjectMembers(asArray(data).map(mapProjectMember));
+        const mappedMembers = asArray(data).map(mapProjectMember);
+        if (active) {
+          setProjectMembers(mappedMembers);
+          setProjectMembersById((current) => ({ ...current, [selectedProjectId]: mappedMembers }));
+          setProjectRolesById((current) => ({
+            ...current,
+            [selectedProjectId]: mappedMembers.find((member) => isCurrentUser(member.userId))?.roleInProject ?? "",
+          }));
+        }
       } catch (error) {
         if (active) setApiError(formatApiError(error));
       } finally {
@@ -294,6 +354,11 @@ export default function Tasks() {
 
   async function addTask(event) {
     event.preventDefault();
+    if (!canCreateSelectedProjectTask) {
+      setApiError("You do not have permission to create tasks in this project.");
+      return;
+    }
+
     if (!validate()) return;
 
     setSaving(true);
@@ -432,8 +497,8 @@ export default function Tasks() {
 
       {apiError && <section className="panel"><strong>{t("task.apiError")}</strong><p>{apiError}</p></section>}
 
-      <section className={`task-layout ${isMyTasksView ? "wide" : ""}`}>
-        {!isMyTasksView && (
+      <section className={`task-layout ${isMyTasksView || !showCreateTaskForm ? "wide" : ""}`}>
+        {showCreateTaskForm && (
           <article className="panel form-panel">
             <div className="panel-header">
               <h3>{t("task.createTitle")}</h3>
@@ -446,9 +511,11 @@ export default function Tasks() {
                 <select
                   value={selectedProjectId}
                   onChange={(event) => {
-                    setSelectedProjectId(event.target.value);
+                    const nextProjectId = event.target.value;
+                    setSelectedProjectId(nextProjectId);
                     setErrors({ ...errors, project: "" });
                     setForm((current) => ({ ...current, assigneeId: "" }));
+                    setProjectMembers(projectMembersById[nextProjectId] || []);
                   }}
                   disabled={loadingProjects || projects.length === 0}
                 >
@@ -510,7 +577,7 @@ export default function Tasks() {
                 </label>
               </div>
 
-              <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId}>
+              <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId || !canCreateSelectedProjectTask}>
                 <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
               </button>
             </form>
@@ -527,6 +594,23 @@ export default function Tasks() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
+            {!isMyTasksView && !showCreateTaskForm && (
+              <select
+                className="control-select"
+                value={selectedProjectId}
+                onChange={(event) => {
+                  const nextProjectId = event.target.value;
+                  setSelectedProjectId(nextProjectId);
+                  setProjectMembers(projectMembersById[nextProjectId] || []);
+                }}
+                disabled={loadingProjects || projects.length === 0}
+              >
+                {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            )}
             <span>{filteredTasks.length} tasks</span>
           </div>
 
@@ -543,7 +627,19 @@ export default function Tasks() {
                 <div className="kanban-list">
                   {loadingTasks && column.status === "To Do" && <p>{t("task.loadingTasks")}</p>}
                   {!loadingTasks && column.items.length === 0 && <p>{t("task.noTasks")}</p>}
-                  {!loadingTasks && column.items.map((task) => (
+                  {!loadingTasks && column.items.map((task) => {
+                    const taskProject = projectLookup[task.projectId];
+                    const taskWorkspaceRole = taskProject ? workspaceRolesById[taskProject.workspaceId] : "";
+                    const taskProjectRole = projectRolesById[task.projectId];
+                    const taskMembers = projectMembersById[task.projectId] || [];
+                    const canMutateTask = canShowTaskMutationControls({
+                      workspaceRole: taskWorkspaceRole,
+                      projectRole: taskProjectRole,
+                      task,
+                      currentUserId,
+                    });
+
+                    return (
                     <div
                       className={`task-card ${task.id === selectedTaskId ? "target-highlight" : ""}`}
                       id={`task-${task.id}`}
@@ -564,53 +660,55 @@ export default function Tasks() {
                         )}
                         <span className="person-name">{task.assignee}</span>
                       </div>
-                      <div className="task-actions">
-                        <label>
-                          <span>{t("task.status")}</span>
-                          <select
-                            value={String(task.status)}
-                            onChange={(event) => updateTaskStatus(task, event.target.value)}
+                      {canMutateTask && (
+                        <div className="task-actions">
+                          <label>
+                            <span>{t("task.status")}</span>
+                            <select
+                              value={String(task.status)}
+                              onChange={(event) => updateTaskStatus(task, event.target.value)}
+                              disabled={mutatingTaskId === task.id}
+                            >
+                              {statusOptions.map((option) => (
+                                <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>{t("task.priority")}</span>
+                            <select
+                              value={String(task.priority)}
+                              onChange={(event) => updateTaskPriority(task, event.target.value)}
+                              disabled={mutatingTaskId === task.id}
+                            >
+                              {priorityOptions.map((option) => (
+                                <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Assignee</span>
+                            <select
+                              value={task.assigneeId || ""}
+                              onChange={(event) => updateTaskAssignee(task, event.target.value)}
+                              disabled={mutatingTaskId === task.id || loadingMembers}
+                            >
+                              <option value="">Unassigned</option>
+                              {taskMembers.map((member) => (
+                                <option key={member.userId} value={member.userId}>{member.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            className="danger-button"
+                            type="button"
+                            onClick={() => deleteTask(task)}
                             disabled={mutatingTaskId === task.id}
                           >
-                            {statusOptions.map((option) => (
-                              <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span>{t("task.priority")}</span>
-                          <select
-                            value={String(task.priority)}
-                            onChange={(event) => updateTaskPriority(task, event.target.value)}
-                            disabled={mutatingTaskId === task.id}
-                          >
-                            {priorityOptions.map((option) => (
-                              <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Assignee</span>
-                          <select
-                            value={task.assigneeId || ""}
-                            onChange={(event) => updateTaskAssignee(task, event.target.value)}
-                            disabled={mutatingTaskId === task.id || loadingMembers}
-                          >
-                            <option value="">Unassigned</option>
-                            {projectMembers.map((member) => (
-                              <option key={member.userId} value={member.userId}>{member.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <button
-                          className="danger-button"
-                          type="button"
-                          onClick={() => deleteTask(task)}
-                          disabled={mutatingTaskId === task.id}
-                        >
-                          <Trash2 size={14} /> {t("task.delete")}
-                        </button>
-                      </div>
+                            <Trash2 size={14} /> {t("task.delete")}
+                          </button>
+                        </div>
+                      )}
 
                       <div className="comment-box">
                         <div className="comment-header">
@@ -625,15 +723,22 @@ export default function Tasks() {
                                 <p>{comment.content}</p>
                                 <span>{comment.createdAt}</span>
                               </div>
-                              <button
-                                className="danger-button icon-only"
-                                type="button"
-                                aria-label="Delete comment"
-                                onClick={() => deleteComment(task, comment)}
-                                disabled={mutatingTaskId === task.id}
-                              >
-                                <Trash2 size={12} />
-                              </button>
+                              {canDeleteTaskComment({
+                                workspaceRole: taskWorkspaceRole,
+                                projectRole: taskProjectRole,
+                                comment,
+                                currentUserId,
+                              }) && (
+                                <button
+                                  className="danger-button icon-only"
+                                  type="button"
+                                  aria-label="Delete comment"
+                                  onClick={() => deleteComment(task, comment)}
+                                  disabled={mutatingTaskId === task.id}
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -649,7 +754,8 @@ export default function Tasks() {
                         </form>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </article>
             ))}

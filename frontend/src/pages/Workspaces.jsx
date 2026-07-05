@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import { formatApiError, workspaces as workspacesApi } from "../api/taskflowApi.js";
 import { asArray, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
+import { canDeleteWorkspace, canManageWorkspaceMembers, isWorkspaceAdmin } from "../api/permissions.js";
 import { useI18n } from "../i18n.jsx";
 
 const colors = ["amber", "green", "red", "yellow"];
@@ -23,11 +24,6 @@ function blankMemberState() {
     saving: false,
     error: "",
   };
-}
-
-function isWorkspaceAdminRole(role) {
-  const normalized = String(role ?? "").trim().toLowerCase();
-  return normalized === "1" || normalized === "admin";
 }
 
 export default function Workspaces() {
@@ -93,8 +89,17 @@ export default function Workspaces() {
     });
   }, [selectedWorkspaceId, loading, workspaces]);
 
+  function isCurrentUser(userId) {
+    return Boolean(userId && currentUserId && String(userId).toLowerCase() === currentUserId.toLowerCase());
+  }
+
+  function getCurrentWorkspaceRole(workspaceId) {
+    const state = membersByWorkspace[workspaceId] || blankMemberState();
+    return state.items.find((member) => isCurrentUser(member.userId))?.role;
+  }
+
   const canCreateWorkspace = Object.values(membersByWorkspace).some((state) =>
-    state.items.some((member) => member.userId === currentUserId && isWorkspaceAdminRole(member.role))
+    state.items.some((member) => isCurrentUser(member.userId) && isWorkspaceAdmin(member.role))
   );
 
   useEffect(() => {
@@ -215,6 +220,29 @@ export default function Workspaces() {
     }
   }
 
+  async function deleteWorkspace(workspace) {
+    const confirmed = window.confirm(`Delete "${workspace.name}" and all of its projects, channels, tasks, and members?`);
+    if (!confirmed) return;
+
+    let deleted = false;
+    updateMemberState(workspace.id, { saving: true, error: "" });
+
+    try {
+      await workspacesApi.remove(workspace.id);
+      deleted = true;
+      setWorkspaces((current) => current.filter((item) => item.id !== workspace.id));
+      setMembersByWorkspace((current) => {
+        const next = { ...current };
+        delete next[workspace.id];
+        return next;
+      });
+    } catch (apiError) {
+      updateMemberState(workspace.id, { error: formatApiError(apiError) });
+    } finally {
+      if (!deleted) updateMemberState(workspace.id, { saving: false });
+    }
+  }
+
   return (
     <div className="page-stack">
       {canCreateWorkspace && (
@@ -295,6 +323,9 @@ export default function Workspaces() {
           {workspaces.map((workspace, index) => {
             const memberState = membersByWorkspace[workspace.id] || blankMemberState();
             const memberCount = memberState.items.length || workspace.members;
+            const currentWorkspaceRole = getCurrentWorkspaceRole(workspace.id);
+            const canManageMembers = canManageWorkspaceMembers(currentWorkspaceRole);
+            const canDeleteCurrentWorkspace = canDeleteWorkspace(currentWorkspaceRole);
 
             return (
               <article
@@ -316,9 +347,21 @@ export default function Workspaces() {
                 <div className="member-manager">
                   <div className="member-manager-header">
                     <strong>Workspace members</strong>
-                    <button className="secondary-button compact" type="button" onClick={() => reloadMembers(workspace.id)}>
-                      Refresh
-                    </button>
+                    <div className="member-manager-actions">
+                      {canDeleteCurrentWorkspace && (
+                        <button
+                          className="danger-button compact"
+                          type="button"
+                          onClick={() => deleteWorkspace(workspace)}
+                          disabled={memberState.saving}
+                        >
+                          <Trash2 size={14} /> Delete workspace
+                        </button>
+                      )}
+                      <button className="secondary-button compact" type="button" onClick={() => reloadMembers(workspace.id)}>
+                        Refresh
+                      </button>
+                    </div>
                   </div>
 
                   {memberState.error && <div className="error-text">{memberState.error}</div>}
@@ -332,51 +375,59 @@ export default function Workspaces() {
                           <strong>{member.name}</strong>
                           <span>{member.email}</span>
                         </div>
-                        <select
-                          value={String(member.role)}
-                          onChange={(event) => updateMemberRole(workspace.id, member, event.target.value)}
-                          disabled={memberState.saving}
-                        >
-                          {roleOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                        <button
-                          className="danger-button icon-only"
-                          type="button"
-                          aria-label={`Remove ${member.name}`}
-                          onClick={() => removeMember(workspace.id, member)}
-                          disabled={memberState.saving}
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {canManageMembers ? (
+                          <>
+                            <select
+                              value={String(member.role)}
+                              onChange={(event) => updateMemberRole(workspace.id, member, event.target.value)}
+                              disabled={memberState.saving}
+                            >
+                              {roleOptions.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                            <button
+                              className="danger-button icon-only"
+                              type="button"
+                              aria-label={`Remove ${member.name}`}
+                              onClick={() => removeMember(workspace.id, member)}
+                              disabled={memberState.saving}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <span className="member-role-badge">{member.roleLabel}</span>
+                        )}
                       </div>
                     ))}
                   </div>
 
-                  <div className="member-add-row">
-                    <input
-                      value={memberState.email}
-                      onChange={(event) => updateMemberState(workspace.id, { email: event.target.value, error: "" })}
-                      placeholder="member@email.com"
-                    />
-                    <select
-                      value={memberState.role}
-                      onChange={(event) => updateMemberState(workspace.id, { role: event.target.value })}
-                    >
-                      {roleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                    <button
-                      className="primary-button compact"
-                      type="button"
-                      onClick={() => addMember(workspace.id)}
-                      disabled={memberState.saving}
-                    >
-                      <UserPlus size={16} /> Add
-                    </button>
-                  </div>
+                  {canManageMembers && (
+                    <div className="member-add-row">
+                      <input
+                        value={memberState.email}
+                        onChange={(event) => updateMemberState(workspace.id, { email: event.target.value, error: "" })}
+                        placeholder="member@email.com"
+                      />
+                      <select
+                        value={memberState.role}
+                        onChange={(event) => updateMemberState(workspace.id, { role: event.target.value })}
+                      >
+                        {roleOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        className="primary-button compact"
+                        type="button"
+                        onClick={() => addMember(workspace.id)}
+                        disabled={memberState.saving}
+                      >
+                        <UserPlus size={16} /> Add
+                      </button>
+                    </div>
+                  )}
                 </div>
               </article>
             );

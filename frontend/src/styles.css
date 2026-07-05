@@ -429,6 +429,7 @@ tr.target-highlight td { background: #e8f7f5; }
 .task-actions label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 800; }
 .task-actions select { width: 100%; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 10px; padding: 8px; outline: 0; }
 .danger-button { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #f0aaa1; background: #fff1ef; color: var(--red); border-radius: 10px; font-weight: 850; }
+.danger-button.compact { min-height: 34px; padding: 0 10px; font-size: 12px; }
 .danger-button.icon-only { width: 34px; padding: 0; }
 .danger-button:disabled, .task-actions select:disabled { cursor: not-allowed; opacity: .65; }
 
@@ -1140,6 +1141,13 @@ tr.target-highlight td { background: #e8f7f5; }
   justify-content: space-between;
   gap: 8px;
 }
+.member-manager-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .member-manager-header strong { font-size: 13px; }
 .member-manager p { margin: 0; color: var(--muted); font-size: 12px; }
 .member-list { display: grid; gap: 7px; }
@@ -1157,6 +1165,18 @@ tr.target-highlight td { background: #e8f7f5; }
 .member-row.compact { grid-template-columns: minmax(0, 1fr) auto; }
 .member-row strong { display: block; overflow-wrap: anywhere; font-size: 13px; }
 .member-row span { display: block; margin-top: 2px; color: var(--muted); overflow-wrap: anywhere; font-size: 11px; }
+.member-role-badge {
+  justify-self: end;
+  min-width: 86px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--teal-dark) !important;
+  font-size: 12px !important;
+  font-weight: 850;
+  text-align: center;
+}
 .member-row select, .member-add-row select, .member-add-row input {
   min-width: 0;
   border: 1px solid var(--line);

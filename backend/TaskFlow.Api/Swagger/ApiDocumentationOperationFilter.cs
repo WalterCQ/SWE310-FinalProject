@@ -130,6 +130,11 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Updates workspace name and description after backend validation. Only workspace owners, workspace admins, or global admins can update it.",
                 StatusCodes.Status200OK,
                 typeof(WorkspaceResponse)),
+            ["Workspaces.DeleteWorkspace"] = new(
+                "Delete a workspace",
+                "Deletes a workspace and its related projects, channels, tasks, memberships, and workspace-scoped AI context. Requires the current user to hold the workspace Admin role in that workspace; workspace Owner alone and global Admin alone cannot delete it.",
+                StatusCodes.Status200OK,
+                typeof(bool)),
             ["Workspaces.GetWorkspaceMembers"] = new(
                 "List workspace members",
                 "Returns the users who belong to a workspace, including each user's workspace role and join timestamp. Requires workspace access.",

@@ -112,6 +112,35 @@ public class WorkspaceService(
         return ApiResponse.Ok(workspace.ToResponse(), "Workspace updated.");
     }
 
+    public async Task<ApiResponse<bool>> DeleteWorkspaceAsync(Guid workspaceId)
+    {
+        var userId = currentUser.GetUserId();
+        if (!await IsWorkspaceAdmin(userId, workspaceId))
+        {
+            return ApiResponse.Fail<bool>("Only workspace admins can delete this workspace.", StatusCodes.Status403Forbidden);
+        }
+
+        var workspace = await dbContext.Workspaces.FirstOrDefaultAsync(item => item.Id == workspaceId);
+        if (workspace is null)
+        {
+            return ApiResponse.Fail<bool>("Workspace not found.", StatusCodes.Status404NotFound);
+        }
+
+        var knowledgeChunks = await dbContext.ChannelKnowledgeChunks
+            .Where(chunk => chunk.WorkspaceId == workspaceId)
+            .ToListAsync();
+        var attachments = await dbContext.ChannelAttachments
+            .Where(attachment => attachment.WorkspaceId == workspaceId)
+            .ToListAsync();
+
+        dbContext.ChannelKnowledgeChunks.RemoveRange(knowledgeChunks);
+        dbContext.ChannelAttachments.RemoveRange(attachments);
+        dbContext.Workspaces.Remove(workspace);
+        await dbContext.SaveChangesAsync();
+
+        return ApiResponse.NoData("Workspace deleted.");
+    }
+
     public async Task<ApiResponse<IEnumerable<WorkspaceMemberResponse>>> GetWorkspaceMembersAsync(Guid workspaceId)
     {
         var userId = currentUser.GetUserId();
@@ -294,6 +323,14 @@ public class WorkspaceService(
     {
         return await dbContext.WorkspaceMembers.AnyAsync(member =>
             member.UserId == userId && member.Role == WorkspaceRole.Admin);
+    }
+
+    private async Task<bool> IsWorkspaceAdmin(Guid userId, Guid workspaceId)
+    {
+        return await dbContext.WorkspaceMembers.AnyAsync(member =>
+            member.UserId == userId
+            && member.WorkspaceId == workspaceId
+            && member.Role == WorkspaceRole.Admin);
     }
 
     private static WorkspaceMemberResponse ToMemberResponse(WorkspaceMember member)
