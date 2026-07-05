@@ -7,5 +7,6 @@ public interface INotificationService
 {
     Task<ApiResponse<IEnumerable<NotificationResponse>>> GetMyNotificationsAsync();
     Task<ApiResponse<NotificationResponse>> MarkAsReadAsync(Guid notificationId);
+    Task<ApiResponse<int>> MarkAllAsReadAsync();
     Task<ApiResponse<NotificationResponse>> CreateNotificationAsync(CreateNotificationRequest request);
 }

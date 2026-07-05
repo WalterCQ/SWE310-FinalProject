@@ -21,4 +21,10 @@ public class NotificationsController(INotificationService notificationService) :
     {
         return this.ToActionResult(await notificationService.MarkAsReadAsync(notificationId));
     }
+
+    [HttpPut("read-all")]
+    public async Task<ActionResult> MarkAllAsRead()
+    {
+        return this.ToActionResult(await notificationService.MarkAllAsReadAsync());
+    }
 }

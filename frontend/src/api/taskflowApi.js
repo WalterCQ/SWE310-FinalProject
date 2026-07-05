@@ -115,6 +115,7 @@ export const messages = {
 export const notifications = {
   list: () => request({ method: "GET", url: "/api/notifications" }),
   markRead: (notificationId) => request({ method: "PUT", url: `/api/notifications/${notificationId}/read` }),
+  markAllRead: () => request({ method: "PUT", url: "/api/notifications/read-all" }),
 };
 
 export const auth = {

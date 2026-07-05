@@ -39,32 +39,32 @@ public class ApiDocumentationOperationFilter : IOperationFilter
 
             ["Ai.ExecuteCommand"] = new(
                 "Execute an AI collaboration command",
-                "Runs a natural-language command inside a workspace. The Semantic Kernel plugin can read or modify real collaboration data only when the current user has workspace access. If AI:ApiKey is missing or the LLM call fails, the endpoint returns a deterministic fallback with UsedLlm=false.",
+                "Runs a natural-language command inside a workspace. The Semantic Kernel plugin can read or modify real collaboration data only when the current user has workspace access. Requires a workspace AI provider configured by a workspace owner or admin.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
             ["Ai.SummarizeChannel"] = new(
                 "Summarize recent channel messages",
-                "Reads the latest channel messages that the current user can access and asks the LLM to summarize them. If no LLM is configured, the fallback response states the message count and latest message.",
+                "Reads the latest channel messages that the current user can access and asks the workspace AI provider to summarize them.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
             ["Ai.SummarizeProject"] = new(
                 "Summarize project progress",
-                "Uses the project dashboard data, including task counts, overdue tasks, and completion rate, to produce a stakeholder summary. Returns a deterministic dashboard summary when the LLM is unavailable.",
+                "Uses the project dashboard data, including task counts, overdue tasks, and completion rate, to produce a stakeholder summary through the workspace AI provider.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
             ["Ai.AnalyzeProjectRisk"] = new(
                 "Analyze project delivery risk",
-                "Uses project dashboard metrics to identify overdue-task and completion-rate risks. If the LLM is unavailable, the fallback result still reports the risk signal from the dashboard.",
+                "Uses project dashboard metrics and the workspace AI provider to identify overdue-task and completion-rate risks.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
             ["Ai.GenerateTasksFromMessage"] = new(
                 "Generate task suggestions from a message",
-                "Turns message content into concise task suggestions for a project. The current user must be allowed to create tasks in the project. If MessageContent is empty, the fallback asks the frontend to send message content or wire MessageId lookup.",
+                "Turns message content into concise task suggestions for a project through the workspace AI provider. The current user must be allowed to create tasks in the project.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
             ["Ai.AskWorkspaceKnowledge"] = new(
                 "Ask a retrieval-grounded workspace question",
-                "Retrieves relevant workspace records from projects, tasks, and accessible channel messages, adds them as grounded context, then asks the LLM to answer only from that context. This is a lightweight RAG-style endpoint that avoids extra vector database dependencies while keeping private channel messages permission-filtered. If AI:ApiKey is missing or the LLM call fails, the response still returns the matched source labels with UsedLlm=false.",
+                "Retrieves relevant workspace records from projects, tasks, and accessible channel messages, adds them as grounded context, then asks the workspace AI provider to answer only from that context. This is a lightweight RAG-style endpoint that avoids extra vector database dependencies while keeping private channel messages permission-filtered.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
 
@@ -78,10 +78,25 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Creates or updates an AI provider credential after validating provider name, model, and API key. The API key is stored server-side and the response only reports whether a key exists.",
                 StatusCodes.Status200OK,
                 typeof(AiProviderResponse)),
+            ["AiProviders.GetWorkspaceProvider"] = new(
+                "Get workspace AI provider metadata",
+                "Returns provider metadata for a workspace. Only workspace owners, workspace admins, and global admins can call this endpoint. Secret API key values are never returned.",
+                StatusCodes.Status200OK,
+                typeof(object)),
+            ["AiProviders.SaveWorkspaceProvider"] = new(
+                "Save a workspace AI provider",
+                "Creates or updates the workspace-level AI provider after validating the allowed HTTPS base URL. The API key is encrypted server-side and never returned.",
+                StatusCodes.Status200OK,
+                typeof(object)),
+            ["AiProviders.DeleteWorkspaceProvider"] = new(
+                "Delete a workspace AI provider",
+                "Deletes the workspace-level AI provider credential. Only workspace owners, workspace admins, and global admins can remove it.",
+                StatusCodes.Status200OK,
+                typeof(bool)),
 
             ["Agent.CreateJob"] = new(
                 "Create an agent job",
-                "Starts a multi-step AI agent job for a workspace goal. The current user must have workspace access, and the optional provider credential must be available to the user.",
+                "Starts a multi-step AI agent job for a workspace goal. The current user must have workspace access. Agent planning uses the workspace AI provider unless a legacy user provider credential id is supplied explicitly.",
                 StatusCodes.Status200OK,
                 typeof(AgentJobResponse)),
             ["Agent.GetJob"] = new(
@@ -318,14 +333,19 @@ public class ApiDocumentationOperationFilter : IOperationFilter
 
             ["Notifications.GetNotifications"] = new(
                 "List my notifications",
-                "Returns the current user's latest 100 notifications, newest first.",
+                "Returns the current user's latest notifications, newest first, after pruning historical duplicate rows for identical notifications.",
                 StatusCodes.Status200OK,
                 typeof(IEnumerable<NotificationResponse>)),
             ["Notifications.MarkAsRead"] = new(
                 "Mark a notification as read",
                 "Marks one notification as read only when it belongs to the current user.",
                 StatusCodes.Status200OK,
-                typeof(NotificationResponse))
+                typeof(NotificationResponse)),
+            ["Notifications.MarkAllAsRead"] = new(
+                "Mark all notifications as read",
+                "Marks every unread notification owned by the current user as read and returns the number of updated records.",
+                StatusCodes.Status200OK,
+                typeof(int))
         };
 
     public void Apply(OpenApiOperation operation, OperationFilterContext context)

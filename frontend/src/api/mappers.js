@@ -289,6 +289,7 @@ export function mapNotification(notification) {
     message: notification.message || "",
     type,
     typeLabel: mapNotificationType(type),
+    isRead: Boolean(notification.isRead),
     time: formatDateTime(notification.createdAtUtc),
   };
 }

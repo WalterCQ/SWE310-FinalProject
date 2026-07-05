@@ -40,4 +40,4 @@ Current backend base URL:
 
 `https://taskflow-connect-06221341-feb9.azurewebsites.net`
 
-Older mock data remains in `src/data/mockData.js` only as reference data. The main demo pages call the backend through `axiosClient`.
+Mock data has been removed from the frontend. Demo notifications and other sample records are seeded by the backend and loaded through `axiosClient`.
