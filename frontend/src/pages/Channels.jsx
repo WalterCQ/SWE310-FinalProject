@@ -3,8 +3,8 @@ import { motion } from "motion/react";
 import { useSearchParams } from "react-router-dom";
 import {
   ArrowDownToLine,
-  AtSign,
   Bot,
+  ClipboardCheck,
   Code2,
   Download,
   FileText,
@@ -13,8 +13,6 @@ import {
   ListTodo,
   MoreHorizontal,
   Paperclip,
-  PanelRightClose,
-  PanelRightOpen,
   Plus,
   RefreshCw,
   Send,
@@ -79,8 +77,28 @@ function mergeMessage(currentMessages, incomingMessage) {
   return currentMessages.map((message, index) => (index === existingIndex ? mappedMessage : message));
 }
 
-function formatRealtimeError(error) {
-  return error?.message || "Realtime chat request failed.";
+function formatRealtimeError(error, t) {
+  const message = String(error?.message || "").toLowerCase();
+
+  if (
+    message.includes("no connection with that id")
+    || message.includes("status code")
+    || message.includes("websocket")
+    || message.includes("negotiate")
+    || message.includes("failed to start")
+  ) {
+    return t("channel.realtimeEndpointMismatch");
+  }
+
+  if (
+    message.includes("access denied")
+    || message.includes("unauthorized")
+    || message.includes("forbidden")
+  ) {
+    return t("channel.realtimeAccessDenied");
+  }
+
+  return t("channel.realtimeGeneric");
 }
 
 function normalizeAttachment(attachment) {
@@ -91,12 +109,12 @@ function isPdfAttachment(attachment) {
   return attachment.contentType === "application/pdf" || attachment.fileName.toLowerCase().endsWith(".pdf");
 }
 
-function getAttachmentLabel(attachment) {
-  if (isPdfAttachment(attachment)) return "PDF";
-  if (attachment.contentType.startsWith("image/")) return "Image";
+function getAttachmentLabel(attachment, t) {
+  if (isPdfAttachment(attachment)) return t("channel.attachmentType.pdf");
+  if (attachment.contentType.startsWith("image/")) return t("channel.attachmentType.image");
 
   const extension = attachment.fileName.split(".").pop();
-  return extension && extension !== attachment.fileName ? extension.toUpperCase() : "File";
+  return extension && extension !== attachment.fileName ? extension.toUpperCase() : t("channel.attachmentType.file");
 }
 
 function formatFileSize(bytes) {
@@ -166,9 +184,12 @@ export default function Channels() {
   const lastTypingSentRef = useRef(0);
   const previousMessageCountRef = useRef(0);
   const forceScrollToBottomRef = useRef(false);
+  const membersDrawerRef = useRef(null);
+  const membersPanelTriggerRef = useRef(null);
 
   const quickActions = [
     { key: "summary", label: t("channel.quickSummary"), command: t("channel.commandSummary"), icon: Sparkles },
+    { key: "requirements", label: t("channel.quickRequirements"), command: t("channel.commandRequirements"), icon: ClipboardCheck },
     { key: "tasks", label: t("channel.quickTasks"), command: t("channel.commandTasks"), icon: ListTodo },
     { key: "report", label: t("channel.quickReport"), command: t("channel.commandReport"), icon: FileText },
     { key: "ppt", label: t("channel.quickPpt"), command: t("channel.commandPpt"), icon: FileText },
@@ -197,6 +218,11 @@ export default function Channels() {
   useEffect(() => {
     setOpenMemberMenuId("");
   }, [activeChannelId]);
+
+  useEffect(() => {
+    if (!isMembersPanelOpen) return;
+    requestAnimationFrame(() => membersDrawerRef.current?.focus());
+  }, [isMembersPanelOpen]);
 
   useEffect(() => {
     let active = true;
@@ -384,7 +410,7 @@ export default function Channels() {
         try {
           await chatConnection.invoke("JoinChannel", activeChannelRef.current);
         } catch (hubError) {
-          setChatError(formatRealtimeError(hubError));
+          setChatError(formatRealtimeError(hubError, t));
         }
       }
     });
@@ -404,7 +430,7 @@ export default function Channels() {
       } catch (hubError) {
         if (cancelled) return;
         setConnectionStatus("error");
-        setChatError(formatRealtimeError(hubError));
+        setChatError(formatRealtimeError(hubError, t));
       }
     }
 
@@ -419,7 +445,7 @@ export default function Channels() {
       chatConnection.off("UserStoppedTyping", handleUserStoppedTyping);
       chatConnection.stop().catch(() => {});
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!connection || !activeChannelId || connection.state !== chatConnectionState.connected) return undefined;
@@ -433,7 +459,7 @@ export default function Channels() {
       try {
         await connection.invoke("JoinChannel", activeChannelId);
       } catch (hubError) {
-        if (!leaving) setChatError(formatRealtimeError(hubError));
+        if (!leaving) setChatError(formatRealtimeError(hubError, t));
       }
     }
 
@@ -465,15 +491,18 @@ export default function Channels() {
     setUnseenMessages(0);
   }
 
-  function toggleAiPanel() {
-    setIsAiPanelOpen((current) => {
-      const next = !current;
-      localStorage.setItem(AI_PANEL_OPEN_KEY, String(next));
-      return next;
-    });
+  function openAiPanel() {
+    setIsAiPanelOpen(true);
+    localStorage.setItem(AI_PANEL_OPEN_KEY, "true");
   }
 
-  function openMembersPanel() {
+  function closeAiPanel() {
+    setIsAiPanelOpen(false);
+    localStorage.setItem(AI_PANEL_OPEN_KEY, "false");
+  }
+
+  function openMembersPanel(event) {
+    if (event?.currentTarget) membersPanelTriggerRef.current = event.currentTarget;
     setIsMembersPanelOpen(true);
     setOpenMemberMenuId("");
   }
@@ -481,6 +510,42 @@ export default function Channels() {
   function closeMembersPanel() {
     setIsMembersPanelOpen(false);
     setOpenMemberMenuId("");
+    requestAnimationFrame(() => membersPanelTriggerRef.current?.focus());
+  }
+
+  function handleMembersDrawerKeyDown(event) {
+    if (event.key === "Escape") {
+      closeMembersPanel();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+
+    const focusableItems = Array.from(
+      membersDrawerRef.current?.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ) || []
+    ).filter((element) => element.offsetParent !== null);
+
+    if (focusableItems.length === 0) {
+      event.preventDefault();
+      membersDrawerRef.current?.focus();
+      return;
+    }
+
+    const firstItem = focusableItems[0];
+    const lastItem = focusableItems[focusableItems.length - 1];
+
+    if (event.shiftKey && document.activeElement === firstItem) {
+      event.preventDefault();
+      lastItem.focus();
+      return;
+    }
+
+    if (!event.shiftKey && document.activeElement === lastItem) {
+      event.preventDefault();
+      firstItem.focus();
+    }
   }
 
   useEffect(() => {
@@ -538,13 +603,6 @@ export default function Channels() {
     const nextValue = event.target.value;
     setDraft(nextValue);
     notifyTyping(nextValue);
-  }
-
-  function insertMention() {
-    setDraft((current) => {
-      if (isAiMention(current)) return current;
-      return `${current.trim() ? `${current.trim()} ` : ""}@TaskFlow AI `;
-    });
   }
 
   function handleComposerKeyDown(event) {
@@ -676,7 +734,7 @@ export default function Channels() {
       const aiMessage = {
         id: `ai-${activeChannelId}-${Date.now()}`,
         channelId: activeChannelId,
-        sender: "TaskFlow AI",
+        sender: t("channel.aiMember"),
         text: response?.result || t("channel.aiEmpty"),
         createdAtUtc,
         time: formatDateTime(createdAtUtc),
@@ -729,7 +787,7 @@ export default function Channels() {
       if (error?.errors || error?.statusCode) {
         setAiError(formatApiError(error));
       } else {
-        setChatError(formatRealtimeError(error));
+        setChatError(formatRealtimeError(error, t));
       }
     }
   }
@@ -956,37 +1014,32 @@ export default function Channels() {
 
           <article className="panel chat-panel">
             <div className="panel-header chat-header">
-              <div>
-                <h3>{activeChannel ? `# ${activeChannel.name}` : t("channel.noneSelected")}</h3>
+              <h3 className="chat-title">
+                {activeChannel ? (
+                  <>
+                    <span># {activeChannel.name}</span>
+                    <span className="chat-title-count">({activeChannel.memberCount})</span>
+                  </>
+                ) : (
+                  t("channel.noneSelected")
+                )}
+              </h3>
+              <div className="chat-header-actions">
+                <span className={`connection-pill ${connectionStatus}`} role="status" aria-live="polite">
+                  {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />} {connectionLabel}
+                </span>
                 <button
                   aria-controls="channel-members-drawer"
                   aria-expanded={isMembersPanelOpen}
-                  className="channel-members-button"
+                  aria-label={t("channel.manageMembers")}
+                  className={`channel-more-button ${isMembersPanelOpen ? "active" : ""}`}
                   disabled={!activeChannel}
                   onClick={openMembersPanel}
                   title={t("channel.manageMembers")}
                   type="button"
                 >
-                  <Users size={15} />
-                  <span>{activeChannel ? t("channel.members", { count: activeChannel.memberCount }) : workspaceName}</span>
+                  <MoreHorizontal size={18} />
                 </button>
-              </div>
-              <div className="chat-header-actions">
-                <button
-                  aria-controls="channel-ai-drawer"
-                  aria-expanded={isAiPanelOpen}
-                  className={`ai-member-pill ai-toggle-button ${isAiPanelOpen ? "active" : ""}`}
-                  onClick={toggleAiPanel}
-                  title={isAiPanelOpen ? t("channel.hideAiPanel") : t("channel.showAiPanel")}
-                  type="button"
-                >
-                  <Bot size={14} />
-                  <span>{t("channel.aiMember")}</span>
-                  {isAiPanelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
-                </button>
-                <span className={`connection-pill ${connectionStatus}`} role="status" aria-live="polite">
-                  {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />} {connectionLabel}
-                </span>
               </div>
             </div>
 
@@ -1039,14 +1092,14 @@ export default function Channels() {
                               type="button"
                               className={`message-attachment-card ${isPdf ? "pdf-card" : ""}`}
                               onClick={() => downloadAttachment(attachment)}
-                              aria-label={`Download ${attachment.fileName}`}
+                              aria-label={t("channel.downloadAttachment", { name: attachment.fileName })}
                             >
                               <span className="message-attachment-icon" aria-hidden="true">
                                 {isImage ? <Image size={22} /> : <FileText size={22} />}
                               </span>
                               <span className="message-attachment-copy">
                                 <strong>{attachment.fileName}</strong>
-                                <small>{getAttachmentLabel(attachment)} · {formatFileSize(attachment.sizeBytes)}</small>
+                                <small>{getAttachmentLabel(attachment, t)} · {formatFileSize(attachment.sizeBytes)}</small>
                               </span>
                               <span className="message-attachment-download">
                                 <Download size={14} />
@@ -1074,7 +1127,7 @@ export default function Channels() {
                 <div className="message-row ai-message-row">
                   <div className="message-avatar" aria-hidden="true"><Bot size={17} /></div>
                   <div className="message-body">
-                    <strong>TaskFlow AI</strong>
+                    <strong>{t("channel.aiMember")}</strong>
                     <p>{t("channel.aiThinking")}</p>
                   </div>
                 </div>
@@ -1103,9 +1156,16 @@ export default function Channels() {
 
             <form className="message-composer" onSubmit={sendMessage}>
               <div className="composer-actions" role="toolbar" aria-label={t("channel.composeActions")}>
-                <button type="button" onClick={insertMention} disabled={!activeChannel} aria-label={t("channel.mentionAi")} title={t("channel.mentionAi")}>
-                  <AtSign size={16} />
-                  <span>{t("channel.mentionAi")}</span>
+                <button
+                  className={isAiPanelOpen ? "active" : ""}
+                  type="button"
+                  onClick={openAiPanel}
+                  disabled={!activeChannel}
+                  aria-label={t("channel.showAiPanel")}
+                  title={t("channel.showAiPanel")}
+                >
+                  <Bot size={16} />
+                  <span>{t("channel.aiMember")}</span>
                 </button>
                 <button type="button" onClick={() => fileInputRef.current?.click()} disabled={!activeChannel || uploadingAttachment} aria-label={t("channel.attach")} title={t("channel.attach")}>
                   <Paperclip size={16} />
@@ -1154,7 +1214,7 @@ export default function Channels() {
               <button
                 aria-label={t("channel.hideAiPanel")}
                 className="drawer-backdrop channel-drawer-backdrop"
-                onClick={toggleAiPanel}
+                onClick={closeAiPanel}
                 type="button"
               />
               <aside id="channel-ai-drawer" className="panel channel-inspector channel-drawer" aria-label={t("channel.aiPanel")}>
@@ -1169,7 +1229,7 @@ export default function Channels() {
                   <button
                     aria-label={t("channel.hideAiPanel")}
                     className="icon-button drawer-close-button"
-                    onClick={toggleAiPanel}
+                    onClick={closeAiPanel}
                     title={t("channel.hideAiPanel")}
                     type="button"
                   >
@@ -1224,7 +1284,8 @@ export default function Channels() {
                               e.stopPropagation();
                               deleteAttachment(attachment.id);
                             }}
-                            title="Delete file"
+                            aria-label={t("channel.deleteFile")}
+                            title={t("channel.deleteFile")}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -1264,10 +1325,10 @@ export default function Channels() {
                 aria-label={t("channel.channelMembers")}
                 aria-modal="true"
                 className="panel member-drawer"
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") closeMembersPanel();
-                }}
+                onKeyDown={handleMembersDrawerKeyDown}
+                ref={membersDrawerRef}
                 role="dialog"
+                tabIndex={-1}
               >
                 <div className="drawer-title-row">
                   <div>
@@ -1301,6 +1362,12 @@ export default function Channels() {
 
                     return (
                       <div className="member-row compact" key={member.userId}>
+                        <Avatar
+                          className="mini-avatar member-row-avatar"
+                          seed={member.userId || member.email}
+                          name={member.name}
+                          ariaHidden
+                        />
                         <div className="member-row-copy">
                           <strong>{member.name}</strong>
                           <span>{member.email}</span>

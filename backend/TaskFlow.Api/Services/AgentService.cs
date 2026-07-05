@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs.Agent;
 using TaskFlow.Api.Helpers;
@@ -26,6 +27,16 @@ public class AgentService(
         }
 
         var providerCredentialId = request.ProviderCredentialId;
+        var artifactTarget = NormalizeArtifactTarget(request.ArtifactTarget);
+        if (!string.IsNullOrWhiteSpace(request.ArtifactTarget) && artifactTarget is null)
+        {
+            return ApiResponse.Fail<AgentJobResponse>("Artifact target must be docx, pptx, patch, or pull-request.", StatusCodes.Status400BadRequest);
+        }
+
+        if (artifactTarget == "pull-request" && !request.GitHubRepositoryId.HasValue)
+        {
+            return ApiResponse.Fail<AgentJobResponse>("A GitHub repository is required when artifact target is pull-request.", StatusCodes.Status400BadRequest);
+        }
 
         if (providerCredentialId.HasValue)
         {
@@ -37,12 +48,56 @@ public class AgentService(
             }
         }
 
+        if (request.ChannelId.HasValue)
+        {
+            var channelWorkspaceId = await dbContext.Channels
+                .Where(channel => channel.Id == request.ChannelId.Value)
+                .Select(channel => (Guid?)channel.WorkspaceId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (channelWorkspaceId != request.WorkspaceId || !await permissionService.CanAccessChannel(userId, request.ChannelId.Value))
+            {
+                return ApiResponse.Fail<AgentJobResponse>("Channel not found or access denied.", StatusCodes.Status404NotFound);
+            }
+        }
+
+        if (request.AttachmentId.HasValue)
+        {
+            var attachment = await dbContext.ChannelAttachments
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.Id == request.AttachmentId.Value, cancellationToken);
+            if (attachment is null
+                || attachment.WorkspaceId != request.WorkspaceId
+                || !await permissionService.CanAccessChannel(userId, attachment.ChannelId))
+            {
+                return ApiResponse.Fail<AgentJobResponse>("Attachment not found or access denied.", StatusCodes.Status404NotFound);
+            }
+        }
+
+        if (request.GitHubRepositoryId.HasValue)
+        {
+            var repositoryExists = await dbContext.GitHubRepositoryConnections
+                .AnyAsync(repository =>
+                    repository.Id == request.GitHubRepositoryId.Value
+                    && repository.WorkspaceId == request.WorkspaceId
+                    && repository.IsEnabled,
+                    cancellationToken);
+            if (!repositoryExists)
+            {
+                return ApiResponse.Fail<AgentJobResponse>("GitHub repository connection not found.", StatusCodes.Status404NotFound);
+            }
+
+        }
+
         var job = new AgentJob
         {
             Id = Guid.NewGuid(),
             WorkspaceId = request.WorkspaceId,
             UserId = userId,
             ProviderCredentialId = providerCredentialId,
+            ChannelId = request.ChannelId,
+            AttachmentId = request.AttachmentId,
+            GitHubRepositoryConnectionId = request.GitHubRepositoryId,
+            ArtifactTarget = artifactTarget,
             Goal = request.Goal.Trim(),
             Status = AgentJobStatus.Planning
         };
@@ -142,6 +197,37 @@ public class AgentService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return ApiResponse.Ok(ToJobResponse(job), "Agent job canceled.");
+    }
+
+    public async Task<ApiResponse<AgentArtifactDownload>> DownloadArtifactAsync(Guid artifactId, CancellationToken cancellationToken = default)
+    {
+        var artifact = await dbContext.AgentArtifacts
+            .Include(item => item.AgentJob)
+            .Include(item => item.Blob)
+            .FirstOrDefaultAsync(item => item.Id == artifactId, cancellationToken);
+        if (artifact?.AgentJob is null)
+        {
+            return ApiResponse.Fail<AgentArtifactDownload>("Agent artifact not found.", StatusCodes.Status404NotFound);
+        }
+
+        var access = await EnsureCanAccessJob(artifact.AgentJob);
+        if (!access.Success)
+        {
+            return ApiResponse.Fail<AgentArtifactDownload>(access.Message, access.StatusCode);
+        }
+
+        var content = artifact.Blob?.Content;
+        if (content is null && artifact.Content is not null)
+        {
+            content = Encoding.UTF8.GetBytes(artifact.Content);
+        }
+
+        if (content is null || content.Length == 0)
+        {
+            return ApiResponse.Fail<AgentArtifactDownload>("Agent artifact has no downloadable content.", StatusCodes.Status404NotFound);
+        }
+
+        return ApiResponse.Ok(new AgentArtifactDownload(artifact.Name, artifact.ContentType, content));
     }
 
     private async Task<ApiResponse<AgentApprovalResponse>> DecideApprovalAsync(
@@ -261,6 +347,10 @@ public class AgentService(
             WorkspaceId = job.WorkspaceId,
             UserId = job.UserId,
             ProviderCredentialId = job.ProviderCredentialId,
+            ChannelId = job.ChannelId,
+            AttachmentId = job.AttachmentId,
+            GitHubRepositoryId = job.GitHubRepositoryConnectionId,
+            ArtifactTarget = job.ArtifactTarget,
             Goal = job.Goal,
             Status = job.Status,
             PlanJson = job.PlanJson,
@@ -330,6 +420,9 @@ public class AgentService(
             ContentType = artifact.ContentType,
             Content = artifact.Content,
             StorageUrl = artifact.StorageUrl,
+            DownloadUrl = $"/api/agent/artifacts/{artifact.Id}/download",
+            SizeBytes = artifact.SizeBytes,
+            IsDownloadable = artifact.SizeBytes > 0 || artifact.Content is not null,
             CreatedAtUtc = artifact.CreatedAtUtc
         };
     }
@@ -346,5 +439,18 @@ public class AgentService(
             DataJson = agentEvent.DataJson,
             CreatedAtUtc = agentEvent.CreatedAtUtc
         };
+    }
+
+    private static string? NormalizeArtifactTarget(string? artifactTarget)
+    {
+        if (string.IsNullOrWhiteSpace(artifactTarget))
+        {
+            return null;
+        }
+
+        var normalized = artifactTarget.Trim().ToLowerInvariant();
+        return normalized is "docx" or "pptx" or "patch" or "pull-request"
+            ? normalized
+            : null;
     }
 }

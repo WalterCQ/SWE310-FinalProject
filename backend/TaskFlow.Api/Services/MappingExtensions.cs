@@ -87,6 +87,7 @@ internal static class MappingExtensions
             Description = project.Description,
             Status = project.Status,
             CreatedByUserId = project.CreatedByUserId,
+            CreatedByUserName = project.CreatedByUser?.Name ?? string.Empty,
             DeadlineUtc = project.DeadlineUtc,
             MemberCount = project.Members.Count,
             TaskCount = project.Tasks.Count,

@@ -52,7 +52,7 @@ public class ProjectService(
             Id = Guid.NewGuid(),
             ProjectId = project.Id,
             UserId = userId,
-            RoleInProject = ProjectRole.ProjectManager
+            RoleInProject = ProjectRole.Administrator
         });
 
         dbContext.Projects.Add(project);
@@ -202,11 +202,11 @@ public class ProjectService(
             return ApiResponse.Fail<ProjectMemberResponse>("Project member not found.", StatusCodes.Status404NotFound);
         }
 
-        if (member.RoleInProject == ProjectRole.ProjectManager
-            && request.RoleInProject != ProjectRole.ProjectManager
-            && await CountProjectManagers(projectId) <= 1)
+        if (member.RoleInProject == ProjectRole.Administrator
+            && request.RoleInProject != ProjectRole.Administrator
+            && await CountProjectAdministrators(projectId) <= 1)
         {
-            return ApiResponse.Fail<ProjectMemberResponse>("A project must keep at least one project manager.");
+            return ApiResponse.Fail<ProjectMemberResponse>("A project must keep at least one project administrator.");
         }
 
         member.RoleInProject = request.RoleInProject;
@@ -230,9 +230,9 @@ public class ProjectService(
             return ApiResponse.Fail<bool>("Project member not found.", StatusCodes.Status404NotFound);
         }
 
-        if (member.RoleInProject == ProjectRole.ProjectManager && await CountProjectManagers(projectId) <= 1)
+        if (member.RoleInProject == ProjectRole.Administrator && await CountProjectAdministrators(projectId) <= 1)
         {
-            return ApiResponse.Fail<bool>("A project must keep at least one project manager.");
+            return ApiResponse.Fail<bool>("A project must keep at least one project administrator.");
         }
 
         var assignedTasks = await dbContext.TaskItems
@@ -253,6 +253,7 @@ public class ProjectService(
     private IQueryable<Project> ProjectQuery()
     {
         return dbContext.Projects
+            .Include(project => project.CreatedByUser)
             .Include(project => project.Members)
             .Include(project => project.Tasks)
             .AsSplitQuery();
@@ -264,10 +265,10 @@ public class ProjectService(
         return await dbContext.Users.FirstOrDefaultAsync(user => user.Email == normalizedEmail);
     }
 
-    private async Task<int> CountProjectManagers(Guid projectId)
+    private async Task<int> CountProjectAdministrators(Guid projectId)
     {
         return await dbContext.ProjectMembers.CountAsync(member =>
-            member.ProjectId == projectId && member.RoleInProject == ProjectRole.ProjectManager);
+            member.ProjectId == projectId && member.RoleInProject == ProjectRole.Administrator);
     }
 
     private static ProjectMemberResponse ToMemberResponse(ProjectMember member)

@@ -15,7 +15,7 @@ import {
   mapTask,
   mapWorkspace,
 } from "../api/mappers.js";
-import { useI18n } from "../i18n.jsx";
+import { enumPriorityKey, enumProjectStatusKey, enumTaskStatusKey, useI18n } from "../i18n.jsx";
 
 const MIN_SEARCH_LENGTH = 2;
 const MAX_RESULTS = 8;
@@ -111,14 +111,24 @@ export default function GlobalSearch() {
           path: `/workspaces?workspaceId=${workspace.id}`,
           searchText: buildSearchText([workspace.name, workspace.description, "workspace"]),
         })),
-        ...projectItems.map((project) => ({
-          id: `project-${project.id}`,
-          type: t("globalSearch.type.project"),
-          title: project.name,
-          subtitle: [project.workspaceName, project.owner, project.statusLabel].filter(Boolean).join(" / "),
-          path: `/projects?projectId=${project.id}`,
-          searchText: buildSearchText([project.name, project.description, project.owner, project.statusLabel, "project"]),
-        })),
+        ...projectItems.map((project) => {
+          const projectStatusLabel = t(enumProjectStatusKey(project.statusLabel));
+          return {
+            id: `project-${project.id}`,
+            type: t("globalSearch.type.project"),
+            title: project.name,
+            subtitle: [project.workspaceName, project.owner, projectStatusLabel].filter(Boolean).join(" / "),
+            path: `/projects?projectId=${project.id}`,
+            searchText: buildSearchText([
+              project.name,
+              project.description,
+              project.owner,
+              project.statusLabel,
+              projectStatusLabel,
+              "project",
+            ]),
+          };
+        }),
         ...channelGroups.flat().map((channel) => ({
           id: `channel-${channel.id}`,
           type: t("globalSearch.type.channel"),
@@ -127,24 +137,30 @@ export default function GlobalSearch() {
           path: `/channels?channelId=${channel.id}`,
           searchText: buildSearchText([channel.name, channel.description, channel.workspaceName, "channel"]),
         })),
-        ...taskGroups.flat().sort(byDeadline).map((task) => ({
-          id: `task-${task.id}`,
-          type: t("globalSearch.type.task"),
-          title: task.title,
-          subtitle: [task.projectName || task.project, task.assignee, task.statusLabel, task.deadlineLabel]
-            .filter(Boolean)
-            .join(" / "),
-          path: `/tasks?projectId=${task.projectId}&taskId=${task.id}`,
-          searchText: buildSearchText([
-            task.title,
-            task.description,
-            task.projectName || task.project,
-            task.assignee,
-            task.statusLabel,
-            task.priorityLabel,
-            "task",
-          ]),
-        })),
+        ...taskGroups.flat().sort(byDeadline).map((task) => {
+          const taskStatusLabel = t(enumTaskStatusKey(task.statusLabel));
+          const taskPriorityLabel = t(enumPriorityKey(task.priorityLabel));
+          return {
+            id: `task-${task.id}`,
+            type: t("globalSearch.type.task"),
+            title: task.title,
+            subtitle: [task.projectName || task.project, task.assignee, taskStatusLabel, task.deadlineLabel]
+              .filter(Boolean)
+              .join(" / "),
+            path: `/tasks?projectId=${task.projectId}&taskId=${task.id}`,
+            searchText: buildSearchText([
+              task.title,
+              task.description,
+              task.projectName || task.project,
+              task.assignee,
+              task.statusLabel,
+              taskStatusLabel,
+              task.priorityLabel,
+              taskPriorityLabel,
+              "task",
+            ]),
+          };
+        }),
       ];
 
       setItems(nextItems);

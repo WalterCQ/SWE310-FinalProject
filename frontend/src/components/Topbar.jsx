@@ -19,8 +19,9 @@ export default function Topbar({ pageMeta }) {
         <label className="language-control" aria-label={t("topbar.language")}>
           <Globe2 size={18} />
           <select value={locale} onChange={(event) => setLocale(event.target.value)}>
-            <option value={LOCALES.en}>English</option>
-            <option value={LOCALES.zh}>中文</option>
+            <option value={LOCALES.en}>{t("topbar.language.english")}</option>
+            <option value={LOCALES.zh}>{t("topbar.language.chinese")}</option>
+            <option value={LOCALES.tg}>{t("topbar.language.tajik")}</option>
           </select>
         </label>
         <button

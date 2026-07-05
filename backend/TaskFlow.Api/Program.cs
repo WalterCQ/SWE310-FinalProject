@@ -138,6 +138,7 @@ builder.Services.AddScoped<IAiCommandService, AiCommandService>();
 builder.Services.AddScoped<IAiProviderService, AiProviderService>();
 builder.Services.AddScoped<IPineconeVectorStore, PineconeVectorStore>();
 builder.Services.AddScoped<IAgentService, AgentService>();
+builder.Services.AddScoped<IGitHubRepositoryService, GitHubRepositoryService>();
 builder.Services.AddScoped<CollaborationAiPlugin>();
 builder.Services.AddHttpClient();
 builder.Services.AddHostedService<ReminderBackgroundService>();

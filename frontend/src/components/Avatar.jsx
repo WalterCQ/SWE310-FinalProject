@@ -1,3 +1,5 @@
+import { useI18n } from "../i18n.jsx";
+
 const GRID_SIZE = 5;
 const MIRROR_COLUMNS = 3;
 const avatarColors = [
@@ -57,8 +59,9 @@ function buildColor(seed) {
 }
 
 export default function Avatar({ seed, name, className = "", ariaHidden = false }) {
+  const { t } = useI18n();
   const avatarSeed = getAvatarSeed(seed, name);
-  const label = name ? `${name} avatar` : "Generated avatar";
+  const label = name ? t("avatar.named", { name }) : t("avatar.generated");
   const cells = buildCells(avatarSeed);
   const style = {
     "--avatar-color": buildColor(avatarSeed),

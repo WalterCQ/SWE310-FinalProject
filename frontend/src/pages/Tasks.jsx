@@ -123,11 +123,20 @@ export default function Tasks() {
     if (!query) return tasks;
 
     return tasks.filter((task) => {
-      return [task.title, task.description, task.project, task.statusLabel, task.priorityLabel, task.assignee]
+      return [
+        task.title,
+        task.description,
+        task.project,
+        task.statusLabel,
+        t(enumTaskStatusKey(task.statusLabel)),
+        task.priorityLabel,
+        t(enumPriorityKey(task.priorityLabel)),
+        task.assignee,
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(query));
     });
-  }, [tasks, search]);
+  }, [tasks, search, t]);
 
   const groupedTasks = useMemo(() => {
     return statusColumns.map((status) => ({
@@ -367,7 +376,7 @@ export default function Tasks() {
   async function addTask(event, closeModal) {
     event.preventDefault();
     if (!canCreateSelectedProjectTask) {
-      setCreateTaskError("You do not have permission to create tasks in this project.");
+      setCreateTaskError(t("task.noCreatePermission"));
       return;
     }
 
@@ -517,7 +526,7 @@ export default function Tasks() {
             <div className="search-box inline">
               <Search size={18} />
               <input
-                placeholder="Search tasks, assignees, priority..."
+                placeholder={t("task.search")}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -540,7 +549,7 @@ export default function Tasks() {
                 ))}
               </select>
             )}
-            <span>{filteredTasks.length} tasks</span>
+            <span>{t("task.count", { count: filteredTasks.length })}</span>
             {showCreateTaskAction && (
               <LinearModal
                 closeLabel={t("task.closeCreate")}
@@ -629,9 +638,9 @@ export default function Tasks() {
                         </label>
 
                         <label>
-                          Assignee
+                          {t("task.assignee")}
                           <select name="assigneeId" value={form.assigneeId} onChange={updateField} disabled={loadingMembers}>
-                            <option value="">Unassigned</option>
+                            <option value="">{t("task.unassigned")}</option>
                             {projectMembers.map((member) => (
                               <option key={member.userId} value={member.userId}>{member.name}</option>
                             ))}
@@ -734,13 +743,13 @@ export default function Tasks() {
                             </select>
                           </label>
                           <label>
-                            <span>Assignee</span>
+                            <span>{t("task.assignee")}</span>
                             <select
                               value={task.assigneeId || ""}
                               onChange={(event) => updateTaskAssignee(task, event.target.value)}
                               disabled={mutatingTaskId === task.id || loadingMembers}
                             >
-                              <option value="">Unassigned</option>
+                              <option value="">{t("task.unassigned")}</option>
                               {taskMembers.map((member) => (
                                 <option key={member.userId} value={member.userId}>{member.name}</option>
                               ))}
@@ -759,7 +768,7 @@ export default function Tasks() {
 
                       <div className="comment-box">
                         <div className="comment-header">
-                          <span><MessageSquare size={14} /> Comments</span>
+                          <span><MessageSquare size={14} /> {t("task.comments")}</span>
                           <strong>{(commentsByTask[task.id] || []).length}</strong>
                         </div>
                         <div className="comment-list">
@@ -779,7 +788,7 @@ export default function Tasks() {
                                 <button
                                   className="danger-button icon-only"
                                   type="button"
-                                  aria-label="Delete comment"
+                                  aria-label={t("task.deleteComment")}
                                   onClick={() => deleteComment(task, comment)}
                                   disabled={mutatingTaskId === task.id}
                                 >
@@ -794,9 +803,13 @@ export default function Tasks() {
                             <input
                               value={commentDrafts[task.id] || ""}
                               onChange={(event) => setCommentDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
-                              placeholder="Add a comment"
+                              placeholder={t("task.addCommentPlaceholder")}
                             />
-                            <button type="submit" disabled={mutatingTaskId === task.id || !(commentDrafts[task.id] || "").trim()}>
+                            <button
+                              type="submit"
+                              aria-label={t("task.addComment")}
+                              disabled={mutatingTaskId === task.id || !(commentDrafts[task.id] || "").trim()}
+                            >
                               <Send size={14} />
                             </button>
                           </form>

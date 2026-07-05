@@ -27,7 +27,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AgentSubJob> AgentSubJobs => Set<AgentSubJob>();
     public DbSet<AgentApproval> AgentApprovals => Set<AgentApproval>();
     public DbSet<AgentArtifact> AgentArtifacts => Set<AgentArtifact>();
+    public DbSet<AgentArtifactBlob> AgentArtifactBlobs => Set<AgentArtifactBlob>();
     public DbSet<AgentEvent> AgentEvents => Set<AgentEvent>();
+    public DbSet<GitHubRepositoryConnection> GitHubRepositoryConnections => Set<GitHubRepositoryConnection>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -291,11 +293,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<AgentJob>(entity =>
         {
             entity.HasIndex(job => new { job.Status, job.LockedAtUtc });
+            entity.HasIndex(job => job.GitHubRepositoryConnectionId);
             entity.Property(job => job.Goal).HasMaxLength(4000);
             entity.Property(job => job.Status).HasConversion<string>().HasMaxLength(40);
             entity.Property(job => job.CurrentSubAgent).HasMaxLength(120);
             entity.Property(job => job.ErrorMessage).HasMaxLength(2000);
             entity.Property(job => job.LockedBy).HasMaxLength(120);
+            entity.Property(job => job.ArtifactTarget).HasMaxLength(40);
             entity.HasOne(job => job.Workspace)
                 .WithMany()
                 .HasForeignKey(job => job.WorkspaceId)
@@ -307,6 +311,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasOne(job => job.ProviderCredential)
                 .WithMany()
                 .HasForeignKey(job => job.ProviderCredentialId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(job => job.GitHubRepositoryConnection)
+                .WithMany()
+                .HasForeignKey(job => job.GitHubRepositoryConnectionId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -368,6 +376,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(artifact => artifact.AgentStepId)
                 .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(artifact => artifact.Blob)
+                .WithOne(blob => blob.Artifact)
+                .HasForeignKey<AgentArtifactBlob>(blob => blob.AgentArtifactId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentArtifactBlob>(entity =>
+        {
+            entity.HasKey(blob => blob.AgentArtifactId);
         });
 
         modelBuilder.Entity<AgentEvent>(entity =>
@@ -379,6 +396,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany(job => job.Events)
                 .HasForeignKey(agentEvent => agentEvent.AgentJobId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GitHubRepositoryConnection>(entity =>
+        {
+            entity.HasIndex(connection => new { connection.WorkspaceId, connection.FullName }).IsUnique();
+            entity.HasIndex(connection => connection.InstallationId);
+            entity.Property(connection => connection.Owner).HasMaxLength(120);
+            entity.Property(connection => connection.Name).HasMaxLength(160);
+            entity.Property(connection => connection.FullName).HasMaxLength(320);
+            entity.Property(connection => connection.DefaultBranch).HasMaxLength(160);
+            entity.Property(connection => connection.ValidationCommand).HasMaxLength(500);
+            entity.Property(connection => connection.PermissionStatus).HasMaxLength(80);
+            entity.HasOne(connection => connection.Workspace)
+                .WithMany()
+                .HasForeignKey(connection => connection.WorkspaceId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(connection => connection.CreatedByUser)
+                .WithMany()
+                .HasForeignKey(connection => connection.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

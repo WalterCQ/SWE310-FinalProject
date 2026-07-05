@@ -13,7 +13,6 @@ import {
   YAxis,
 } from "recharts";
 import StatCard from "../components/StatCard.jsx";
-import StatusBadge from "../components/StatusBadge.jsx";
 import {
   dashboard,
   formatApiError,
@@ -33,7 +32,24 @@ import {
 } from "../api/mappers.js";
 import { enumPriorityKey, enumProjectStatusKey, enumTaskStatusKey, useI18n } from "../i18n.jsx";
 
-const pieColors = ["#07998d", "#ef6845", "#e5b544", "#b4ef40"];
+const taskStatusColors = {
+  "To Do": "#8e958d",
+  "In Progress": "#07998d",
+  Blocked: "#ef6845",
+  Done: "#b4ef40",
+};
+const priorityColors = {
+  High: "#ef6845",
+  Medium: "#e5b544",
+  Low: "#07998d",
+};
+const deadlineRiskMeta = [
+  { key: "overdue", labelKey: "dashboard.deadline.overdue", color: "#ef6845" },
+  { key: "dueSoon", labelKey: "dashboard.deadline.dueSoon", color: "#e5b544" },
+  { key: "later", labelKey: "dashboard.deadline.later", color: "#07998d" },
+  { key: "noDeadline", labelKey: "dashboard.deadline.noDeadline", color: "#8e958d" },
+];
+const dueSoonWindowMs = 7 * 24 * 60 * 60 * 1000;
 const emptyState = {
   loading: true,
   error: "",
@@ -47,15 +63,24 @@ const emptyState = {
   activities: [],
 };
 
+function calculateCompletionRate(summary) {
+  const taskCount = Number(summary?.taskCount || 0);
+  if (taskCount <= 0) return 0;
+  return Math.round((Number(summary?.completedTaskCount || 0) / taskCount) * 100);
+}
+
 function buildStats(summary, statusData) {
   const inProgress = statusData.find((item) => item.name === "In Progress")?.value || 0;
+  const blocked = statusData.find((item) => item.name === "Blocked")?.value || 0;
+  const overdue = Number(summary.overdueTaskCount || 0);
+  const completionRate = calculateCompletionRate(summary);
 
   return [
-    { labelKey: "stats.totalProjects", value: summary.projectCount || 0, change: "+0", tone: "amber", icon: "projects" },
-    { labelKey: "stats.totalTasks", value: summary.taskCount || 0, change: "+0", tone: "green", icon: "tasks" },
-    { labelKey: "stats.inProgress", value: inProgress, change: "+0", tone: "yellow", icon: "progress" },
-    { labelKey: "stats.completed", value: summary.completedTaskCount || 0, change: "+0", tone: "done", icon: "completed" },
-    { labelKey: "stats.overdue", value: summary.overdueTaskCount || 0, change: "+0", tone: "red", icon: "overdue" },
+    { labelKey: "stats.totalProjects", value: summary.projectCount || 0, tone: "amber", icon: "projects", supportingKey: "stats.liveWorkspace", supportingTone: "neutral" },
+    { labelKey: "stats.totalTasks", value: summary.taskCount || 0, tone: "green", icon: "tasks", supportingKey: "stats.completionRate", supportingParams: { rate: completionRate }, supportingTone: completionRate >= 70 ? "positive" : "neutral" },
+    { labelKey: "stats.inProgress", value: inProgress, tone: "yellow", icon: "progress", supportingKey: blocked > 0 ? "stats.blockedCount" : "stats.noBlocked", supportingParams: { count: blocked }, supportingTone: blocked > 0 ? "negative" : "positive" },
+    { labelKey: "stats.completed", value: summary.completedTaskCount || 0, tone: "done", icon: "completed", supportingKey: "stats.completedShare", supportingParams: { rate: completionRate }, supportingTone: "positive" },
+    { labelKey: "stats.overdue", value: overdue, tone: "red", icon: "overdue", supportingKey: overdue > 0 ? "stats.overdueRisk" : "stats.overdueClear", supportingParams: { count: overdue }, supportingTone: overdue > 0 ? "negative" : "positive" },
   ];
 }
 
@@ -64,6 +89,43 @@ function countPriorities(tasks) {
     priority,
     count: tasks.filter((task) => task.priorityLabel === priority).length,
   }));
+}
+
+function buildDeadlineRisk(tasks) {
+  const counts = {
+    overdue: 0,
+    dueSoon: 0,
+    later: 0,
+    noDeadline: 0,
+  };
+  const now = Date.now();
+  const dueSoonLimit = now + dueSoonWindowMs;
+
+  tasks.forEach((task) => {
+    if (task.statusLabel === "Done") return;
+
+    const dueAt = task.deadlineUtc ? new Date(task.deadlineUtc).getTime() : Number.NaN;
+    if (!Number.isFinite(dueAt)) {
+      counts.noDeadline += 1;
+    } else if (dueAt < now) {
+      counts.overdue += 1;
+    } else if (dueAt <= dueSoonLimit) {
+      counts.dueSoon += 1;
+    } else {
+      counts.later += 1;
+    }
+  });
+
+  return deadlineRiskMeta.map((item) => ({
+    ...item,
+    count: counts[item.key],
+  }));
+}
+
+function chartLabel(value, maxLength = 24) {
+  const label = String(value || "").trim();
+  if (label.length <= maxLength) return label || "-";
+  return `${label.slice(0, maxLength - 3)}...`;
 }
 
 export default function Dashboard() {
@@ -140,19 +202,49 @@ export default function Dashboard() {
     ...item,
     priorityLabel: t(enumPriorityKey(item.priority)),
   }));
+  const projectProgressData = state.projects.slice(0, 5).map((project) => ({
+    id: project.id,
+    name: chartLabel(project.name),
+    fullName: project.name,
+    progress: project.progress,
+    tasks: project.taskCount,
+  }));
+  const deadlineRiskData = buildDeadlineRisk(state.tasks).map((item) => ({
+    ...item,
+    label: t(item.labelKey),
+  }));
+  const totalDeadlineRiskCount = deadlineRiskData.reduce((sum, item) => sum + item.count, 0);
+
+  function renderProjectTooltip({ active, payload }) {
+    if (!active || !payload?.length) return null;
+    const item = payload[0].payload;
+
+    return (
+      <div className="chart-tooltip">
+        <strong>{item.fullName}</strong>
+        <span>{t("dashboard.projectProgressTooltip", { progress: item.progress, tasks: item.tasks })}</span>
+      </div>
+    );
+  }
 
   function exportReport() {
     const rows = [
-      ["Workspace", state.workspaceName || "None"],
-      ["Total projects", state.stats.find((stat) => stat.labelKey === "stats.totalProjects")?.value || 0],
-      ["Total tasks", state.stats.find((stat) => stat.labelKey === "stats.totalTasks")?.value || 0],
-      ["Completed", state.stats.find((stat) => stat.labelKey === "stats.completed")?.value || 0],
-      ["Overdue", state.stats.find((stat) => stat.labelKey === "stats.overdue")?.value || 0],
+      [t("dashboard.csv.workspace"), state.workspaceName || t("dashboard.none")],
+      [t("dashboard.csv.totalProjects"), state.stats.find((stat) => stat.labelKey === "stats.totalProjects")?.value || 0],
+      [t("dashboard.csv.totalTasks"), state.stats.find((stat) => stat.labelKey === "stats.totalTasks")?.value || 0],
+      [t("dashboard.csv.completed"), state.stats.find((stat) => stat.labelKey === "stats.completed")?.value || 0],
+      [t("dashboard.csv.overdue"), state.stats.find((stat) => stat.labelKey === "stats.overdue")?.value || 0],
       [],
-      ["Project", "Status", "Progress", "Tasks", "Completed"],
+      [
+        t("dashboard.csv.project"),
+        t("dashboard.csv.status"),
+        t("dashboard.csv.progress"),
+        t("dashboard.csv.tasks"),
+        t("dashboard.csv.completed"),
+      ],
       ...state.projects.map((project) => [
         project.name,
-        project.statusLabel,
+        t(enumProjectStatusKey(project.statusLabel)),
         `${project.progress}%`,
         project.taskCount,
         project.completedTaskCount,
@@ -191,7 +283,7 @@ export default function Dashboard() {
             <span>{t("dashboard.route.ai")}</span>
           </div>
           <button className="secondary-button" type="button" onClick={exportReport} disabled={state.loading || !state.workspaceName}>
-            Export report
+            {t("dashboard.exportReport")}
           </button>
         </aside>
       </section>
@@ -210,7 +302,8 @@ export default function Dashboard() {
                 key={stat.labelKey}
                 {...stat}
                 label={t(stat.labelKey)}
-                sinceText={t("stats.since", { change: stat.change })}
+                sinceText={t(stat.supportingKey, stat.supportingParams)}
+                supportingTone={stat.supportingTone}
               />
             ))}
           </section>
@@ -227,19 +320,24 @@ export default function Dashboard() {
               {totalStatusCount === 0 ? (
                 <p>{t("dashboard.noTaskStatus")}</p>
               ) : (
-                <div className="chart-row">
+                <div className="chart-row" role="img" aria-label={t("dashboard.taskStatusAria")}>
                   <ResponsiveContainer width="100%" height={260}>
                     <PieChart>
                       <Pie data={state.taskStatusData} dataKey="value" nameKey="name" innerRadius={64} outerRadius={98} paddingAngle={3} stroke="#f7f6f1">
-                        {state.taskStatusData.map((entry, index) => <Cell key={entry.name} fill={pieColors[index]} />)}
+                        {state.taskStatusData.map((entry) => <Cell key={entry.name} fill={taskStatusColors[entry.name] || "#8e958d"} />)}
                       </Pie>
-                      <Tooltip />
+                      <Tooltip
+                        formatter={(value, name, item) => [
+                          t("dashboard.taskCount", { count: value }),
+                          t(enumTaskStatusKey(item?.payload?.name || name)),
+                        ]}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="chart-legend">
                     {state.taskStatusData.map((item) => (
                       <div key={item.name}>
-                        <span>{t(enumTaskStatusKey(item.name))}</span>
+                        <span><i style={{ background: taskStatusColors[item.name] || "#8e958d" }} />{t(enumTaskStatusKey(item.name))}</span>
                         <strong>{t("dashboard.taskCount", { count: item.value })}</strong>
                       </div>
                     ))}
@@ -259,15 +357,21 @@ export default function Dashboard() {
               {totalPriorityCount === 0 ? (
                 <p>{t("dashboard.noPriority")}</p>
               ) : (
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={priorityChartData}>
-                    <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#dedbd2" />
-                    <XAxis dataKey="priorityLabel" stroke="#666a65" />
-                    <YAxis stroke="#666a65" />
-                    <Tooltip />
-                    <Bar dataKey="count" radius={[10, 10, 0, 0]} fill="#07998d" />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div className="chart-frame" role="img" aria-label={t("dashboard.priorityAria")}>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={priorityChartData}>
+                      <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#dedbd2" />
+                      <XAxis dataKey="priorityLabel" stroke="#666a65" />
+                      <YAxis allowDecimals={false} stroke="#666a65" />
+                      <Tooltip
+                        formatter={(value) => [t("dashboard.taskCount", { count: value }), t("dashboard.tooltip.tasks")]}
+                      />
+                      <Bar dataKey="count" radius={[10, 10, 0, 0]}>
+                        {priorityChartData.map((item) => <Cell key={item.priority} fill={priorityColors[item.priority] || "#07998d"} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               )}
             </article>
           </section>
@@ -275,42 +379,56 @@ export default function Dashboard() {
           <section className="bottom-grid">
             <article className="panel">
               <div className="panel-header">
-                <h3>{t("dashboard.activeProjects")}</h3>
+                <div>
+                  <h3>{t("dashboard.projectProgress")}</h3>
+                  <span>{t("dashboard.projectProgressHelp")}</span>
+                </div>
                 <Link to="/projects">{t("dashboard.viewAll")}</Link>
               </div>
-              <div className="project-list compact">
-                {state.projects.length === 0 && <p>{t("dashboard.noProjects")}</p>}
-                {state.projects.slice(0, 3).map((project) => (
-                  <div className="project-row" key={project.id}>
-                    <div>
-                      <h4>{project.name}</h4>
-                      <p>{t(enumProjectStatusKey(project.statusLabel))}</p>
-                    </div>
-                    <div className="progress-shell"><span style={{ width: `${project.progress}%` }} /></div>
-                    <strong>{project.progress}%</strong>
-                  </div>
-                ))}
-              </div>
+              {projectProgressData.length === 0 ? (
+                <p>{t("dashboard.noProjectProgress")}</p>
+              ) : (
+                <div className="chart-frame" role="img" aria-label={t("dashboard.projectProgressAria")}>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={projectProgressData} layout="vertical" margin={{ top: 4, right: 12, bottom: 4, left: 4 }}>
+                      <CartesianGrid strokeDasharray="4 4" horizontal={false} stroke="#dedbd2" />
+                      <XAxis type="number" domain={[0, 100]} tickFormatter={(value) => `${value}%`} stroke="#666a65" />
+                      <YAxis type="category" dataKey="name" width={132} stroke="#666a65" tick={{ fontSize: 12 }} />
+                      <Tooltip content={renderProjectTooltip} />
+                      <Bar dataKey="progress" radius={[0, 10, 10, 0]} fill="#07998d" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </article>
 
             <article className="panel">
               <div className="panel-header">
-                <h3>{t("dashboard.demoChecklist")}</h3>
+                <div>
+                  <h3>{t("dashboard.deadlineRisk")}</h3>
+                  <span>{t("dashboard.deadlineRiskHelp")}</span>
+                </div>
                 <Link to="/tasks">{t("dashboard.viewAll")}</Link>
               </div>
-              <div className="task-list compact">
-                {state.tasks.length === 0 && <p>{t("dashboard.noTasks")}</p>}
-                {state.tasks.slice(0, 4).map((task) => (
-                  <div className="task-line" key={task.id}>
-                    <div>
-                      <h4>{task.title}</h4>
-                      <p>{task.project}</p>
-                    </div>
-                    <StatusBadge variant={task.priorityLabel}>{t(enumPriorityKey(task.priorityLabel))}</StatusBadge>
-                    <span>{task.deadlineLabel}</span>
-                  </div>
-                ))}
-              </div>
+              {totalDeadlineRiskCount === 0 ? (
+                <p>{t("dashboard.noDeadlineRisk")}</p>
+              ) : (
+                <div className="chart-frame" role="img" aria-label={t("dashboard.deadlineRiskAria")}>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={deadlineRiskData}>
+                      <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#dedbd2" />
+                      <XAxis dataKey="label" interval={0} tick={{ fontSize: 12 }} stroke="#666a65" />
+                      <YAxis allowDecimals={false} stroke="#666a65" />
+                      <Tooltip
+                        formatter={(value) => [t("dashboard.taskCount", { count: value }), t("dashboard.tooltip.openTasks")]}
+                      />
+                      <Bar dataKey="count" radius={[10, 10, 0, 0]}>
+                        {deadlineRiskData.map((item) => <Cell key={item.key} fill={item.color} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </article>
 
             <article className="panel">

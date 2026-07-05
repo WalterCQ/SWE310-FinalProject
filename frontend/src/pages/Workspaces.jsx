@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { FolderKanban, KeyRound, Plus, Save, Trash2, UserPlus, Users } from "lucide-react";
+import { ChevronDown, FolderKanban, GitPullRequest, KeyRound, Plus, Save, Trash2, UserPlus, Users } from "lucide-react";
 import { motion } from "motion/react";
 import { useSearchParams } from "react-router-dom";
 import CreateActionButton from "../components/CreateActionButton.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import LinearModal from "../components/LinearModal.jsx";
-import { formatApiError, workspaces as workspacesApi } from "../api/taskflowApi.js";
+import Avatar from "../components/Avatar.jsx";
+import { auth, formatApiError, workspaces as workspacesApi } from "../api/taskflowApi.js";
 import { asArray, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
 import { canDeleteWorkspace, canManageWorkspaceMembers, isWorkspaceAdmin } from "../api/permissions.js";
-import { useI18n } from "../i18n.jsx";
+import { enumWorkspaceRoleKey, useI18n } from "../i18n.jsx";
 
 const colors = ["amber", "green", "red", "yellow"];
 const blankForm = { name: "", description: "" };
@@ -19,10 +20,11 @@ const blankAiProviderForm = {
   apiKey: "",
   supportsToolCalls: true,
 };
+const GITHUB_SETUP_WORKSPACE_KEY = "taskflow.githubSetupWorkspaceId";
 const roleOptions = [
-  { value: "0", label: "Owner" },
-  { value: "1", label: "Admin" },
-  { value: "2", label: "Member" },
+  { value: "0", labelKey: "enum.workspaceRole.owner" },
+  { value: "1", labelKey: "enum.workspaceRole.admin" },
+  { value: "2", labelKey: "enum.workspaceRole.member" },
 ];
 
 function blankMemberState() {
@@ -50,14 +52,28 @@ function blankAiProviderState() {
   };
 }
 
+function blankGitHubState() {
+  return {
+    repositories: [],
+    loading: false,
+    setupLoading: false,
+    completing: false,
+    deletingId: "",
+    loaded: false,
+    error: "",
+    message: "",
+  };
+}
+
 export default function Workspaces() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedWorkspaceId = searchParams.get("workspaceId") || "";
-  const currentUserId = localStorage.getItem("userId") || "";
+  const [currentUserId, setCurrentUserId] = useState(localStorage.getItem("userId") || "");
   const [workspaces, setWorkspaces] = useState([]);
   const [membersByWorkspace, setMembersByWorkspace] = useState({});
   const [aiProvidersByWorkspace, setAiProvidersByWorkspace] = useState({});
+  const [githubByWorkspace, setGithubByWorkspace] = useState({});
   const [form, setForm] = useState(blankForm);
   const [formErrors, setFormErrors] = useState({});
   const [loading, setLoading] = useState(true);
@@ -65,6 +81,7 @@ export default function Workspaces() {
   const [error, setError] = useState("");
   const [createError, setCreateError] = useState("");
   const workspaceNameRef = useRef(null);
+  const githubSetupHandledRef = useRef("");
 
   useEffect(() => {
     let active = true;
@@ -74,6 +91,12 @@ export default function Workspaces() {
       setError("");
 
       try {
+        const user = await auth.me().catch(() => null);
+        if (active && user?.userId) {
+          localStorage.setItem("userId", user.userId);
+          setCurrentUserId(user.userId);
+        }
+
         const data = await workspacesApi.list();
         const mappedWorkspaces = asArray(data).map(mapWorkspace);
         const memberEntries = await Promise.all(
@@ -113,6 +136,25 @@ export default function Workspaces() {
       behavior: "smooth",
     });
   }, [selectedWorkspaceId, loading, workspaces]);
+
+  useEffect(() => {
+    if (loading) return;
+
+    const installationId = searchParams.get("installation_id");
+    if (!installationId || githubSetupHandledRef.current === installationId) return;
+
+    const workspaceId = searchParams.get("state")
+      || selectedWorkspaceId
+      || localStorage.getItem(GITHUB_SETUP_WORKSPACE_KEY)
+      || "";
+    if (!workspaceId) return;
+
+    const currentWorkspaceRole = getCurrentWorkspaceRole(workspaceId);
+    if (!canManageWorkspaceMembers(currentWorkspaceRole)) return;
+
+    githubSetupHandledRef.current = installationId;
+    completeGitHubInstallation(workspaceId, installationId);
+  }, [currentUserId, loading, membersByWorkspace, searchParams, selectedWorkspaceId]);
 
   function isCurrentUser(userId) {
     return Boolean(userId && currentUserId && String(userId).toLowerCase() === currentUserId.toLowerCase());
@@ -165,6 +207,22 @@ export default function Workspaces() {
     updateAiProviderState(workspaceId, { [field]: value, error: "", message: "" });
   }
 
+  function updateGitHubState(workspaceId, updates) {
+    setGithubByWorkspace((current) => ({
+      ...current,
+      [workspaceId]: {
+        ...blankGitHubState(),
+        ...(current[workspaceId] || {}),
+        ...updates,
+      },
+    }));
+  }
+
+  function formatGitHubError(error) {
+    if (error?.statusCode === 404) return t("workspace.githubApiUnavailable");
+    return formatApiError(error);
+  }
+
   async function loadAiProvider(workspaceId) {
     updateAiProviderState(workspaceId, { loading: true, error: "", message: "" });
 
@@ -205,7 +263,7 @@ export default function Workspaces() {
     const state = aiProvidersByWorkspace[workspaceId] || blankAiProviderState();
 
     if (!state.hasApiKey && !state.apiKey.trim()) {
-      updateAiProviderState(workspaceId, { error: "API key is required." });
+      updateAiProviderState(workspaceId, { error: t("workspace.aiKeyRequired") });
       return;
     }
 
@@ -230,7 +288,7 @@ export default function Workspaces() {
         hasApiKey: Boolean(savedProvider.hasApiKey),
         saving: false,
         loaded: true,
-        message: "API key saved.",
+        message: t("workspace.aiKeySaved"),
       });
     } catch (apiError) {
       updateAiProviderState(workspaceId, { error: formatApiError(apiError), saving: false });
@@ -238,7 +296,7 @@ export default function Workspaces() {
   }
 
   async function deleteAiProvider(workspaceId) {
-    const confirmed = window.confirm("Remove this workspace AI provider?");
+    const confirmed = window.confirm(t("workspace.removeAiProviderConfirm"));
     if (!confirmed) return;
 
     updateAiProviderState(workspaceId, { deleting: true, error: "", message: "" });
@@ -251,10 +309,91 @@ export default function Workspaces() {
         hasApiKey: false,
         deleting: false,
         loaded: true,
-        message: "AI provider removed.",
+        message: t("workspace.aiProviderRemoved"),
       });
     } catch (apiError) {
       updateAiProviderState(workspaceId, { error: formatApiError(apiError), deleting: false });
+    }
+  }
+
+  async function loadGitHubRepositories(workspaceId) {
+    updateGitHubState(workspaceId, { loading: true, error: "", message: "" });
+
+    try {
+      const repositories = await workspacesApi.githubRepositories(workspaceId);
+      updateGitHubState(workspaceId, {
+        repositories: asArray(repositories),
+        loading: false,
+        loaded: true,
+      });
+    } catch (apiError) {
+      updateGitHubState(workspaceId, {
+        error: formatGitHubError(apiError),
+        loading: false,
+        loaded: true,
+      });
+    }
+  }
+
+  async function startGitHubSetup(workspaceId) {
+    updateGitHubState(workspaceId, { setupLoading: true, error: "", message: "" });
+
+    try {
+      const setup = await workspacesApi.githubSetup(workspaceId);
+      if (!setup?.installUrl) {
+        updateGitHubState(workspaceId, {
+          setupLoading: false,
+          error: t("workspace.githubSetupMissing"),
+        });
+        return;
+      }
+
+      localStorage.setItem(GITHUB_SETUP_WORKSPACE_KEY, workspaceId);
+      window.location.assign(setup.installUrl);
+    } catch (apiError) {
+      updateGitHubState(workspaceId, { error: formatGitHubError(apiError), setupLoading: false });
+    }
+  }
+
+  async function completeGitHubInstallation(workspaceId, installationId) {
+    const parsedInstallationId = Number(installationId);
+    if (!parsedInstallationId) {
+      updateGitHubState(workspaceId, { error: t("workspace.githubInvalidInstallation") });
+      return;
+    }
+
+    updateGitHubState(workspaceId, { completing: true, error: "", message: "" });
+
+    try {
+      const repositories = await workspacesApi.completeGithubInstallation(workspaceId, {
+        installationId: parsedInstallationId,
+      });
+      localStorage.removeItem(GITHUB_SETUP_WORKSPACE_KEY);
+      setSearchParams({ workspaceId }, { replace: true });
+      updateGitHubState(workspaceId, {
+        repositories: asArray(repositories),
+        completing: false,
+        loaded: true,
+        message: t("workspace.githubConnected"),
+      });
+    } catch (apiError) {
+      updateGitHubState(workspaceId, { error: formatGitHubError(apiError), completing: false });
+    }
+  }
+
+  async function deleteGitHubRepository(workspaceId, repository) {
+    const repositoryName = repository.fullName || repository.name;
+    const confirmed = window.confirm(t("workspace.githubDisconnectConfirm", { name: repositoryName }));
+    if (!confirmed) return;
+
+    updateGitHubState(workspaceId, { deletingId: repository.id, error: "", message: "" });
+
+    try {
+      await workspacesApi.deleteGithubRepository(workspaceId, repository.id);
+      updateGitHubState(workspaceId, { message: t("workspace.githubRepositoryDisconnected"), deletingId: "" });
+      await loadGitHubRepositories(workspaceId);
+    } catch (apiError) {
+      updateGitHubState(workspaceId, { error: formatGitHubError(apiError), deletingId: "" });
     }
   }
 
@@ -308,7 +447,7 @@ export default function Workspaces() {
   async function addMember(workspaceId) {
     const state = membersByWorkspace[workspaceId] || blankMemberState();
     if (!state.email.trim()) {
-      updateMemberState(workspaceId, { error: "Enter the email of a registered user." });
+      updateMemberState(workspaceId, { error: t("workspace.memberEmailRequired") });
       return;
     }
 
@@ -355,7 +494,7 @@ export default function Workspaces() {
   }
 
   async function deleteWorkspace(workspace) {
-    const confirmed = window.confirm(`Delete "${workspace.name}" and all of its projects, channels, tasks, and members?`);
+    const confirmed = window.confirm(t("workspace.deleteConfirm", { name: workspace.name }));
     if (!confirmed) return;
 
     let deleted = false;
@@ -464,6 +603,11 @@ export default function Workspaces() {
             const canDeleteCurrentWorkspace = canDeleteWorkspace(currentWorkspaceRole);
             const aiProviderState = aiProvidersByWorkspace[workspace.id] || blankAiProviderState();
             const aiProviderBusy = aiProviderState.loading || aiProviderState.saving || aiProviderState.deleting;
+            const githubState = githubByWorkspace[workspace.id] || blankGitHubState();
+            const githubBusy = githubState.loading
+              || githubState.setupLoading
+              || githubState.completing
+              || Boolean(githubState.deletingId);
 
             return (
               <article
@@ -484,7 +628,7 @@ export default function Workspaces() {
 
                 <div className="member-manager">
                   <div className="member-manager-header">
-                    <strong>Workspace members</strong>
+                    <strong>{t("workspace.membersTitle")}</strong>
                     <div className="member-manager-actions">
                       {canDeleteCurrentWorkspace && (
                         <button
@@ -493,23 +637,29 @@ export default function Workspaces() {
                           onClick={() => deleteWorkspace(workspace)}
                           disabled={memberState.saving}
                         >
-                          <Trash2 size={14} /> Delete workspace
+                          <Trash2 size={14} /> {t("workspace.delete")}
                         </button>
                       )}
                       <button className="secondary-button compact" type="button" onClick={() => reloadMembers(workspace.id)}>
-                        Refresh
+                        {t("workspace.refresh")}
                       </button>
                     </div>
                   </div>
 
                   {memberState.error && <div className="error-text">{memberState.error}</div>}
-                  {memberState.loading && <p>Loading members...</p>}
-                  {!memberState.loading && memberState.items.length === 0 && <p>No members loaded.</p>}
+                  {memberState.loading && <p>{t("workspace.loadingMembers")}</p>}
+                  {!memberState.loading && memberState.items.length === 0 && <p>{t("workspace.noMembersLoaded")}</p>}
 
                   <div className="member-list">
                     {memberState.items.map((member) => (
-                      <div className="member-row" key={member.userId}>
-                        <div>
+                      <div className="member-row workspace-member-row" key={member.userId}>
+                        <Avatar
+                          className="mini-avatar member-row-avatar"
+                          seed={member.userId || member.email}
+                          name={member.name}
+                          ariaHidden
+                        />
+                        <div className="member-row-copy">
                           <strong>{member.name}</strong>
                           <span>{member.email}</span>
                         </div>
@@ -521,13 +671,13 @@ export default function Workspaces() {
                               disabled={memberState.saving}
                             >
                               {roleOptions.map((option) => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
+                                <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                               ))}
                             </select>
                             <button
                               className="danger-button icon-only"
                               type="button"
-                              aria-label={`Remove ${member.name}`}
+                              aria-label={t("workspace.removeMemberAria", { name: member.name })}
                               onClick={() => removeMember(workspace.id, member)}
                               disabled={memberState.saving}
                             >
@@ -535,7 +685,7 @@ export default function Workspaces() {
                             </button>
                           </>
                         ) : (
-                          <span className="member-role-badge">{member.roleLabel}</span>
+                          <span className="member-role-badge">{t(enumWorkspaceRoleKey(member.roleLabel))}</span>
                         )}
                       </div>
                     ))}
@@ -546,14 +696,14 @@ export default function Workspaces() {
                       <input
                         value={memberState.email}
                         onChange={(event) => updateMemberState(workspace.id, { email: event.target.value, error: "" })}
-                        placeholder="member@email.com"
+                        placeholder={t("workspace.memberEmailPlaceholder")}
                       />
                       <select
                         value={memberState.role}
                         onChange={(event) => updateMemberState(workspace.id, { role: event.target.value })}
                       >
                         {roleOptions.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
+                          <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                         ))}
                       </select>
                       <button
@@ -562,68 +712,152 @@ export default function Workspaces() {
                         onClick={() => addMember(workspace.id)}
                         disabled={memberState.saving}
                       >
-                        <UserPlus size={16} /> Add
+                        <UserPlus size={16} /> {t("workspace.addMember")}
                       </button>
                     </div>
                   )}
                 </div>
 
                 {canManageMembers && (
-                  <div className="ai-provider-manager">
-                    <div className="member-manager-header">
-                      <strong><KeyRound size={15} /> AI API key</strong>
-                      <div className="member-manager-actions">
-                        <button
-                          className="secondary-button compact"
-                          type="button"
-                          onClick={() => loadAiProvider(workspace.id)}
-                          disabled={aiProviderState.loading}
-                        >
-                          {aiProviderState.loaded ? "Refresh" : "Load"}
-                        </button>
-                        {aiProviderState.hasProvider && (
+                  <div className="workspace-settings-grid">
+                    <details className="settings-disclosure">
+                      <summary>
+                        <span className="settings-summary-copy">
+                          <KeyRound size={15} />
+                          <span>
+                            <strong>{t("workspace.aiApiKey")}</strong>
+                            <small>{aiProviderState.hasApiKey ? t("workspace.configured") : t("workspace.notConfigured")}</small>
+                          </span>
+                        </span>
+                        <ChevronDown className="settings-chevron" size={16} />
+                      </summary>
+
+                      <div className="settings-disclosure-body">
+                        <div className="member-manager-actions left">
                           <button
-                            className="danger-button compact"
+                            className="secondary-button compact"
                             type="button"
-                            onClick={() => deleteAiProvider(workspace.id)}
-                            disabled={aiProviderBusy}
+                            onClick={() => loadAiProvider(workspace.id)}
+                            disabled={aiProviderState.loading}
                           >
-                            <Trash2 size={14} /> Remove
+                            {aiProviderState.loaded ? t("workspace.refresh") : t("workspace.load")}
                           </button>
+                          {aiProviderState.hasProvider && (
+                            <button
+                              className="danger-button compact"
+                              type="button"
+                              onClick={() => deleteAiProvider(workspace.id)}
+                              disabled={aiProviderBusy}
+                            >
+                              <Trash2 size={14} /> {t("workspace.remove")}
+                            </button>
+                          )}
+                        </div>
+
+                        {aiProviderState.error && <div className="error-text">{aiProviderState.error}</div>}
+                        {aiProviderState.message && <div className="success-text">{aiProviderState.message}</div>}
+                        {aiProviderState.loading && <p>{t("workspace.aiProviderLoading")}</p>}
+
+                        <div className="ai-key-status">
+                          {aiProviderState.hasApiKey ? t("workspace.aiKeyConfiguredHelp") : t("workspace.aiKeyMissingHelp")}
+                        </div>
+                        <p className="muted-small">{t("workspace.channelRagHelp")}</p>
+
+                        <div className="ai-key-field">
+                          <label>
+                            {t("workspace.apiKey")}
+                            <input
+                              value={aiProviderState.apiKey}
+                              onChange={(event) => updateAiProviderField(workspace.id, "apiKey", event.target.value)}
+                              disabled={aiProviderBusy}
+                              placeholder={aiProviderState.hasApiKey ? t("workspace.keepCurrentKeyPlaceholder") : "sk-..."}
+                              type="password"
+                            />
+                          </label>
+                        </div>
+
+                        <button
+                          className="primary-button compact"
+                          type="button"
+                          onClick={() => saveAiProvider(workspace.id)}
+                          disabled={aiProviderBusy}
+                        >
+                          <Save size={15} /> {aiProviderState.saving ? t("ai.saving") : t("workspace.saveApiKey")}
+                        </button>
+                      </div>
+                    </details>
+
+                    <details className="settings-disclosure">
+                      <summary>
+                        <span className="settings-summary-copy">
+                          <GitPullRequest size={15} />
+                          <span>
+                            <strong>{t("workspace.githubApp")}</strong>
+                            <small>
+                              {githubState.loaded
+                                ? t("workspace.githubRepositoriesCount", { count: githubState.repositories.length })
+                                : t("workspace.githubConnectionSettings")}
+                            </small>
+                          </span>
+                        </span>
+                        <ChevronDown className="settings-chevron" size={16} />
+                      </summary>
+
+                      <div className="settings-disclosure-body">
+                        <div className="member-manager-actions left">
+                          <button
+                            className="secondary-button compact"
+                            type="button"
+                            onClick={() => loadGitHubRepositories(workspace.id)}
+                            disabled={githubBusy}
+                          >
+                            {githubState.loaded ? t("workspace.refresh") : t("workspace.load")}
+                          </button>
+                        </div>
+
+                        {githubState.error && <div className="error-text">{githubState.error}</div>}
+                        {githubState.message && <div className="success-text">{githubState.message}</div>}
+                        {githubState.loading && <p>{t("workspace.githubLoadingRepositories")}</p>}
+                        {githubState.completing && <p>{t("workspace.githubSyncingInstallation")}</p>}
+
+                        <p className="muted-small">{t("workspace.githubHelp")}</p>
+
+                        <button
+                          className="primary-button compact"
+                          type="button"
+                          onClick={() => startGitHubSetup(workspace.id)}
+                          disabled={githubBusy}
+                        >
+                          <GitPullRequest size={15} /> {githubState.setupLoading ? t("workspace.githubOpening") : t("workspace.githubConnect")}
+                        </button>
+
+                        {githubState.loaded && githubState.repositories.length === 0 && (
+                          <p className="muted-small">{t("workspace.githubNoRepositories")}</p>
+                        )}
+
+                        {githubState.repositories.length > 0 && (
+                          <div className="member-list">
+                            {githubState.repositories.map((repository) => (
+                              <div className="member-row" key={repository.id}>
+                                <div>
+                                  <strong>{repository.fullName}</strong>
+                                  <span>{repository.defaultBranch} · {repository.permissionStatus}</span>
+                                </div>
+                                <button
+                                  className="danger-button icon-only"
+                                  type="button"
+                                  aria-label={t("workspace.githubDisconnectAria", { name: repository.fullName })}
+                                  onClick={() => deleteGitHubRepository(workspace.id, repository)}
+                                  disabled={githubBusy}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
-                    </div>
-
-                    {aiProviderState.error && <div className="error-text">{aiProviderState.error}</div>}
-                    {aiProviderState.message && <div className="success-text">{aiProviderState.message}</div>}
-                    {aiProviderState.loading && <p>Loading AI provider...</p>}
-
-                    <div className="ai-key-status">
-                      {aiProviderState.hasApiKey ? "API key configured. Leave blank to keep current key." : "No API key configured."}
-                    </div>
-                    <p className="muted-small">Channel attachment RAG uses the backend Pinecone index.</p>
-
-                    <div className="ai-key-field">
-                      <label>
-                        API Key
-                        <input
-                          value={aiProviderState.apiKey}
-                          onChange={(event) => updateAiProviderField(workspace.id, "apiKey", event.target.value)}
-                          disabled={aiProviderBusy}
-                          placeholder={aiProviderState.hasApiKey ? "Leave blank to keep current key" : "sk-..."}
-                          type="password"
-                        />
-                      </label>
-                    </div>
-
-                    <button
-                      className="primary-button compact"
-                      type="button"
-                      onClick={() => saveAiProvider(workspace.id)}
-                      disabled={aiProviderBusy}
-                    >
-                      <Save size={15} /> {aiProviderState.saving ? "Saving..." : "Save API key"}
-                    </button>
+                    </details>
                   </div>
                 )}
               </article>

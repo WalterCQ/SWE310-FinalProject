@@ -14,6 +14,74 @@ function getNotificationDestination(notification) {
   return "/dashboard";
 }
 
+const notificationTitleKeys = {
+  "Task overdue": "notifications.system.taskOverdueTitle",
+  "Task reminder": "notifications.system.taskReminderTitle",
+  "Project deadline risk": "notifications.system.projectDeadlineRiskTitle",
+  "AI risk summary available": "notifications.seed.aiRiskSummaryTitle",
+  "Presentation reminder": "notifications.seed.presentationReminderTitle",
+  "Task assigned for final demo": "notifications.seed.finalDemoTaskTitle",
+  "New message in #demo-chat": "notifications.seed.newMessageDemoChatTitle",
+  "Workspace demo data loaded": "notifications.seed.workspaceDemoDataLoadedTitle",
+  "Demo workspace is ready": "notifications.seed.demoWorkspaceReadyTitle",
+  "Presentation checklist due soon": "notifications.seed.presentationChecklistTitle",
+  "AI project summary has new context": "notifications.seed.aiProjectSummaryContextTitle",
+};
+
+const notificationMessageKeys = {
+  "The AI assistant can summarize project progress and overdue risk from current task data.":
+    "notifications.seed.aiRiskSummaryMessage",
+  "Record dashboard, tasks, channels, AI assistant, and notifications before submission.":
+    "notifications.seed.presentationReminderMessage",
+  "A teammate posted the next validation step in the demo chat channel.":
+    "notifications.seed.newMessageDemoChatMessage",
+  "Projects, task board, channels, and dashboard charts are ready for the frontend demo.":
+    "notifications.seed.workspaceDemoDataLoadedMessage",
+  "Open Dashboard, Projects, Tasks, Channels, AI Assistant, and Notifications to show live Azure data.":
+    "notifications.seed.demoWorkspaceReadyMessage",
+  "Record the dashboard, task creation, chat, notification read state, and AI project summary.":
+    "notifications.seed.presentationChecklistMessage",
+  "The AI demo project now includes backend, task, and channel records for grounded summaries.":
+    "notifications.seed.aiProjectSummaryContextMessage",
+};
+
+function translateNotificationTitle(title, t) {
+  const value = String(title || "").trim();
+  const key = notificationTitleKeys[value];
+  return key ? t(key) : value;
+}
+
+function translateNotificationMessage(message, t) {
+  const value = String(message || "").trim();
+  if (!value) return "";
+
+  const key = notificationMessageKeys[value];
+  if (key) return t(key);
+
+  const assignedMatch = value.match(/^A walkthrough task is assigned to (.+)\.$/);
+  if (assignedMatch) {
+    return t("notifications.seed.finalDemoTaskMessage", { email: assignedMatch[1] });
+  }
+
+  const needsAttentionMatch = value.match(/^(.+) in (.+) needs attention\.$/);
+  if (needsAttentionMatch) {
+    return t("notifications.system.taskNeedsAttentionMessage", {
+      task: needsAttentionMatch[1],
+      project: needsAttentionMatch[2],
+    });
+  }
+
+  const deadlineRiskMatch = value.match(/^(.+) is near its deadline with ([0-9.]+)% completion\.$/);
+  if (deadlineRiskMatch) {
+    return t("notifications.system.projectDeadlineRiskMessage", {
+      project: deadlineRiskMatch[1],
+      completion: deadlineRiskMatch[2],
+    });
+  }
+
+  return value;
+}
+
 function compactNotifications(notifications) {
   const groups = new Map();
 
@@ -155,31 +223,37 @@ export default function Notifications() {
 
         {!loading && !error && notifications.length > 0 && (
           <div className="notification-list">
-            {compactedNotifications.map((notification) => (
-              <button
-                aria-label={t("notifications.openAria", { title: notification.title })}
-                className={`notification-row ${notification.isRead ? "read" : "unread"}`}
-                disabled={openingId === notification.id}
-                key={notification.id}
-                onClick={() => openNotification(notification)}
-                type="button"
-              >
-                <div className="notification-icon">
-                  {notification.isRead ? <CheckCircle2 size={18} /> : <BellRing size={18} />}
-                </div>
-                <div className="notification-copy">
-                  <h4>{notification.title}</h4>
-                  <p>{notification.message || t(enumNotificationKey(notification.typeLabel))}</p>
-                </div>
-                <div className="notification-meta">
-                  <span className="notification-type">{t(enumNotificationKey(notification.typeLabel))}</span>
-                  <span className="notification-status">
-                    {notification.isRead ? t("notifications.read") : t("notifications.unread")}
-                  </span>
-                  <time>{notification.time || t("notifications.openHint")}</time>
-                </div>
-              </button>
-            ))}
+            {compactedNotifications.map((notification) => {
+              const title = translateNotificationTitle(notification.title, t);
+              const message = translateNotificationMessage(notification.message, t)
+                || t(enumNotificationKey(notification.typeLabel));
+
+              return (
+                <button
+                  aria-label={t("notifications.openAria", { title })}
+                  className={`notification-row ${notification.isRead ? "read" : "unread"}`}
+                  disabled={openingId === notification.id}
+                  key={notification.id}
+                  onClick={() => openNotification(notification)}
+                  type="button"
+                >
+                  <div className="notification-icon">
+                    {notification.isRead ? <CheckCircle2 size={18} /> : <BellRing size={18} />}
+                  </div>
+                  <div className="notification-copy">
+                    <h4>{title}</h4>
+                    <p>{message}</p>
+                  </div>
+                  <div className="notification-meta">
+                    <span className="notification-type">{t(enumNotificationKey(notification.typeLabel))}</span>
+                    <span className="notification-status">
+                      {notification.isRead ? t("notifications.read") : t("notifications.unread")}
+                    </span>
+                    <time>{notification.time || t("notifications.openHint")}</time>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </section>

@@ -262,7 +262,7 @@ public class AiProviderService(
 
         if (!await permissionService.CanManageWorkspace(userId, workspaceId))
         {
-            return ApiResponse.Fail<bool>("Only workspace owners, workspace admins, or global admins can manage the workspace AI provider.", StatusCodes.Status403Forbidden);
+            return ApiResponse.Fail<bool>("Only workspace administrators, workspace managers, or global administrators can manage the workspace AI provider.", StatusCodes.Status403Forbidden);
         }
 
         return ApiResponse.Ok(true);

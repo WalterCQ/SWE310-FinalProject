@@ -84,7 +84,7 @@ public class ReminderBackgroundService(
         foreach (var task in unassignedHighPriorityTasks)
         {
             var managerIds = task.Project?.Members
-                .Where(member => member.RoleInProject == ProjectRole.ProjectManager)
+                .Where(member => member.RoleInProject == ProjectRole.Administrator)
                 .Select(member => member.UserId)
                 .Distinct()
                 .ToList() ?? [];
@@ -116,7 +116,7 @@ public class ReminderBackgroundService(
                 continue;
             }
 
-            foreach (var managerId in project.Members.Where(member => member.RoleInProject == ProjectRole.ProjectManager).Select(member => member.UserId))
+            foreach (var managerId in project.Members.Where(member => member.RoleInProject == ProjectRole.Administrator).Select(member => member.UserId))
             {
                 await NotifyUser(notificationService, managerId, project.WorkspaceId, "Project deadline risk", $"{project.Name} is near its deadline with {completionRate:0}% completion.", cancellationToken);
             }

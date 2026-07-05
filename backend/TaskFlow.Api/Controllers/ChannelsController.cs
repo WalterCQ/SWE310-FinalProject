@@ -16,6 +16,7 @@ public class ChannelsController(
     IChannelService channelService,
     IAiCommandService aiCommandService,
     AppDbContext dbContext,
+    IPineconeVectorStore pineconeVectorStore,
     IPermissionService permissionService,
     ICurrentUserService currentUser) : ControllerBase
 {
@@ -113,6 +114,24 @@ public class ChannelsController(
             return NotFound();
         }
 
+        if (attachment.IsAiIndexed)
+        {
+            try
+            {
+                await pineconeVectorStore.DeleteByAttachmentAsync(attachment.WorkspaceId, attachment.Id, cancellationToken);
+            }
+            catch (PineconeVectorStoreException ex)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    ApiResponse.Fail<bool>(ex.Message, StatusCodes.Status502BadGateway));
+            }
+        }
+
+        var knowledgeChunks = await dbContext.ChannelKnowledgeChunks
+            .Where(chunk => chunk.AttachmentId == attachmentId)
+            .ToListAsync(cancellationToken);
+        dbContext.ChannelKnowledgeChunks.RemoveRange(knowledgeChunks);
         dbContext.ChannelAttachments.Remove(attachment);
         if (attachment.Blob is not null)
         {

@@ -11,4 +11,7 @@ public interface IAgentService
     Task<ApiResponse<AgentApprovalResponse>> ApproveApprovalAsync(Guid approvalId, DecideAgentApprovalRequest request, CancellationToken cancellationToken = default);
     Task<ApiResponse<AgentApprovalResponse>> RejectApprovalAsync(Guid approvalId, DecideAgentApprovalRequest request, CancellationToken cancellationToken = default);
     Task<ApiResponse<AgentJobResponse>> CancelJobAsync(Guid jobId, CancellationToken cancellationToken = default);
+    Task<ApiResponse<AgentArtifactDownload>> DownloadArtifactAsync(Guid artifactId, CancellationToken cancellationToken = default);
 }
+
+public record AgentArtifactDownload(string FileName, string ContentType, byte[] Content);

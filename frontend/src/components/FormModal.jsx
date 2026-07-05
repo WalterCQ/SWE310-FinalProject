@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import { X } from "lucide-react";
+import { translateKey } from "../i18n.jsx";
 
 const focusableSelector = [
   "a[href]",
@@ -16,7 +17,7 @@ export default function FormModal({
   description,
   children,
   onClose,
-  closeLabel = "Close",
+  closeLabel = translateKey("common.close"),
   labelledById,
   initialFocusRef,
   size = "md",

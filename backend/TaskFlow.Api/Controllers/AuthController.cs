@@ -33,7 +33,7 @@ public class AuthController (AppDbContext dbContext, IConfiguration configuratio
             Id = Guid.NewGuid(),
             Email = request.Email.Trim().ToLower(),
             Name = request.Name.Trim(),
-            GlobalRole = GlobalRole.User
+            GlobalRole = GlobalRole.Member
         };
 
         user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);

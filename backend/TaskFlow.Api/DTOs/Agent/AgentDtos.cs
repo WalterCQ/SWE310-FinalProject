@@ -11,6 +11,12 @@ public class CreateAgentJobRequest
     public string Goal { get; set; } = string.Empty;
 
     public Guid? ProviderCredentialId { get; set; }
+    public Guid? ChannelId { get; set; }
+    public Guid? AttachmentId { get; set; }
+    public Guid? GitHubRepositoryId { get; set; }
+
+    [StringLength(40)]
+    public string? ArtifactTarget { get; set; }
 }
 
 public class DecideAgentApprovalRequest
@@ -25,6 +31,10 @@ public class AgentJobResponse
     public Guid WorkspaceId { get; set; }
     public Guid UserId { get; set; }
     public Guid? ProviderCredentialId { get; set; }
+    public Guid? ChannelId { get; set; }
+    public Guid? AttachmentId { get; set; }
+    public Guid? GitHubRepositoryId { get; set; }
+    public string? ArtifactTarget { get; set; }
     public string Goal { get; set; } = string.Empty;
     public AgentJobStatus Status { get; set; }
     public string? PlanJson { get; set; }
@@ -85,6 +95,9 @@ public class AgentArtifactResponse
     public string ContentType { get; set; } = string.Empty;
     public string? Content { get; set; }
     public string? StorageUrl { get; set; }
+    public string? DownloadUrl { get; set; }
+    public long SizeBytes { get; set; }
+    public bool IsDownloadable { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }
 

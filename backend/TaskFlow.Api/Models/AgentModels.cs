@@ -42,6 +42,10 @@ public class AgentJob
     public Guid WorkspaceId { get; set; }
     public Guid UserId { get; set; }
     public Guid? ProviderCredentialId { get; set; }
+    public Guid? ChannelId { get; set; }
+    public Guid? AttachmentId { get; set; }
+    public Guid? GitHubRepositoryConnectionId { get; set; }
+    public string? ArtifactTarget { get; set; }
     public string Goal { get; set; } = string.Empty;
     public AgentJobStatus Status { get; set; } = AgentJobStatus.Planning;
     public string? PlanJson { get; set; }
@@ -57,6 +61,7 @@ public class AgentJob
     public Workspace? Workspace { get; set; }
     public User? User { get; set; }
     public AiProviderCredential? ProviderCredential { get; set; }
+    public GitHubRepositoryConnection? GitHubRepositoryConnection { get; set; }
     public ICollection<AgentStep> Steps { get; set; } = [];
     public ICollection<AgentSubJob> SubJobs { get; set; } = [];
     public ICollection<AgentApproval> Approvals { get; set; } = [];
@@ -133,10 +138,42 @@ public class AgentArtifact
     public string ContentType { get; set; } = "text/markdown";
     public string? Content { get; set; }
     public string? StorageUrl { get; set; }
+    public long SizeBytes { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
     public AgentJob? AgentJob { get; set; }
     public AgentStep? AgentStep { get; set; }
+    public AgentArtifactBlob? Blob { get; set; }
+}
+
+public class AgentArtifactBlob
+{
+    public Guid AgentArtifactId { get; set; }
+    public byte[] Content { get; set; } = [];
+
+    public AgentArtifact? Artifact { get; set; }
+}
+
+public class GitHubRepositoryConnection
+{
+    public Guid Id { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid CreatedByUserId { get; set; }
+    public long InstallationId { get; set; }
+    public long? RepositoryId { get; set; }
+    public string Owner { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string FullName { get; set; } = string.Empty;
+    public string DefaultBranch { get; set; } = "main";
+    public string? ValidationCommand { get; set; }
+    public bool IsEnabled { get; set; } = true;
+    public string PermissionStatus { get; set; } = "connected";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? LastSyncedAtUtc { get; set; }
+
+    public Workspace? Workspace { get; set; }
+    public User? CreatedByUser { get; set; }
 }
 
 public class AgentEvent

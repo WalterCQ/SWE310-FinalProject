@@ -12,7 +12,7 @@ import {
   SquareCheckBig,
 } from "lucide-react";
 import { clearAuthStorage } from "../api/authStorage.js";
-import { useI18n } from "../i18n.jsx";
+import { enumGlobalRoleKey, useI18n } from "../i18n.jsx";
 import Avatar from "./Avatar.jsx";
 import BrandMark from "./BrandMark.jsx";
 
@@ -30,9 +30,10 @@ export default function Sidebar({ collapsed = false, onToggleCollapsed, user }) 
   const navigate = useNavigate();
   const { t } = useI18n();
   const userName = user?.name || localStorage.getItem("userName") || t("app.user.default");
-  const userRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || t("app.role.default");
+  const rawUserRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || "User";
+  const userRole = t(enumGlobalRoleKey(rawUserRole));
   const userSeed = user?.userId || localStorage.getItem("userId") || userName;
-  const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(userRole));
+  const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(rawUserRole));
   const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
   const toggleLabel = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
 

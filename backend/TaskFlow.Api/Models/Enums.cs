@@ -2,22 +2,22 @@ namespace TaskFlow.Api.Models;
 
 public enum GlobalRole
 {
-    Admin,
-    User
+    Administrator,
+    Member
 }
 
 public enum WorkspaceRole
 {
-    Owner,
-    Admin,
+    Administrator,
+    Manager,
     Member
 }
 
 public enum ProjectRole
 {
-    ProjectManager,
-    Contributor,
-    Viewer
+    Administrator,
+    Manager,
+    Member
 }
 
 public enum ProjectStatus

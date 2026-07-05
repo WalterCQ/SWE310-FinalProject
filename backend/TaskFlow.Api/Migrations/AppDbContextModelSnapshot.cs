@@ -173,6 +173,9 @@ namespace TaskFlow.Api.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("StorageUrl")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -184,6 +187,20 @@ namespace TaskFlow.Api.Migrations
                     b.HasIndex("AgentStepId");
 
                     b.ToTable("AgentArtifacts");
+                });
+
+            modelBuilder.Entity("TaskFlow.Api.Models.AgentArtifactBlob", b =>
+                {
+                    b.Property<Guid>("AgentArtifactId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.HasKey("AgentArtifactId");
+
+                    b.ToTable("AgentArtifactBlobs");
                 });
 
             modelBuilder.Entity("TaskFlow.Api.Models.AgentEvent", b =>
@@ -227,6 +244,16 @@ namespace TaskFlow.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("ArtifactTarget")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<Guid?>("AttachmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ChannelId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime?>("CompletedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -240,6 +267,9 @@ namespace TaskFlow.Api.Migrations
                     b.Property<string>("ErrorMessage")
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
+
+                    b.Property<Guid?>("GitHubRepositoryConnectionId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("Goal")
                         .IsRequired()
@@ -277,6 +307,8 @@ namespace TaskFlow.Api.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("GitHubRepositoryConnectionId");
 
                     b.HasIndex("ProviderCredentialId");
 
@@ -617,6 +649,77 @@ namespace TaskFlow.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("ChannelMembers");
+                });
+
+            modelBuilder.Entity("TaskFlow.Api.Models.GitHubRepositoryConnection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("DefaultBranch")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<long>("InstallationId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastSyncedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<string>("Owner")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("PermissionStatus")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<long?>("RepositoryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ValidationCommand")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("WorkspaceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("InstallationId");
+
+                    b.HasIndex("WorkspaceId", "FullName")
+                        .IsUnique();
+
+                    b.ToTable("GitHubRepositoryConnections");
                 });
 
             modelBuilder.Entity("TaskFlow.Api.Models.Message", b =>
@@ -1066,6 +1169,17 @@ namespace TaskFlow.Api.Migrations
                     b.Navigation("AgentStep");
                 });
 
+            modelBuilder.Entity("TaskFlow.Api.Models.AgentArtifactBlob", b =>
+                {
+                    b.HasOne("TaskFlow.Api.Models.AgentArtifact", "Artifact")
+                        .WithOne("Blob")
+                        .HasForeignKey("TaskFlow.Api.Models.AgentArtifactBlob", "AgentArtifactId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Artifact");
+                });
+
             modelBuilder.Entity("TaskFlow.Api.Models.AgentEvent", b =>
                 {
                     b.HasOne("TaskFlow.Api.Models.AgentJob", "AgentJob")
@@ -1079,6 +1193,11 @@ namespace TaskFlow.Api.Migrations
 
             modelBuilder.Entity("TaskFlow.Api.Models.AgentJob", b =>
                 {
+                    b.HasOne("TaskFlow.Api.Models.GitHubRepositoryConnection", "GitHubRepositoryConnection")
+                        .WithMany()
+                        .HasForeignKey("GitHubRepositoryConnectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TaskFlow.Api.Models.AiProviderCredential", "ProviderCredential")
                         .WithMany()
                         .HasForeignKey("ProviderCredentialId")
@@ -1095,6 +1214,8 @@ namespace TaskFlow.Api.Migrations
                         .HasForeignKey("WorkspaceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("GitHubRepositoryConnection");
 
                     b.Navigation("ProviderCredential");
 
@@ -1243,6 +1364,25 @@ namespace TaskFlow.Api.Migrations
                     b.Navigation("Channel");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TaskFlow.Api.Models.GitHubRepositoryConnection", b =>
+                {
+                    b.HasOne("TaskFlow.Api.Models.User", "CreatedByUser")
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TaskFlow.Api.Models.Workspace", "Workspace")
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreatedByUser");
+
+                    b.Navigation("Workspace");
                 });
 
             modelBuilder.Entity("TaskFlow.Api.Models.Message", b =>
@@ -1420,6 +1560,11 @@ namespace TaskFlow.Api.Migrations
                     b.Navigation("User");
 
                     b.Navigation("Workspace");
+                });
+
+            modelBuilder.Entity("TaskFlow.Api.Models.AgentArtifact", b =>
+                {
+                    b.Navigation("Blob");
                 });
 
             modelBuilder.Entity("TaskFlow.Api.Models.AgentJob", b =>

@@ -8,8 +8,9 @@ const icons = {
   overdue: TriangleAlert,
 };
 
-export default function StatCard({ label, value, change, tone, icon = "projects", sinceText }) {
+export default function StatCard({ label, value, change = "", tone, icon = "projects", sinceText, supportingTone }) {
   const Icon = icons[icon] || Briefcase;
+  const textTone = supportingTone || (change.startsWith("-") ? "negative" : "positive");
 
   return (
     <article className={`stat-card ${tone}`}>
@@ -17,7 +18,7 @@ export default function StatCard({ label, value, change, tone, icon = "projects"
       <div>
         <p>{label}</p>
         <h3>{value}</h3>
-        <span className={change.startsWith("-") ? "negative" : "positive"}>
+        <span className={textTone}>
           {sinceText}
         </span>
       </div>

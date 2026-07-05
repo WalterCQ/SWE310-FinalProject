@@ -10,7 +10,7 @@ namespace TaskFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/admin")]
-[Authorize(Roles = nameof(GlobalRole.Admin))]
+[Authorize(Roles = nameof(GlobalRole.Administrator))]
 public class AdminController(AppDbContext dbContext) : ControllerBase
 {
     [HttpGet("overview")]
@@ -18,7 +18,7 @@ public class AdminController(AppDbContext dbContext) : ControllerBase
     {
         var userCount = await dbContext.Users.AsNoTracking().CountAsync(cancellationToken);
         var adminCount = await dbContext.Users.AsNoTracking()
-            .CountAsync(user => user.GlobalRole == GlobalRole.Admin, cancellationToken);
+            .CountAsync(user => user.GlobalRole == GlobalRole.Administrator, cancellationToken);
         var workspaceCount = await dbContext.Workspaces.AsNoTracking().CountAsync(cancellationToken);
         var projectCount = await dbContext.Projects.AsNoTracking().CountAsync(cancellationToken);
         var taskCount = await dbContext.TaskItems.AsNoTracking().CountAsync(cancellationToken);

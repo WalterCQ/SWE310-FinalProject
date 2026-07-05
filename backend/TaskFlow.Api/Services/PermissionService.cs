@@ -20,7 +20,7 @@ public class PermissionService(AppDbContext dbContext) : IPermissionService
             || await dbContext.WorkspaceMembers.AnyAsync(member =>
                 member.UserId == userId
                 && member.WorkspaceId == workspaceId
-                && (member.Role == WorkspaceRole.Owner || member.Role == WorkspaceRole.Admin));
+                && (member.Role == WorkspaceRole.Administrator || member.Role == WorkspaceRole.Manager));
     }
 
     public async Task<bool> CanAccessChannel(Guid userId, Guid channelId)
@@ -88,7 +88,7 @@ public class PermissionService(AppDbContext dbContext) : IPermissionService
             || await dbContext.ProjectMembers.AnyAsync(member =>
                 member.UserId == userId
                 && member.ProjectId == projectId
-                && member.RoleInProject == ProjectRole.ProjectManager);
+                && member.RoleInProject == ProjectRole.Administrator);
     }
 
     public async Task<bool> CanCreateTask(Guid userId, Guid projectId)
@@ -117,6 +117,6 @@ public class PermissionService(AppDbContext dbContext) : IPermissionService
 
     private async Task<bool> IsGlobalAdmin(Guid userId)
     {
-        return await dbContext.Users.AnyAsync(user => user.Id == userId && user.GlobalRole == GlobalRole.Admin);
+        return await dbContext.Users.AnyAsync(user => user.Id == userId && user.GlobalRole == GlobalRole.Administrator);
     }
 }

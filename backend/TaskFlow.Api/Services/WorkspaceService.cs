@@ -28,7 +28,7 @@ public class WorkspaceService(
             .AsSplitQuery()
             .AsQueryable();
 
-        if (currentUser.GetGlobalRole() != GlobalRole.Admin)
+        if (currentUser.GetGlobalRole() != GlobalRole.Administrator)
         {
             query = query.Where(workspace => workspace.Members.Any(member => member.UserId == userId));
         }
@@ -50,7 +50,7 @@ public class WorkspaceService(
         var userId = currentUser.GetUserId();
         if (!await CanCurrentUserCreateWorkspace(userId))
         {
-            return ApiResponse.Fail<WorkspaceResponse>("Only workspace admins can create new workspaces.", StatusCodes.Status403Forbidden);
+            return ApiResponse.Fail<WorkspaceResponse>("Only workspace managers can create new workspaces.", StatusCodes.Status403Forbidden);
         }
 
         await EnsureCurrentUserExists(userId);
@@ -68,7 +68,7 @@ public class WorkspaceService(
             Id = Guid.NewGuid(),
             WorkspaceId = workspace.Id,
             UserId = userId,
-            Role = WorkspaceRole.Owner
+            Role = WorkspaceRole.Administrator
         });
 
         dbContext.Workspaces.Add(workspace);
@@ -116,9 +116,9 @@ public class WorkspaceService(
     public async Task<ApiResponse<bool>> DeleteWorkspaceAsync(Guid workspaceId)
     {
         var userId = currentUser.GetUserId();
-        if (!await IsWorkspaceAdmin(userId, workspaceId))
+        if (!await IsWorkspaceManager(userId, workspaceId))
         {
-            return ApiResponse.Fail<bool>("Only workspace admins can delete this workspace.", StatusCodes.Status403Forbidden);
+            return ApiResponse.Fail<bool>("Only workspace managers can delete this workspace.", StatusCodes.Status403Forbidden);
         }
 
         var workspace = await dbContext.Workspaces.FirstOrDefaultAsync(item => item.Id == workspaceId);
@@ -229,9 +229,9 @@ public class WorkspaceService(
             return ApiResponse.Fail<WorkspaceMemberResponse>("Workspace member not found.", StatusCodes.Status404NotFound);
         }
 
-        if (member.Role == WorkspaceRole.Owner && request.Role != WorkspaceRole.Owner && await CountWorkspaceOwners(workspaceId) <= 1)
+        if (member.Role == WorkspaceRole.Administrator && request.Role != WorkspaceRole.Administrator && await CountWorkspaceAdministrators(workspaceId) <= 1)
         {
-            return ApiResponse.Fail<WorkspaceMemberResponse>("A workspace must keep at least one owner.");
+            return ApiResponse.Fail<WorkspaceMemberResponse>("A workspace must keep at least one administrator.");
         }
 
         member.Role = request.Role;
@@ -255,9 +255,9 @@ public class WorkspaceService(
             return ApiResponse.Fail<bool>("Workspace member not found.", StatusCodes.Status404NotFound);
         }
 
-        if (member.Role == WorkspaceRole.Owner && await CountWorkspaceOwners(workspaceId) <= 1)
+        if (member.Role == WorkspaceRole.Administrator && await CountWorkspaceAdministrators(workspaceId) <= 1)
         {
-            return ApiResponse.Fail<bool>("A workspace must keep at least one owner.");
+            return ApiResponse.Fail<bool>("A workspace must keep at least one administrator.");
         }
 
         var projectIds = await dbContext.Projects
@@ -273,17 +273,17 @@ public class WorkspaceService(
             .Where(projectMember =>
                 projectIds.Contains(projectMember.ProjectId)
                 && projectMember.UserId == userId
-                && projectMember.RoleInProject == ProjectRole.ProjectManager)
+                && projectMember.RoleInProject == ProjectRole.Administrator)
             .Select(projectMember => projectMember.ProjectId)
             .ToListAsync();
         foreach (var managedProjectId in managedProjectIds)
         {
             var managerCount = await dbContext.ProjectMembers.CountAsync(projectMember =>
                 projectMember.ProjectId == managedProjectId
-                && projectMember.RoleInProject == ProjectRole.ProjectManager);
+                && projectMember.RoleInProject == ProjectRole.Administrator);
             if (managerCount <= 1)
             {
-                return ApiResponse.Fail<bool>("Cannot remove this workspace member because they are the only project manager on at least one project.");
+                return ApiResponse.Fail<bool>("Cannot remove this workspace member because they are the only project administrator on at least one project.");
             }
         }
 
@@ -326,24 +326,24 @@ public class WorkspaceService(
         return await dbContext.Users.FirstOrDefaultAsync(user => user.Email == normalizedEmail);
     }
 
-    private async Task<int> CountWorkspaceOwners(Guid workspaceId)
+    private async Task<int> CountWorkspaceAdministrators(Guid workspaceId)
     {
         return await dbContext.WorkspaceMembers.CountAsync(member =>
-            member.WorkspaceId == workspaceId && member.Role == WorkspaceRole.Owner);
+            member.WorkspaceId == workspaceId && member.Role == WorkspaceRole.Administrator);
     }
 
     private async Task<bool> CanCurrentUserCreateWorkspace(Guid userId)
     {
         return await dbContext.WorkspaceMembers.AnyAsync(member =>
-            member.UserId == userId && member.Role == WorkspaceRole.Admin);
+            member.UserId == userId && member.Role == WorkspaceRole.Manager);
     }
 
-    private async Task<bool> IsWorkspaceAdmin(Guid userId, Guid workspaceId)
+    private async Task<bool> IsWorkspaceManager(Guid userId, Guid workspaceId)
     {
         return await dbContext.WorkspaceMembers.AnyAsync(member =>
             member.UserId == userId
             && member.WorkspaceId == workspaceId
-            && member.Role == WorkspaceRole.Admin);
+            && member.Role == WorkspaceRole.Manager);
     }
 
     private static WorkspaceMemberResponse ToMemberResponse(WorkspaceMember member)

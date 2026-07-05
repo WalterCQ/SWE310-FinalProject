@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { X } from "lucide-react";
+import { translateKey } from "../i18n.jsx";
 
 const focusableSelector = [
   "a[href]",
@@ -27,7 +28,7 @@ export default function LinearModal({
   children,
   onClose,
   className = "",
-  closeLabel = "Close",
+  closeLabel = translateKey("common.close"),
   initialFocusRef,
   size = "md",
 }) {

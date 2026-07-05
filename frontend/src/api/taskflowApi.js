@@ -1,6 +1,76 @@
 import axiosClient from "./axiosClient.js";
 import { translateKey } from "../i18n.jsx";
 
+const technicalErrorPatterns = [
+  /request failed with status code/i,
+  /status code\s*'?[\d]+/i,
+  /no connection with that id/i,
+  /connection id/i,
+  /hubconnection/i,
+  /websocket/i,
+  /negotiate/i,
+  /system\./i,
+  /microsoft\./i,
+  /sqlexception/i,
+  /exception\b/i,
+  /\bat\s+[A-Za-z0-9_.]+\(.*\)/,
+];
+
+function getStatusCode(error, payload) {
+  const statusCode = payload?.statusCode
+    ?? error?.response?.status
+    ?? error?.statusCode
+    ?? 0;
+
+  return Number(statusCode) || 0;
+}
+
+function isTechnicalErrorMessage(message) {
+  const value = String(message || "").trim();
+  if (!value) return false;
+
+  return technicalErrorPatterns.some((pattern) => pattern.test(value));
+}
+
+function getStatusMessage(statusCode) {
+  if (statusCode === 0) return translateKey("api.unreachable");
+  if (statusCode === 400 || statusCode === 422) return translateKey("api.badRequest");
+  if (statusCode === 401) return translateKey("api.unauthorized");
+  if (statusCode === 403) return translateKey("api.forbidden");
+  if (statusCode === 404) return translateKey("api.notFound");
+  if (statusCode === 409) return translateKey("api.conflict");
+  if (statusCode === 413) return translateKey("api.tooLarge");
+  if (statusCode === 429) return translateKey("api.tooManyRequests");
+  if (statusCode === 502 || statusCode === 503 || statusCode === 504) return translateKey("api.serviceUnavailable");
+  if (statusCode >= 500) return translateKey("api.serverError");
+
+  return translateKey("api.requestFailed");
+}
+
+function getDisplayMessage(message, statusCode) {
+  if (!message || isTechnicalErrorMessage(message) || statusCode >= 500) {
+    return getStatusMessage(statusCode);
+  }
+
+  return message;
+}
+
+function getDisplayErrors(errors, fallbackMessage, statusCode) {
+  if (!Array.isArray(errors) || errors.length === 0) {
+    return [fallbackMessage];
+  }
+
+  const messages = errors
+    .map((error) => String(error || "").trim())
+    .filter(Boolean);
+
+  if (messages.length === 0 || messages.some(isTechnicalErrorMessage) || statusCode >= 500) {
+    return [fallbackMessage];
+  }
+
+  return messages;
+}
+
 export function normalizeApiError(error) {
   if (error?.request && !error?.response) {
     const normalized = new Error(translateKey("api.unreachable"));
@@ -11,23 +81,26 @@ export function normalizeApiError(error) {
 
   const responsePayload = error?.response?.data;
   const payload = responsePayload && typeof responsePayload === "object" ? responsePayload : error;
-  const message = payload?.message || error?.message || translateKey("api.requestFailed");
+  const statusCode = getStatusCode(error, payload);
+  const rawMessage = payload?.message || error?.message || "";
+  const message = getDisplayMessage(rawMessage, statusCode);
   const normalized = new Error(message);
 
-  normalized.errors = Array.isArray(payload?.errors) && payload.errors.length > 0
-    ? payload.errors
-    : [message];
-  normalized.statusCode = payload?.statusCode || error?.response?.status || 0;
+  normalized.errors = getDisplayErrors(payload?.errors, message, statusCode);
+  normalized.statusCode = statusCode;
 
   return normalized;
 }
 
 export function formatApiError(error) {
   if (!error) return "";
-  if (Array.isArray(error.errors) && error.errors.length > 0) {
-    return error.errors.join(" ");
+  const normalized = error?.statusCode || error?.errors ? error : normalizeApiError(error);
+
+  if (Array.isArray(normalized.errors) && normalized.errors.length > 0) {
+    return normalized.errors.join(" ");
   }
-  return error.message || translateKey("api.requestFailed");
+
+  return normalized.message || getStatusMessage(normalized.statusCode || 0);
 }
 
 function unwrap(response) {
@@ -66,6 +139,22 @@ export const workspaces = {
   getAiProvider: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/ai/provider` }),
   saveAiProvider: (workspaceId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}/ai/provider`, data: payload }),
   deleteAiProvider: (workspaceId) => request({ method: "DELETE", url: `/api/workspaces/${workspaceId}/ai/provider` }),
+  githubSetup: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/github/setup` }),
+  githubRepositories: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/github/repositories` }),
+  completeGithubInstallation: (workspaceId, payload) => request({
+    method: "POST",
+    url: `/api/workspaces/${workspaceId}/github/installations/complete`,
+    data: payload,
+  }),
+  connectGithubRepository: (workspaceId, payload) => request({
+    method: "POST",
+    url: `/api/workspaces/${workspaceId}/github/repositories`,
+    data: payload,
+  }),
+  deleteGithubRepository: (workspaceId, repositoryId) => request({
+    method: "DELETE",
+    url: `/api/workspaces/${workspaceId}/github/repositories/${repositoryId}`,
+  }),
 };
 
 export const dashboard = {
@@ -164,6 +253,19 @@ export const agent = {
     url: `/api/agent/approvals/${approvalId}/reject`,
     data: { note },
   }),
+  downloadArtifact: (artifactId) => axiosClient.request({
+    method: "GET",
+    url: `/api/agent/artifacts/${artifactId}/download`,
+    responseType: "blob",
+  }),
+};
+
+export const github = {
+  setup: (workspaceId) => workspaces.githubSetup(workspaceId),
+  listRepositories: (workspaceId) => workspaces.githubRepositories(workspaceId),
+  completeInstallation: (workspaceId, payload) => workspaces.completeGithubInstallation(workspaceId, payload),
+  connectRepository: (workspaceId, payload) => workspaces.connectGithubRepository(workspaceId, payload),
+  deleteRepository: (workspaceId, repositoryId) => workspaces.deleteGithubRepository(workspaceId, repositoryId),
 };
 
 export const getProjectSummary = ai.projectSummary;
@@ -181,4 +283,5 @@ export default {
   admin,
   ai,
   agent,
+  github,
 };

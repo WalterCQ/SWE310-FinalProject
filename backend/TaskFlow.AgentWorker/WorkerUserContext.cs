@@ -19,7 +19,7 @@ public class WorkerUserContext : ICurrentUserService
 
     public GlobalRole GetGlobalRole()
     {
-        return GlobalRole.User;
+        return GlobalRole.Member;
     }
 
     public bool IsAuthenticated()

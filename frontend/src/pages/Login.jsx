@@ -105,7 +105,7 @@ export default function Login() {
             {t("auth.email")}
             <div className="input-shell">
               <Mail size={16} />
-              <input name="email" value={form.email} onChange={updateField} placeholder="john@taskflow.com" />
+              <input name="email" value={form.email} onChange={updateField} placeholder={t("auth.placeholder.email")} />
             </div>
             <ErrorMessage>{errors.email}</ErrorMessage>
           </label>

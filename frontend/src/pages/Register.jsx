@@ -105,7 +105,7 @@ export default function Register() {
                 type="email"
                 value={form.email}
                 onChange={updateField}
-                placeholder="john@taskflow.com"
+                placeholder={t("auth.placeholder.email")}
               />
             </div>
             <ErrorMessage>{errors.email}</ErrorMessage>

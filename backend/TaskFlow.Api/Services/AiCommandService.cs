@@ -15,6 +15,9 @@ using TaskFlow.Api.Helpers;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Plugins;
 using TaskFlow.Api.Services.Interfaces;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
 
 namespace TaskFlow.Api.Services;
 
@@ -33,6 +36,8 @@ public class AiCommandService(
     private const int MaxUploadBytes = 20_000_000;
     private const int MaxExtractedTextLength = 60_000;
     private const int MaxChunksPerAttachment = 24;
+    private const int MaxDirectAttachmentChunks = 12;
+    private const int MaxPdfImagesToSummarize = 3;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<ApiResponse<AiResponse>> ExecuteCommandAsync(AiCommandRequest request, CancellationToken cancellationToken = default)
@@ -322,9 +327,7 @@ public class AiCommandService(
             var suggestedTasks = IsTaskCommand(command)
                 ? ExtractSuggestedTasks(result)
                 : [];
-            var createdTask = IsTaskCommand(command)
-                ? await TryCreateTaskFromAiResultAsync(channel.WorkspaceId, channel.Name, command, result, userId, cancellationToken)
-                : null;
+            TaskItem? createdTask = null;
 
             return ApiResponse.Ok(new AiChannelCommandResponse
             {
@@ -372,110 +375,107 @@ public class AiCommandService(
             return ApiResponse.Fail<ChannelAttachmentResponse>("Attachment exceeds the 20 MB upload limit.", StatusCodes.Status413PayloadTooLarge);
         }
 
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(channel.WorkspaceId, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<ChannelAttachmentResponse>(providerResult);
+        }
+
         await using var stream = file.OpenReadStream();
         using var memoryStream = new MemoryStream();
         await stream.CopyToAsync(memoryStream, cancellationToken);
-
+        var fileBytes = memoryStream.ToArray();
+        var contentType = ResolveContentType(file);
+        var fileName = Path.GetFileName(file.FileName);
         var attachment = new ChannelAttachment
         {
             Id = Guid.NewGuid(),
             WorkspaceId = channel.WorkspaceId,
             ChannelId = channelId,
             UploadedByUserId = userId,
-            FileName = Path.GetFileName(file.FileName),
-            ContentType = ResolveContentType(file),
+            FileName = fileName,
+            ContentType = contentType,
             SizeBytes = file.Length,
             Summary = string.Empty,
             ExtractedText = string.Empty,
             IsAiIndexed = false
         };
 
-        dbContext.ChannelAttachments.Add(attachment);
-        dbContext.ChannelAttachmentBlobs.Add(new ChannelAttachmentBlob
-        {
-            AttachmentId = attachment.Id,
-            Content = memoryStream.ToArray()
-        });
-
-        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(channel.WorkspaceId, cancellationToken);
-        if (providerResult.Success && providerResult.Data is not null)
+        try
         {
             var provider = providerResult.Data;
-            try
+            var processed = await ProcessAttachmentAsync(fileBytes, fileName, contentType, provider, cancellationToken);
+            var chunks = BuildIndexChunks(processed.Sections).ToArray();
+            if (chunks.Length == 0)
             {
-                var processed = await ProcessAttachmentAsync(file, provider, cancellationToken);
-                var chunks = SplitIntoChunks(processed.IndexText)
-                    .Take(MaxChunksPerAttachment)
-                    .ToArray();
+                return ApiResponse.Fail<ChannelAttachmentResponse>(
+                    "Attachment parsing returned no searchable content.",
+                    StatusCodes.Status422UnprocessableEntity);
+            }
 
-                if (chunks.Length > 0)
+            attachment.Summary = TrimTo(processed.Summary, 4000);
+            attachment.ExtractedText = TrimTo(string.Join(Environment.NewLine, chunks.Select(chunk => chunk.Content)), MaxExtractedTextLength);
+            attachment.IsAiIndexed = true;
+
+            dbContext.ChannelAttachments.Add(attachment);
+            dbContext.ChannelAttachmentBlobs.Add(new ChannelAttachmentBlob
+            {
+                AttachmentId = attachment.Id,
+                Content = fileBytes
+            });
+
+            var chunkEntities = new List<ChannelKnowledgeChunk>();
+            var pineconeChunks = new List<PineconeKnowledgeChunk>();
+            for (var index = 0; index < chunks.Length; index++)
+            {
+                var chunk = chunks[index];
+                var chunkId = Guid.NewGuid();
+                var trimmedChunk = TrimTo(chunk.Content, 2500);
+                var embedding = await GenerateEmbeddingAsync(trimmedChunk, provider, cancellationToken);
+
+                chunkEntities.Add(new ChannelKnowledgeChunk
                 {
-                    attachment.Summary = TrimTo(processed.Summary, 4000);
-                    attachment.ExtractedText = TrimTo(processed.IndexText, MaxExtractedTextLength);
-                    attachment.IsAiIndexed = true;
-
-                    var chunkEntities = new List<ChannelKnowledgeChunk>();
-                    var pineconeChunks = new List<PineconeKnowledgeChunk>();
-                    for (var index = 0; index < chunks.Length; index++)
-                    {
-                        var chunk = chunks[index];
-                        var chunkId = Guid.NewGuid();
-                        var embedding = await GenerateEmbeddingAsync(chunk, provider, cancellationToken);
-                        var trimmedChunk = TrimTo(chunk, 2500);
-
-                        chunkEntities.Add(new ChannelKnowledgeChunk
-                        {
-                            Id = chunkId,
-                            WorkspaceId = channel.WorkspaceId,
-                            ChannelId = channelId,
-                            AttachmentId = attachment.Id,
-                            SourceType = processed.SourceType,
-                            SourceLabel = attachment.FileName,
-                            Content = trimmedChunk
-                        });
-                        pineconeChunks.Add(new PineconeKnowledgeChunk(
-                            chunkId,
-                            processed.SourceType,
-                            attachment.FileName,
-                            channel.Name,
-                            trimmedChunk,
-                            index + 1,
-                            embedding));
-                    }
-
-                    await pineconeVectorStore.UpsertChunksAsync(
-                        channel.WorkspaceId,
-                        channelId,
-                        attachment.Id,
-                        pineconeChunks,
-                        cancellationToken);
-
-                    dbContext.ChannelKnowledgeChunks.AddRange(chunkEntities);
-                }
+                    Id = chunkId,
+                    WorkspaceId = channel.WorkspaceId,
+                    ChannelId = channelId,
+                    AttachmentId = attachment.Id,
+                    SourceType = chunk.SourceType,
+                    SourceLabel = chunk.SourceLabel,
+                    Content = trimmedChunk
+                });
+                pineconeChunks.Add(new PineconeKnowledgeChunk(
+                    chunkId,
+                    chunk.SourceType,
+                    chunk.SourceLabel,
+                    channel.Name,
+                    trimmedChunk,
+                    index + 1,
+                    embedding));
             }
-            catch (AttachmentProcessingException)
-            {
-                attachment.Summary = string.Empty;
-                attachment.ExtractedText = string.Empty;
-                attachment.IsAiIndexed = false;
-            }
-            catch (AiProviderException)
-            {
-                attachment.Summary = string.Empty;
-                attachment.ExtractedText = string.Empty;
-                attachment.IsAiIndexed = false;
-            }
-            catch (PineconeVectorStoreException)
-            {
-                attachment.Summary = string.Empty;
-                attachment.ExtractedText = string.Empty;
-                attachment.IsAiIndexed = false;
-            }
+
+            await pineconeVectorStore.UpsertChunksAsync(
+                channel.WorkspaceId,
+                channelId,
+                attachment.Id,
+                pineconeChunks,
+                cancellationToken);
+
+            dbContext.ChannelKnowledgeChunks.AddRange(chunkEntities);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return ApiResponse.Created(attachment.ToResponse(), "Attachment indexed for channel AI.");
         }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-        var message = attachment.IsAiIndexed ? "Attachment indexed for channel AI." : "Attachment uploaded.";
-        return ApiResponse.Created(attachment.ToResponse(), message);
+        catch (AttachmentProcessingException ex)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, ex.StatusCode);
+        }
+        catch (AiProviderException ex)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
+        }
+        catch (PineconeVectorStoreException ex)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
+        }
     }
 
     public async Task<ApiResponse<IReadOnlyCollection<ChannelAttachmentResponse>>> ListChannelAttachmentsAsync(Guid channelId, CancellationToken cancellationToken = default)
@@ -592,7 +592,14 @@ public class AiCommandService(
 
         if (attachmentId.HasValue)
         {
-            chunksQuery = chunksQuery.Where(chunk => chunk.AttachmentId == attachmentId.Value);
+            return await chunksQuery
+                .Where(chunk => chunk.AttachmentId == attachmentId.Value)
+                .OrderBy(chunk => chunk.CreatedAtUtc)
+                .Take(MaxDirectAttachmentChunks)
+                .Select(chunk => new KnowledgeSnippet(
+                    $"{chunk.SourceType}: {chunk.SourceLabel}",
+                    chunk.Content))
+                .ToListAsync(cancellationToken);
         }
 
         if (!await chunksQuery.AnyAsync(cancellationToken))
@@ -645,44 +652,133 @@ public class AiCommandService(
         return RankSnippets(snippets, query, 8);
     }
 
-    private async Task<AttachmentProcessingResult> ProcessAttachmentAsync(IFormFile file, AiProviderRuntime provider, CancellationToken cancellationToken)
+    private async Task<AttachmentProcessingResult> ProcessAttachmentAsync(
+        byte[] fileBytes,
+        string fileName,
+        string contentType,
+        AiProviderRuntime provider,
+        CancellationToken cancellationToken)
     {
-        var contentType = ResolveContentType(file);
-        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
 
         if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
         {
-            await using var stream = file.OpenReadStream();
-            using var memoryStream = new MemoryStream();
-            await stream.CopyToAsync(memoryStream, cancellationToken);
-            var summary = await SummarizeImageAsync(memoryStream.ToArray(), contentType, file.FileName, provider, cancellationToken);
-            return new AttachmentProcessingResult("image", summary, summary);
+            var summary = await SummarizeImageAsync(fileBytes, contentType, fileName, provider, cancellationToken);
+            return new AttachmentProcessingResult(
+                summary,
+                [new AttachmentIndexSection("image", fileName, summary)]);
         }
 
         if (IsPlainTextAttachment(contentType, extension))
         {
-            var text = await ReadPlainTextAttachmentAsync(file, cancellationToken);
-            var summary = await SummarizeTextAttachmentAsync(text, file.FileName, provider, cancellationToken);
-            return new AttachmentProcessingResult("file", summary, text);
+            var text = await ReadPlainTextAttachmentAsync(fileBytes, cancellationToken);
+            var summary = await SummarizeTextAttachmentAsync(text, fileName, provider, cancellationToken);
+            return new AttachmentProcessingResult(
+                summary,
+                [new AttachmentIndexSection("file", fileName, text)]);
         }
 
         if (extension == ".docx" || contentType.Equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document", StringComparison.OrdinalIgnoreCase))
         {
-            var text = await ExtractDocxTextAsync(file, cancellationToken);
-            var summary = await SummarizeTextAttachmentAsync(text, file.FileName, provider, cancellationToken);
-            return new AttachmentProcessingResult("file", summary, text);
+            var text = await ExtractDocxTextAsync(fileBytes, cancellationToken);
+            var summary = await SummarizeTextAttachmentAsync(text, fileName, provider, cancellationToken);
+            return new AttachmentProcessingResult(
+                summary,
+                [new AttachmentIndexSection("file", fileName, text)]);
         }
 
         if (extension == ".pdf" || contentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
         {
-            throw new AttachmentProcessingException(
-                "PDF parsing is not enabled because no stable server-side PDF text parser is installed. Upload TXT, DOCX, or an image for this v1 AI flow.",
-                StatusCodes.Status415UnsupportedMediaType);
+            return await ProcessPdfAttachmentAsync(fileBytes, fileName, provider, cancellationToken);
         }
 
         throw new AttachmentProcessingException(
-            $"Unsupported attachment type: {contentType}. Supported types are images, TXT/MD/CSV/JSON/XML, and DOCX.",
+            $"Unsupported attachment type: {contentType}. Supported types are PDF, images, TXT/MD/CSV/JSON/XML, and DOCX.",
             StatusCodes.Status415UnsupportedMediaType);
+    }
+
+    private async Task<AttachmentProcessingResult> ProcessPdfAttachmentAsync(
+        byte[] fileBytes,
+        string fileName,
+        AiProviderRuntime provider,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var sections = new List<AttachmentIndexSection>();
+            using var document = PdfDocument.Open(fileBytes);
+
+            foreach (var page in document.GetPages())
+            {
+                var pageText = NormalizeExtractedText(ContentOrderTextExtractor.GetText(page));
+                if (!string.IsNullOrWhiteSpace(pageText))
+                {
+                    sections.Add(new AttachmentIndexSection(
+                        "pdf-text",
+                        $"{fileName} page {page.Number}",
+                        pageText));
+                }
+            }
+
+            var imageCount = 0;
+            foreach (var page in document.GetPages())
+            {
+                foreach (var image in page.GetImages())
+                {
+                    if (imageCount >= MaxPdfImagesToSummarize)
+                    {
+                        break;
+                    }
+
+                    var imagePayload = TryExtractPdfImage(image);
+                    if (imagePayload is null)
+                    {
+                        continue;
+                    }
+
+                    imageCount++;
+                    var imageLabel = $"{fileName} page {page.Number} image {imageCount}";
+                    var imageSummary = await SummarizeImageAsync(
+                        imagePayload.Bytes,
+                        imagePayload.ContentType,
+                        imageLabel,
+                        provider,
+                        cancellationToken);
+                    sections.Add(new AttachmentIndexSection("pdf-image", imageLabel, imageSummary));
+                }
+
+                if (imageCount >= MaxPdfImagesToSummarize)
+                {
+                    break;
+                }
+            }
+
+            if (sections.Count == 0)
+            {
+                throw new AttachmentProcessingException(
+                    "PDF text and embedded image extraction returned no searchable content. Scanned PDFs require OCR, which is not enabled in this flow.",
+                    StatusCodes.Status422UnprocessableEntity);
+            }
+
+            var summary = await SummarizeTextAttachmentAsync(
+                string.Join(Environment.NewLine, sections.Select(section =>
+                    $"Source: {section.SourceLabel}{Environment.NewLine}{section.Content}")),
+                fileName,
+                provider,
+                cancellationToken);
+
+            return new AttachmentProcessingResult(summary, sections);
+        }
+        catch (AttachmentProcessingException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new AttachmentProcessingException(
+                $"PDF parsing failed: {ex.Message}",
+                StatusCodes.Status422UnprocessableEntity);
+        }
     }
 
     private async Task<string> SummarizeImageAsync(byte[] imageBytes, string contentType, string fileName, AiProviderRuntime provider, CancellationToken cancellationToken)
@@ -755,9 +851,9 @@ public class AiCommandService(
             cancellationToken);
     }
 
-    private async Task<string> ReadPlainTextAttachmentAsync(IFormFile file, CancellationToken cancellationToken)
+    private async Task<string> ReadPlainTextAttachmentAsync(byte[] fileBytes, CancellationToken cancellationToken)
     {
-        await using var stream = file.OpenReadStream();
+        await using var stream = new MemoryStream(fileBytes);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         var text = await reader.ReadToEndAsync(cancellationToken);
         text = NormalizeExtractedText(text);
@@ -769,9 +865,9 @@ public class AiCommandService(
         return TrimTo(text, MaxExtractedTextLength);
     }
 
-    private static async Task<string> ExtractDocxTextAsync(IFormFile file, CancellationToken cancellationToken)
+    private static async Task<string> ExtractDocxTextAsync(byte[] fileBytes, CancellationToken cancellationToken)
     {
-        await using var stream = file.OpenReadStream();
+        await using var stream = new MemoryStream(fileBytes);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
         var documentEntry = archive.GetEntry("word/document.xml")
             ?? throw new AttachmentProcessingException("DOCX document.xml was not found.");
@@ -925,11 +1021,23 @@ public class AiCommandService(
         return $"""
             You are @TaskFlow AI inside channel #{channelName}.
             The backend has already filtered context to the current user's workspace/channel permissions.
+            Use only the provided context below. Do not infer file, folder, image, PDF, URL, or attachment contents unless extracted text or image summaries are present below.
             Do not claim access to private channels or files that are not present in the context.
-            If the user asks for a report or PPT, generate a structured outline only, not a real file.
-            If the user asks for code, provide code advice or a patch plan as text only.
-            If the user asks to generate tasks, return concise actionable task titles first.
-            Always include a short "Sources" section naming the provided sources you used.
+
+            Required behavior:
+            - Separate project updates, casual chat, attachment context, action items, and missing context.
+            - Cite sources for every important claim using the source labels shown below.
+            - If attachment content is unavailable, write: "Attachment content was not available to TaskFlow AI."
+            - Do not create tasks or claim tasks were created. For task requests, return suggested task titles only.
+            - If the user asks for a report or PPT, generate a structured outline only, not a real file.
+            - If the user asks for code, provide code advice or a patch plan as text only.
+            - If evidence is weak or missing, say so directly.
+
+            Output format:
+            ## Summary
+            ## Action Items
+            ## Missing Context
+            ## Sources
 
             Requested artifact type: {artifactType}
             User command:
@@ -982,6 +1090,18 @@ public class AiCommandService(
             return "ppt-outline";
         }
 
+        if (command.Contains("requirement", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("deliverable", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("acceptance", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("grading", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("需求", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("交付", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("验收", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("评分", StringComparison.OrdinalIgnoreCase))
+        {
+            return "requirements";
+        }
+
         if (command.Contains("report", StringComparison.OrdinalIgnoreCase)
             || command.Contains("报告", StringComparison.OrdinalIgnoreCase))
         {
@@ -1030,6 +1150,65 @@ public class AiCommandService(
     {
         return contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
             || extension is ".txt" or ".md" or ".csv" or ".json" or ".log" or ".xml";
+    }
+
+    private static IEnumerable<AttachmentIndexSection> BuildIndexChunks(IReadOnlyCollection<AttachmentIndexSection> sections)
+    {
+        var imageSections = sections
+            .Where(section => section.SourceType.Contains("image", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var textSectionLimit = Math.Max(0, MaxChunksPerAttachment - imageSections.Length);
+        var emitted = 0;
+
+        foreach (var section in sections.Where(section => !section.SourceType.Contains("image", StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var chunk in SplitIntoChunks(section.Content))
+            {
+                if (emitted >= textSectionLimit)
+                {
+                    break;
+                }
+
+                emitted++;
+                yield return section with { Content = chunk };
+            }
+        }
+
+        foreach (var section in imageSections)
+        {
+            if (emitted >= MaxChunksPerAttachment)
+            {
+                yield break;
+            }
+
+            emitted++;
+            yield return section with { Content = TrimTo(section.Content, 2500) };
+        }
+    }
+
+    private static PdfImagePayload? TryExtractPdfImage(IPdfImage image)
+    {
+        if (image.TryGetPng(out var pngBytes) && pngBytes.Length > 0)
+        {
+            return new PdfImagePayload("image/png", pngBytes);
+        }
+
+        var rawBytes = image.RawBytes.ToArray();
+        if (rawBytes.Length > 0 && IsJpeg(rawBytes))
+        {
+            return new PdfImagePayload("image/jpeg", rawBytes);
+        }
+
+        return null;
+    }
+
+    private static bool IsJpeg(byte[] bytes)
+    {
+        return bytes.Length >= 4
+            && bytes[0] == 0xFF
+            && bytes[1] == 0xD8
+            && bytes[^2] == 0xFF
+            && bytes[^1] == 0xD9;
     }
 
     private static IEnumerable<string> SplitIntoChunks(string text)
@@ -1237,7 +1416,11 @@ public class AiCommandService(
 
     private sealed record KnowledgeSnippet(string Source, string Text);
 
-    private sealed record AttachmentProcessingResult(string SourceType, string Summary, string IndexText);
+    private sealed record AttachmentProcessingResult(string Summary, IReadOnlyCollection<AttachmentIndexSection> Sections);
+
+    private sealed record AttachmentIndexSection(string SourceType, string SourceLabel, string Content);
+
+    private sealed record PdfImagePayload(string ContentType, byte[] Bytes);
 
     private sealed class AiProviderException(string message) : Exception(message);
 

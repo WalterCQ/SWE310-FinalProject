@@ -36,6 +36,7 @@ public class ProjectResponse
     public string? Description { get; set; }
     public ProjectStatus Status { get; set; }
     public Guid CreatedByUserId { get; set; }
+    public string CreatedByUserName { get; set; } = string.Empty;
     public DateTime? DeadlineUtc { get; set; }
     public int MemberCount { get; set; }
     public int TaskCount { get; set; }
@@ -50,13 +51,13 @@ public class AddProjectMemberRequest
     public string Email { get; set; } = string.Empty;
 
     [DefinedEnum]
-    public ProjectRole RoleInProject { get; set; } = ProjectRole.Contributor;
+    public ProjectRole RoleInProject { get; set; } = ProjectRole.Manager;
 }
 
 public class UpdateProjectMemberRoleRequest
 {
     [DefinedEnum]
-    public ProjectRole RoleInProject { get; set; } = ProjectRole.Contributor;
+    public ProjectRole RoleInProject { get; set; } = ProjectRole.Manager;
 }
 
 public class ProjectMemberResponse

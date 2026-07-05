@@ -41,7 +41,7 @@ public class CurrentUserService(IHttpContextAccessor httpContextAccessor, IConfi
         var roleValue = principal?.FindFirstValue(ClaimTypes.Role) ?? principal?.FindFirstValue("role");
         return Enum.TryParse<GlobalRole>(roleValue, ignoreCase: true, out var role)
             ? role
-            : GlobalRole.User;
+            : GlobalRole.Member;
     }
 
     public bool IsAuthenticated()

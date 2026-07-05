@@ -29,6 +29,18 @@ public class AgentController(IAgentService agentService) : ControllerBase
         return this.ToActionResult(await agentService.GetJobEventsAsync(jobId, sinceUtc, cancellationToken));
     }
 
+    [HttpGet("artifacts/{artifactId:guid}/download")]
+    public async Task<ActionResult> DownloadArtifact(Guid artifactId, CancellationToken cancellationToken)
+    {
+        var result = await agentService.DownloadArtifactAsync(artifactId, cancellationToken);
+        if (!result.Success || result.Data is null)
+        {
+            return this.ToActionResult(result);
+        }
+
+        return File(result.Data.Content, result.Data.ContentType, result.Data.FileName);
+    }
+
     [HttpPost("jobs/{jobId:guid}/cancel")]
     public async Task<ActionResult> CancelJob(Guid jobId, CancellationToken cancellationToken)
     {

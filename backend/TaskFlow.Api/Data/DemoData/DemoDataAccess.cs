@@ -9,7 +9,7 @@ public static class DemoDataAccess
         AppDbContext dbContext,
         Guid userId,
         WorkspaceRole workspaceRole = WorkspaceRole.Member,
-        ProjectRole projectRole = ProjectRole.Contributor,
+        ProjectRole projectRole = ProjectRole.Manager,
         CancellationToken cancellationToken = default)
     {
         var workspaceExists = await dbContext.Workspaces
@@ -101,7 +101,7 @@ public static class DemoDataAccess
         {
             if (membershipLookup.TryGetValue(projectId, out var membership))
             {
-                if (role == ProjectRole.ProjectManager && membership.RoleInProject != role)
+                if (role == ProjectRole.Administrator && membership.RoleInProject != role)
                 {
                     membership.RoleInProject = role;
                 }

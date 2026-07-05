@@ -1,10 +1,12 @@
 using System.Net.Http.Headers;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Api.Data;
+using TaskFlow.Api.DTOs.GitHub;
 using TaskFlow.Api.DTOs.Notifications;
 using TaskFlow.Api.DTOs.Tasks;
 using TaskFlow.Api.Models;
@@ -21,6 +23,7 @@ public class AgentJobProcessor(
     INotificationService notificationService,
     IDashboardService dashboardService,
     IAiProviderService aiProviderService,
+    IGitHubRepositoryService gitHubRepositoryService,
     IDataProtectionProvider dataProtectionProvider,
     IHttpClientFactory httpClientFactory,
     ILogger<AgentJobProcessor> logger)
@@ -100,7 +103,7 @@ public class AgentJobProcessor(
         step.StartedAtUtc = DateTime.UtcNow;
         AddEvent(job.Id, job.UserId, AgentEventType.Planning, "Main Agent is building the execution plan.");
 
-        var subAgents = InferSubAgents(job.Goal);
+        var subAgents = InferSubAgents(job.Goal, job.ArtifactTarget);
         var providerNotes = await TryAskProviderForPlanNotesAsync(job, subAgents, cancellationToken);
         var plan = new AgentPlan(
             "Main Agent will coordinate subagents, then request explicit approval before every TaskFlow write.",
@@ -180,7 +183,8 @@ public class AgentJobProcessor(
         step.StartedAtUtc = DateTime.UtcNow;
         AddEvent(job.Id, job.UserId, AgentEventType.StepStarted, "Main Agent started subagent orchestration.");
 
-        var subAgents = InferSubAgents(job.Goal);
+        var subAgents = InferSubAgents(job.Goal, job.ArtifactTarget);
+        var ragContext = await LoadRagContextAsync(job, cancellationToken);
         foreach (var subAgent in subAgents)
         {
             dbContext.AgentSubJobs.Add(new AgentSubJob
@@ -204,17 +208,45 @@ public class AgentJobProcessor(
 
         if (subAgents.Contains("CodeSubAgent"))
         {
-            AddArtifact(job.Id, step.Id, AgentArtifactKind.CodePatch, "code-subagent.patch.md", BuildCodePatchArtifact(job.Goal));
+            var patchArtifact = AddArtifact(
+                job.Id,
+                step.Id,
+                AgentArtifactKind.CodePatch,
+                "code-subagent.patch",
+                "text/x-patch",
+                BuildCodePatchArtifact(job, ragContext),
+                storeAsBlob: true);
+
+            if (job.GitHubRepositoryConnectionId.HasValue)
+            {
+                await AddCreatePullRequestApprovalAsync(job, step.Id, patchArtifact.Id, cancellationToken);
+            }
         }
 
         if (subAgents.Contains("DeckSubAgent"))
         {
-            AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, "deck-subagent-outline.md", BuildDeckArtifact(job.Goal));
+            var deckSlides = BuildDeckSlides(job.Goal, ragContext);
+            AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, "deck-subagent-outline.md", BuildDeckArtifact(job.Goal, ragContext));
+            AddArtifact(
+                job.Id,
+                step.Id,
+                AgentArtifactKind.Deck,
+                "taskflow-ai-deck.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                AgentArtifactDocumentBuilder.BuildDeckPptx(job.Goal, deckSlides));
         }
 
         if (subAgents.Contains("ReportSubAgent"))
         {
-            AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, "report-subagent-draft.md", BuildReportArtifact(job.Goal));
+            var reportSections = BuildReportSections(job.Goal, ragContext);
+            AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, "report-subagent-draft.md", BuildReportArtifact(job.Goal, ragContext));
+            AddArtifact(
+                job.Id,
+                step.Id,
+                AgentArtifactKind.Report,
+                "taskflow-ai-report.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                AgentArtifactDocumentBuilder.BuildReportDocx(job.Goal, reportSections));
         }
 
         if (subAgents.Contains("TaskFlowActionSubAgent"))
@@ -248,6 +280,10 @@ public class AgentJobProcessor(
             else if (approval.ActionName == "CreateReminder")
             {
                 await ExecuteCreateReminderAsync(job, approval, cancellationToken);
+            }
+            else if (approval.ActionName == "CreatePullRequest")
+            {
+                await ExecuteCreatePullRequestAsync(job, approval, cancellationToken);
             }
         }
     }
@@ -314,6 +350,133 @@ public class AgentJobProcessor(
         AddEvent(job.Id, job.UserId, AgentEventType.ActionExecuted, $"Reminder created: {result.Data.Title}");
     }
 
+    private async Task ExecuteCreatePullRequestAsync(AgentJob job, AgentApproval approval, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Deserialize<CreatePullRequestActionPayload>(approval.PayloadJson, JsonOptions)
+            ?? throw new InvalidOperationException("CreatePullRequest payload is invalid.");
+
+        var repository = await dbContext.GitHubRepositoryConnections
+            .FirstOrDefaultAsync(item =>
+                item.Id == payload.RepositoryId
+                && item.WorkspaceId == job.WorkspaceId
+                && item.IsEnabled,
+                cancellationToken)
+            ?? throw new InvalidOperationException("GitHub repository connection was not found or is disabled.");
+
+        if (!await permissionService.CanAccessWorkspace(job.UserId, job.WorkspaceId))
+        {
+            throw new InvalidOperationException("Workspace access was denied during GitHub PR approval execution.");
+        }
+
+        var patchArtifact = await dbContext.AgentArtifacts
+            .Include(item => item.Blob)
+            .FirstOrDefaultAsync(item => item.Id == payload.PatchArtifactId && item.AgentJobId == job.Id, cancellationToken)
+            ?? throw new InvalidOperationException("Patch artifact was not found.");
+        var patchContent = patchArtifact.Content
+            ?? (patchArtifact.Blob is null ? null : Encoding.UTF8.GetString(patchArtifact.Blob.Content));
+        if (string.IsNullOrWhiteSpace(patchContent))
+        {
+            throw new InvalidOperationException("Patch artifact has no content.");
+        }
+
+        var tempRoot = Path.Combine(Path.GetTempPath(), "taskflow-agent", job.Id.ToString("N"));
+        if (Directory.Exists(tempRoot))
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+
+        Directory.CreateDirectory(tempRoot);
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var patchPath = Path.Combine(tempRoot, "agent.patch");
+        await File.WriteAllTextAsync(patchPath, patchContent, Encoding.UTF8, cancellationToken);
+
+        string validationResult;
+        string diffSummary;
+        GitHubPullRequestResult pullRequest;
+
+        try
+        {
+            var token = await gitHubRepositoryService.CreateInstallationAccessTokenAsync(repository.InstallationId, cancellationToken);
+            var gitEnvironment = CreateGitAuthEnvironment(tempRoot, token.Token);
+            var remoteUrl = $"https://github.com/{repository.FullName}.git";
+            await RunProcessAsync("git", ["clone", "--depth", "1", "--branch", repository.DefaultBranch, remoteUrl, repoPath], tempRoot, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["checkout", "-b", payload.HeadBranch], repoPath, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["apply", "--check", patchPath], repoPath, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["apply", patchPath], repoPath, token.Token, cancellationToken, gitEnvironment);
+
+            diffSummary = await RunProcessAsync("git", ["diff", "--stat", "HEAD"], repoPath, token.Token, cancellationToken, gitEnvironment);
+            if (string.IsNullOrWhiteSpace(diffSummary))
+            {
+                throw new InvalidOperationException("Patch applied but produced no repository diff.");
+            }
+
+            if (string.IsNullOrWhiteSpace(repository.ValidationCommand))
+            {
+                validationResult = "Validation skipped: no validation command configured for this repository.";
+            }
+            else
+            {
+                validationResult = await RunProcessAsync("/bin/bash", ["-lc", repository.ValidationCommand], repoPath, token.Token, cancellationToken, gitEnvironment);
+            }
+
+            await RunProcessAsync("git", ["config", "user.email", "taskflow-ai@users.noreply.github.com"], repoPath, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["config", "user.name", "TaskFlow AI"], repoPath, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["add", "."], repoPath, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["commit", "-m", payload.CommitTitle], repoPath, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["push", remoteUrl, $"HEAD:{payload.HeadBranch}"], repoPath, token.Token, cancellationToken, gitEnvironment);
+
+            pullRequest = await gitHubRepositoryService.CreatePullRequestAsync(repository, payload.HeadBranch, payload.PullRequestTitle, payload.PullRequestBody, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            AddArtifact(job.Id, approval.AgentStepId, AgentArtifactKind.CodePatch, "github-pr-error.md", $"GitHub PR creation failed.\n\n{ex.Message}");
+            throw;
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+
+        AddArtifact(
+            job.Id,
+            approval.AgentStepId,
+            AgentArtifactKind.CodePatch,
+            "github-pr-result.md",
+            $"""
+            # GitHub PR Result
+
+            Repository: {repository.FullName}
+            Branch: {payload.HeadBranch}
+            Pull request: {pullRequest.Url}
+
+            ## Diff summary
+
+            {diffSummary}
+
+            ## Validation
+
+            {validationResult}
+            """);
+
+        approval.TargetEntityId = repository.Id;
+        approval.ExecutedAtUtc = DateTime.UtcNow;
+        approval.ExecutionResultJson = JsonSerializer.Serialize(new
+        {
+            repository = repository.FullName,
+            branch = payload.HeadBranch,
+            pullRequest.Number,
+            pullRequest.Url,
+            validationResult,
+            diffSummary
+        }, JsonOptions);
+
+        AddActivity(job, "Agent.CreatePullRequest", "GitHubRepositoryConnection", repository.Id, $"Agent job {job.Id} created GitHub PR {pullRequest.Url} after user approval.");
+        AddEvent(job.Id, job.UserId, AgentEventType.ActionExecuted, $"GitHub pull request created: {pullRequest.Url}");
+    }
+
     private async Task AddTaskFlowActionApprovalsAsync(AgentJob job, Guid stepId, CancellationToken cancellationToken)
     {
         if (ContainsAny(job.Goal, "task", "任务", "todo", "to-do"))
@@ -351,6 +514,42 @@ public class AgentJobProcessor(
         }
     }
 
+    private async Task AddCreatePullRequestApprovalAsync(AgentJob job, Guid stepId, Guid patchArtifactId, CancellationToken cancellationToken)
+    {
+        var repository = await dbContext.GitHubRepositoryConnections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item =>
+                item.Id == job.GitHubRepositoryConnectionId
+                && item.WorkspaceId == job.WorkspaceId
+                && item.IsEnabled,
+                cancellationToken);
+        if (repository is null)
+        {
+            AddArtifact(job.Id, stepId, AgentArtifactKind.CodePatch, "github-pr-skipped.md", "GitHub repository connection was not found or is disabled.");
+            return;
+        }
+
+        var headBranch = $"taskflow-ai/{job.Id:N}";
+        var payload = new CreatePullRequestActionPayload(
+            repository.Id,
+            patchArtifactId,
+            repository.DefaultBranch,
+            headBranch,
+            $"TaskFlow AI: {Shorten(job.Goal, 80)}",
+            $"TaskFlow AI update for job {job.Id}",
+            $"""
+            Generated by TaskFlow AI.
+
+            Job: {job.Id}
+            Goal: {job.Goal}
+            Sources: workspace {job.WorkspaceId}{(job.ChannelId.HasValue ? $", channel {job.ChannelId}" : string.Empty)}{(job.AttachmentId.HasValue ? $", attachment {job.AttachmentId}" : string.Empty)}
+
+            Validation: {(string.IsNullOrWhiteSpace(repository.ValidationCommand) ? "skipped, no validation command configured" : repository.ValidationCommand)}
+            """);
+
+        AddApproval(job, stepId, "CreatePullRequest", "Create GitHub pull request", "GitHubRepositoryConnection", payload, approvalType: "GitHubWrite");
+    }
+
     private async Task AddSummaryArtifactAsync(AgentJob job, Guid stepId)
     {
         var projects = await dbContext.Projects
@@ -378,6 +577,32 @@ public class AgentJobProcessor(
         }
 
         AddArtifact(job.Id, stepId, AgentArtifactKind.Summary, "summary-subagent.md", string.Join(Environment.NewLine, lines));
+    }
+
+    private async Task<IReadOnlyCollection<string>> LoadRagContextAsync(AgentJob job, CancellationToken cancellationToken)
+    {
+        var query = dbContext.ChannelKnowledgeChunks
+            .AsNoTracking()
+            .Where(chunk => chunk.WorkspaceId == job.WorkspaceId);
+
+        if (job.AttachmentId.HasValue)
+        {
+            query = query.Where(chunk => chunk.AttachmentId == job.AttachmentId.Value);
+        }
+        else if (job.ChannelId.HasValue)
+        {
+            query = query.Where(chunk => chunk.ChannelId == job.ChannelId.Value);
+        }
+        else
+        {
+            return [];
+        }
+
+        return await query
+            .OrderBy(chunk => chunk.CreatedAtUtc)
+            .Take(8)
+            .Select(chunk => $"{chunk.SourceLabel}: {Shorten(chunk.Content, 800)}")
+            .ToListAsync(cancellationToken);
     }
 
     private async Task<string?> TryAskProviderForPlanNotesAsync(AgentJob job, IReadOnlyCollection<string> subAgents, CancellationToken cancellationToken)
@@ -468,7 +693,14 @@ public class AgentJobProcessor(
         return step;
     }
 
-    private void AddApproval<TPayload>(AgentJob job, Guid stepId, string actionName, string title, string targetEntityType, TPayload payload)
+    private void AddApproval<TPayload>(
+        AgentJob job,
+        Guid stepId,
+        string actionName,
+        string title,
+        string targetEntityType,
+        TPayload payload,
+        string approvalType = "TaskFlowWrite")
     {
         var payloadJson = JsonSerializer.Serialize(payload, JsonOptions);
         dbContext.AgentApprovals.Add(new AgentApproval
@@ -476,7 +708,7 @@ public class AgentJobProcessor(
             Id = Guid.NewGuid(),
             AgentJobId = job.Id,
             AgentStepId = stepId,
-            ApprovalType = "TaskFlowWrite",
+            ApprovalType = approvalType,
             Title = title,
             ActionName = actionName,
             PreviewJson = JsonSerializer.Serialize(new
@@ -492,19 +724,63 @@ public class AgentJobProcessor(
         });
     }
 
-    private void AddArtifact(Guid jobId, Guid stepId, AgentArtifactKind kind, string name, string content)
+    private AgentArtifact AddArtifact(Guid jobId, Guid? stepId, AgentArtifactKind kind, string name, string content)
     {
-        dbContext.AgentArtifacts.Add(new AgentArtifact
+        return AddArtifact(jobId, stepId, kind, name, "text/markdown", content, storeAsBlob: false);
+    }
+
+    private AgentArtifact AddArtifact(Guid jobId, Guid? stepId, AgentArtifactKind kind, string name, string content, bool storeAsBlob)
+    {
+        return AddArtifact(jobId, stepId, kind, name, "text/markdown", content, storeAsBlob);
+    }
+
+    private AgentArtifact AddArtifact(Guid jobId, Guid? stepId, AgentArtifactKind kind, string name, string contentType, string content, bool storeAsBlob)
+    {
+        var artifact = new AgentArtifact
         {
             Id = Guid.NewGuid(),
             AgentJobId = jobId,
             AgentStepId = stepId,
             Kind = kind,
             Name = name,
-            ContentType = "text/markdown",
+            ContentType = contentType,
+            Content = content,
+            SizeBytes = Encoding.UTF8.GetByteCount(content)
+        };
+        dbContext.AgentArtifacts.Add(artifact);
+        if (storeAsBlob)
+        {
+            dbContext.AgentArtifactBlobs.Add(new AgentArtifactBlob
+            {
+                AgentArtifactId = artifact.Id,
+                Content = Encoding.UTF8.GetBytes(content)
+            });
+        }
+
+        AddEvent(jobId, null, AgentEventType.ArtifactCreated, $"Artifact created: {name}");
+        return artifact;
+    }
+
+    private AgentArtifact AddArtifact(Guid jobId, Guid? stepId, AgentArtifactKind kind, string name, string contentType, byte[] content)
+    {
+        var artifact = new AgentArtifact
+        {
+            Id = Guid.NewGuid(),
+            AgentJobId = jobId,
+            AgentStepId = stepId,
+            Kind = kind,
+            Name = name,
+            ContentType = contentType,
+            SizeBytes = content.LongLength
+        };
+        dbContext.AgentArtifacts.Add(artifact);
+        dbContext.AgentArtifactBlobs.Add(new AgentArtifactBlob
+        {
+            AgentArtifactId = artifact.Id,
             Content = content
         });
         AddEvent(jobId, null, AgentEventType.ArtifactCreated, $"Artifact created: {name}");
+        return artifact;
     }
 
     private void AddActivity(AgentJob job, string action, string entityType, Guid entityId, string details)
@@ -534,21 +810,24 @@ public class AgentJobProcessor(
         });
     }
 
-    private static IReadOnlyCollection<string> InferSubAgents(string goal)
+    private static IReadOnlyCollection<string> InferSubAgents(string goal, string? artifactTarget)
     {
         var subAgents = new List<string> { "SummarySubAgent" };
 
-        if (ContainsAny(goal, "code", "代码", "implement", "bug", "fix"))
+        if (ContainsAny(goal, "code", "代码", "implement", "bug", "fix")
+            || artifactTarget is "patch" or "pull-request")
         {
             subAgents.Add("CodeSubAgent");
         }
 
-        if (ContainsAny(goal, "ppt", "deck", "slides", "presentation", "幻灯片"))
+        if (ContainsAny(goal, "ppt", "deck", "slides", "presentation", "幻灯片")
+            || artifactTarget == "pptx")
         {
             subAgents.Add("DeckSubAgent");
         }
 
-        if (ContainsAny(goal, "report", "报告", "document", "文档"))
+        if (ContainsAny(goal, "report", "报告", "document", "文档")
+            || artifactTarget == "docx")
         {
             subAgents.Add("ReportSubAgent");
         }
@@ -587,40 +866,183 @@ public class AgentJobProcessor(
             : value.Replace(secret, "[redacted]", StringComparison.Ordinal);
     }
 
-    private static string BuildCodePatchArtifact(string goal)
+    private static string BuildCodePatchArtifact(AgentJob job, IReadOnlyCollection<string> ragContext)
     {
-        return $"""
-            # CodeSubAgent Patch Plan
+        var path = $".taskflow-ai/taskflow-ai-{job.Id:N}.md";
+        var fileContent = new List<string>
+        {
+            "# TaskFlow AI Code Request",
+            "",
+            $"Job: {job.Id}",
+            $"Workspace: {job.WorkspaceId}",
+            $"Goal: {job.Goal}",
+            "",
+            "## Context",
+        };
 
-            Goal: {goal}
+        if (ragContext.Count == 0)
+        {
+            fileContent.Add("No indexed channel or attachment context was provided to this job.");
+        }
+        else
+        {
+            fileContent.AddRange(ragContext.Select(context => $"- {context.Replace("\n", " ", StringComparison.Ordinal)}"));
+        }
 
-            This MVP does not mutate repository files from the Worker. It prepares a human-reviewable patch plan artifact so code changes can be reviewed before application.
-            """;
+        fileContent.AddRange([
+            "",
+            "## Review Notes",
+            "This patch is generated as a reviewable artifact and must be applied through the TaskFlow approval workflow before any GitHub PR is created."
+        ]);
+
+        var patch = new StringBuilder();
+        patch.AppendLine($"diff --git a/{path} b/{path}");
+        patch.AppendLine("new file mode 100644");
+        patch.AppendLine("index 0000000..1111111");
+        patch.AppendLine("--- /dev/null");
+        patch.AppendLine($"+++ b/{path}");
+        patch.AppendLine($"@@ -0,0 +1,{fileContent.Count} @@");
+        foreach (var line in fileContent)
+        {
+            patch.Append('+').AppendLine(line);
+        }
+
+        return patch.ToString();
     }
 
-    private static string BuildDeckArtifact(string goal)
+    private static string BuildDeckArtifact(string goal, IReadOnlyCollection<string> ragContext)
     {
-        return $"""
-            # DeckSubAgent Outline
+        var slides = BuildDeckSlides(goal, ragContext);
+        var lines = new List<string> { "# DeckSubAgent Outline", "" };
+        var index = 1;
+        foreach (var slide in slides)
+        {
+            lines.Add($"{index}. {slide.Title}");
+            lines.Add($"   {slide.Body.Replace("\n", " ", StringComparison.Ordinal)}");
+            index++;
+        }
 
-            1. Problem and current TaskFlow context
-            2. Proposed AI Agent workflow
-            3. Dry-run approval and audit trail
-            4. Expected outcome
-
-            Goal: {goal}
-            """;
+        return string.Join(Environment.NewLine, lines);
     }
 
-    private static string BuildReportArtifact(string goal)
+    private static string BuildReportArtifact(string goal, IReadOnlyCollection<string> ragContext)
     {
-        return $"""
-            # ReportSubAgent Draft
+        return string.Join(Environment.NewLine, new[]
+        {
+            "# ReportSubAgent Draft",
+            "",
+            $"Goal: {goal}",
+            "",
+            "The TaskFlow Agent processed the requested goal with a plan-first workflow, explicit approval gates, and audit logging for write actions.",
+            "",
+            "Context used:",
+            ragContext.Count == 0 ? "- No indexed attachment or channel context was provided." : string.Join(Environment.NewLine, ragContext.Select(item => $"- {item}"))
+        });
+    }
 
-            The TaskFlow Agent processed the requested goal with a plan-first workflow, explicit approval gates, and audit logging for write actions.
+    private static IReadOnlyCollection<string> BuildReportSections(string goal, IReadOnlyCollection<string> ragContext)
+    {
+        var sections = new List<string>
+        {
+            "Executive Summary",
+            "This report was generated from the TaskFlow Agent workflow. It uses indexed channel or attachment context when a channel or attachment was selected.",
+            "Requested Outcome",
+            goal,
+            "Source Context"
+        };
 
-            Goal: {goal}
-            """;
+        if (ragContext.Count == 0)
+        {
+            sections.Add("No indexed attachment or channel context was provided.");
+        }
+        else
+        {
+            sections.AddRange(ragContext);
+        }
+        sections.AddRange([
+            "Recommended Next Steps",
+            "Review the generated artifact, approve any write actions explicitly, and keep GitHub changes in a pull request for human review."
+        ]);
+        return sections;
+    }
+
+    private static IReadOnlyCollection<(string Title, string Body)> BuildDeckSlides(string goal, IReadOnlyCollection<string> ragContext)
+    {
+        return [
+            ("Objective", goal),
+            ("Source Context", ragContext.Count == 0 ? "No indexed attachment or channel context was provided." : string.Join("\n", ragContext.Take(3))),
+            ("Agent Workflow", "Read context\nGenerate artifacts\nRequest approval before external writes\nRecord activity history"),
+            ("Next Steps", "Download the artifacts\nReview pending approvals\nCreate a GitHub PR only after approval")
+        ];
+    }
+
+    private static async Task<string> RunProcessAsync(
+        string fileName,
+        IReadOnlyCollection<string> arguments,
+        string workingDirectory,
+        string secret,
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environment = null)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        if (environment is not null)
+        {
+            foreach (var item in environment)
+            {
+                startInfo.Environment[item.Key] = item.Value;
+            }
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Unable to start process: {fileName}");
+        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var output = RedactSecret(await outputTask, secret);
+        var error = RedactSecret(await errorTask, secret);
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"{fileName} failed with exit code {process.ExitCode}.\n{Shorten(output + error, 2000)}");
+        }
+
+        return string.IsNullOrWhiteSpace(output) ? error.Trim() : output.Trim();
+    }
+
+    private static IReadOnlyDictionary<string, string> CreateGitAuthEnvironment(string tempRoot, string token)
+    {
+        var askPassPath = Path.Combine(tempRoot, "github-askpass.sh");
+        File.WriteAllText(askPassPath, """
+            #!/bin/sh
+            case "$1" in
+              *Username*) echo "x-access-token" ;;
+              *) echo "$GITHUB_TOKEN" ;;
+            esac
+            """);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(askPassPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        return new Dictionary<string, string>
+        {
+            ["GIT_ASKPASS"] = askPassPath,
+            ["GITHUB_TOKEN"] = token,
+            ["GIT_TERMINAL_PROMPT"] = "0"
+        };
     }
 
     private sealed record AgentPlan(
@@ -641,4 +1063,13 @@ public class AgentJobProcessor(
         Guid WorkspaceId,
         string Title,
         string Message);
+
+    private sealed record CreatePullRequestActionPayload(
+        Guid RepositoryId,
+        Guid PatchArtifactId,
+        string BaseBranch,
+        string HeadBranch,
+        string CommitTitle,
+        string PullRequestTitle,
+        string PullRequestBody);
 }

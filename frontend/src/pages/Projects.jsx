@@ -14,7 +14,7 @@ import {
 } from "../api/taskflowApi.js";
 import { asArray, mapProject, mapProjectMember, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
 import { canManageProjectMembers, canManageWorkspaceMembers } from "../api/permissions.js";
-import { enumProjectStatusKey, useI18n } from "../i18n.jsx";
+import { enumProjectRoleKey, enumProjectStatusKey, useI18n } from "../i18n.jsx";
 
 const blankForm = {
   workspaceId: "",
@@ -24,16 +24,16 @@ const blankForm = {
 };
 const memberBlankForm = { email: "", roleInProject: "1" };
 const projectRoleOptions = [
-  { value: "0", label: "Project Manager" },
-  { value: "1", label: "Contributor" },
-  { value: "2", label: "Viewer" },
+  { value: "0", labelKey: "enum.projectRole.projectManager" },
+  { value: "1", labelKey: "enum.projectRole.contributor" },
+  { value: "2", labelKey: "enum.projectRole.viewer" },
 ];
 const statusFilterOptions = [
-  { value: "all", label: "All statuses" },
-  { value: "0", label: "Planned" },
-  { value: "1", label: "Active" },
-  { value: "2", label: "Completed" },
-  { value: "3", label: "Archived" },
+  { value: "all", labelKey: "project.status.all" },
+  { value: "0", labelKey: "enum.projectStatus.planned" },
+  { value: "1", labelKey: "enum.projectStatus.active" },
+  { value: "2", labelKey: "enum.projectStatus.completed" },
+  { value: "3", labelKey: "enum.projectStatus.archived" },
 ];
 
 function toDeadlineUtc(dateValue) {
@@ -282,7 +282,7 @@ export default function Projects() {
     const projectId = selectedProject?.id || selectedProjectId;
 
     if (!projectId || !memberForm.email.trim()) {
-      setMemberError("Enter the email of a registered workspace member.");
+      setMemberError(t("project.memberEmailRequired"));
       return;
     }
 
@@ -463,7 +463,7 @@ export default function Projects() {
             onChange={(event) => setStatusFilter(event.target.value)}
           >
             {statusFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
             ))}
           </select>
         </div>
@@ -482,7 +482,7 @@ export default function Projects() {
                   <th>{t("project.column.status")}</th>
                   <th>{t("project.column.progress")}</th>
                   <th>{t("project.column.owner")}</th>
-                  <th>Members</th>
+                  <th>{t("project.column.members")}</th>
                   <th>{t("project.dueDate")}</th>
                 </tr>
               </thead>
@@ -522,22 +522,28 @@ export default function Projects() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3>Project members</h3>
+              <h3>{t("project.membersTitle")}</h3>
               <span>{selectedProject.name}</span>
             </div>
             <button className="secondary-button compact" type="button" onClick={() => loadProjectMembers()}>
-              Refresh
+              {t("project.refreshMembers")}
             </button>
           </div>
 
           {memberError && <div className="error-text">{memberError}</div>}
-          {memberLoading && <p>Loading members...</p>}
+          {memberLoading && <p>{t("project.loadingMembers")}</p>}
 
-          <div className="member-list wide">
-            {!memberLoading && members.length === 0 && <p>No project members found.</p>}
+          <div className="member-list wide project-member-list">
+            {!memberLoading && members.length === 0 && <p>{t("project.emptyMembers")}</p>}
             {members.map((member) => (
-              <div className="member-row" key={member.userId}>
-                <div>
+              <div className="member-row project-member-row" key={member.userId}>
+                <Avatar
+                  className="mini-avatar member-row-avatar"
+                  seed={member.userId || member.email}
+                  name={member.name}
+                  ariaHidden
+                />
+                <div className="member-row-copy">
                   <strong>{member.name}</strong>
                   <span>{member.email}</span>
                 </div>
@@ -549,13 +555,13 @@ export default function Projects() {
                       disabled={memberSaving}
                     >
                       {projectRoleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
+                        <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                       ))}
                     </select>
                     <button
                       className="danger-button icon-only"
                       type="button"
-                      aria-label={`Remove ${member.name}`}
+                      aria-label={t("project.removeMemberAria", { name: member.name })}
                       onClick={() => removeProjectMember(member)}
                       disabled={memberSaving}
                     >
@@ -563,7 +569,7 @@ export default function Projects() {
                     </button>
                   </>
                 ) : (
-                  <span className="member-role-badge">{member.roleLabel}</span>
+                  <span className="member-role-badge">{t(enumProjectRoleKey(member.roleLabel))}</span>
                 )}
               </div>
             ))}
@@ -577,18 +583,18 @@ export default function Projects() {
                   setMemberForm({ ...memberForm, email: event.target.value });
                   setMemberError("");
                 }}
-                placeholder="workspace.member@email.com"
+                placeholder={t("project.memberEmailPlaceholder")}
               />
               <select
                 value={memberForm.roleInProject}
                 onChange={(event) => setMemberForm({ ...memberForm, roleInProject: event.target.value })}
               >
                 {projectRoleOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
+                  <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                 ))}
               </select>
               <button className="primary-button compact" type="submit" disabled={memberSaving}>
-                <UserPlus size={16} /> Add to project
+                <UserPlus size={16} /> {t("project.addMember")}
               </button>
             </form>
           )}
