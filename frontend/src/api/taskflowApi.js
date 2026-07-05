@@ -106,6 +106,7 @@ export const channels = {
   members: (channelId) => request({ method: "GET", url: `/api/channels/${channelId}/members` }),
   addMember: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/members`, data: payload }),
   removeMember: (channelId, userId) => request({ method: "DELETE", url: `/api/channels/${channelId}/members/${userId}` }),
+  removeAttachment: (channelId, attachmentId) => request({ method: "DELETE", url: `/api/channels/${channelId}/attachments/${attachmentId}` }),
 };
 
 export const messages = {

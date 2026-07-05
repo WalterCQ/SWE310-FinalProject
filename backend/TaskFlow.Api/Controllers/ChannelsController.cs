@@ -95,4 +95,31 @@ public class ChannelsController(
     {
         return this.ToActionResult(await channelService.RemoveChannelMemberAsync(channelId, userId));
     }
+
+    [HttpDelete("channels/{channelId:guid}/attachments/{attachmentId:guid}")]
+    public async Task<ActionResult> DeleteChannelAttachment(Guid channelId, Guid attachmentId, CancellationToken cancellationToken)
+    {
+        var userId = currentUser.GetUserId();
+        if (!await permissionService.CanAccessChannel(userId, channelId))
+        {
+            return NotFound();
+        }
+
+        var attachment = await dbContext.ChannelAttachments
+            .Include(item => item.Blob)
+            .FirstOrDefaultAsync(item => item.Id == attachmentId && item.ChannelId == channelId, cancellationToken);
+        if (attachment is null)
+        {
+            return NotFound();
+        }
+
+        dbContext.ChannelAttachments.Remove(attachment);
+        if (attachment.Blob is not null)
+        {
+            dbContext.ChannelAttachmentBlobs.Remove(attachment.Blob);
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(ApiResponse.NoData("Attachment deleted."));
+    }
 }

@@ -643,6 +643,23 @@ export default function Channels() {
     }
   }
 
+  async function deleteAttachment(attachmentId) {
+    if (!activeChannelId || !attachmentId) return;
+
+    setChatError("");
+    setAiError("");
+
+    try {
+      await channelsApi.removeAttachment(activeChannelId, attachmentId);
+      setAttachments((current) => current.filter((item) => item.id !== attachmentId));
+      if (selectedAttachmentId === attachmentId) {
+        setSelectedAttachmentId("");
+      }
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+    }
+  }
+
   async function runAiCommand(command, attachmentId = "") {
     if (!activeChannelId || !command.trim()) return null;
 
@@ -1188,18 +1205,30 @@ export default function Channels() {
                     {attachments.map((attachment) => {
                       const isImage = attachment.contentType.startsWith("image/");
                       return (
-                        <button
-                          key={attachment.id}
-                          type="button"
-                          className={attachment.id === selectedAttachmentId ? "active" : ""}
-                          onClick={() => setSelectedAttachmentId(attachment.id)}
-                        >
-                          {isImage ? <Image size={16} /> : <FileText size={16} />}
-                          <span>
-                            <strong>{attachment.fileName}</strong>
-                            <small>{formatFileSize(attachment.sizeBytes)} · {attachment.time}</small>
-                          </span>
-                        </button>
+                        <div key={attachment.id} className="attachment-item">
+                          <button
+                            type="button"
+                            className={attachment.id === selectedAttachmentId ? "active" : ""}
+                            onClick={() => setSelectedAttachmentId(attachment.id)}
+                          >
+                            {isImage ? <Image size={16} /> : <FileText size={16} />}
+                            <span>
+                              <strong>{attachment.fileName}</strong>
+                              <small>{formatFileSize(attachment.sizeBytes)} · {attachment.time}</small>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="delete-attachment-button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteAttachment(attachment.id);
+                            }}
+                            title="Delete file"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
