@@ -57,12 +57,12 @@ def write_svg_slide(path: Path, title: str, body: list[str], index: int) -> None
             content_lines.extend("  " + line for line in wrapped[1:3])
     content_lines = content_lines[:14]
 
-    title_tspans = "\n".join(
-        f'<tspan x="80" dy="{0 if idx == 0 else 48}">{html.escape(line)}</tspan>'
+    title_text = "\n".join(
+        f'<text x="80" y="{170 + idx * 48}" font-family="Aptos, Arial, sans-serif" font-size="42" font-weight="700" fill="#111827">{html.escape(line)}</text>'
         for idx, line in enumerate(title_lines)
     )
-    content_tspans = "\n".join(
-        f'<tspan x="96" dy="{0 if idx == 0 else 34}">{html.escape(line)}</tspan>'
+    content_text = "\n".join(
+        f'<text x="96" y="{305 + idx * 34}" font-family="Aptos, Arial, sans-serif" font-size="25" fill="#374151">{html.escape(line)}</text>'
         for idx, line in enumerate(content_lines or ["No content was generated."])
     )
 
@@ -71,9 +71,9 @@ def write_svg_slide(path: Path, title: str, body: list[str], index: int) -> None
   <rect x="0" y="0" width="1280" height="90" fill="#1f2937"/>
   <text x="80" y="58" font-family="Aptos, Arial, sans-serif" font-size="24" fill="#e5e7eb">TaskFlow AI</text>
   <text x="1180" y="58" text-anchor="end" font-family="Aptos, Arial, sans-serif" font-size="18" fill="#cbd5e1">{index:02d}</text>
-  <text id="title" x="80" y="170" font-family="Aptos, Arial, sans-serif" font-size="42" font-weight="700" fill="#111827">{title_tspans}</text>
+  {title_text}
   <rect x="80" y="245" width="1120" height="370" rx="18" fill="#ffffff" stroke="#d1d5db"/>
-  <text id="body" x="96" y="305" font-family="Aptos, Arial, sans-serif" font-size="25" fill="#374151">{content_tspans}</text>
+  {content_text}
 </svg>
 '''
     path.write_text(svg, encoding="utf-8")

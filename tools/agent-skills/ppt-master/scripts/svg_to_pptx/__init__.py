@@ -1,3 +1,4 @@
+from __future__ import annotations
 """svg_to_pptx — SVG to PPTX conversion package.
 
 Public API:

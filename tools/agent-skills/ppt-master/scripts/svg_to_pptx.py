@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """PPT Master - SVG to PPTX Tool (thin wrapper).
 
 Delegates to the svg_to_pptx package. Kept for CLI backward compatibility:
