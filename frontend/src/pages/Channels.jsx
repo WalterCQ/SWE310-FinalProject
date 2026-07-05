@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { createChatConnection, chatConnectionState } from "../api/chatConnection.js";
 import Avatar from "../components/Avatar.jsx";
+import CreateActionButton from "../components/CreateActionButton.jsx";
+import FormModal from "../components/FormModal.jsx";
 import {
   ai as aiApi,
   channels as channelsApi,
@@ -108,6 +110,7 @@ export default function Channels() {
   const [channelFormOpen, setChannelFormOpen] = useState(false);
   const [channelForm, setChannelForm] = useState({ name: "", description: "", isPrivate: false });
   const [channelSaving, setChannelSaving] = useState(false);
+  const [channelCreateError, setChannelCreateError] = useState("");
   const [channelMembers, setChannelMembers] = useState([]);
   const [memberEmail, setMemberEmail] = useState("");
   const [memberLoading, setMemberLoading] = useState(false);
@@ -132,6 +135,7 @@ export default function Channels() {
   const activeChannelRef = useRef("");
   const messageEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const channelNameRef = useRef(null);
   const typingClearTimerRef = useRef(null);
   const typingStopTimerRef = useRef(null);
   const lastTypingSentRef = useRef(0);
@@ -567,12 +571,23 @@ export default function Channels() {
     }
   }
 
+  function updateChannelForm(updates) {
+    setChannelForm((current) => ({ ...current, ...updates }));
+    setChannelCreateError("");
+  }
+
+  function closeCreateChannelModal() {
+    setChannelFormOpen(false);
+    setChannelForm({ name: "", description: "", isPrivate: false });
+    setChannelCreateError("");
+  }
+
   async function createChannel(event) {
     event.preventDefault();
     if (!workspaceId || !channelForm.name.trim()) return;
 
     setChannelSaving(true);
-    setLoadError("");
+    setChannelCreateError("");
 
     try {
       const createdChannel = await channelsApi.create(workspaceId, {
@@ -586,7 +601,7 @@ export default function Channels() {
       setChannelForm({ name: "", description: "", isPrivate: false });
       setChannelFormOpen(false);
     } catch (apiError) {
-      setLoadError(formatApiError(apiError));
+      setChannelCreateError(formatApiError(apiError));
     } finally {
       setChannelSaving(false);
     }
@@ -659,50 +674,70 @@ export default function Channels() {
       )}
 
       {!loading && !loadError && workspaceName && (
+        <>
+        <FormModal
+          open={channelFormOpen}
+          title={t("channel.createTitle")}
+          description={t("channel.createHelp")}
+          onClose={closeCreateChannelModal}
+          closeLabel={t("channel.closeCreate")}
+          initialFocusRef={channelNameRef}
+          size="sm"
+        >
+          {channelCreateError && <div className="error-text"><strong>{t("channel.unableCreate")}</strong> {channelCreateError}</div>}
+
+          <form className="task-form" onSubmit={createChannel} noValidate>
+            <label>
+              {t("channel.name")}
+              <input
+                ref={channelNameRef}
+                value={channelForm.name}
+                onChange={(event) => updateChannelForm({ name: event.target.value })}
+                placeholder={t("channel.placeholder.name")}
+              />
+            </label>
+            <label>
+              {t("channel.description")}
+              <input
+                value={channelForm.description}
+                onChange={(event) => updateChannelForm({ description: event.target.value })}
+                placeholder={t("channel.placeholder.description")}
+              />
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={channelForm.isPrivate}
+                onChange={(event) => updateChannelForm({ isPrivate: event.target.checked })}
+              />
+              {t("channel.private")}
+            </label>
+            <div className="button-row">
+              <button className="primary-button" type="submit" disabled={channelSaving || !channelForm.name.trim()}>
+                <Plus size={16} /> {channelSaving ? t("channel.creating") : t("channel.create")}
+              </button>
+              <button className="secondary-button" type="button" onClick={closeCreateChannelModal}>
+                {t("workspace.cancel")}
+              </button>
+            </div>
+          </form>
+        </FormModal>
+
         <section className="chat-layout">
           <aside className="panel channel-sidebar" aria-label={t("channel.workspaceList")}>
             <div className="member-manager-header">
               <strong>{workspaceName}</strong>
-              <button
-                className="secondary-button compact"
-                type="button"
-                onClick={() => setChannelFormOpen((open) => !open)}
+              <CreateActionButton
+                ariaLabel={t("channel.new")}
+                className="compact"
+                onClick={() => {
+                  setChannelFormOpen(true);
+                  setChannelCreateError("");
+                }}
               >
-                <Plus size={14} /> Channel
-              </button>
+                {t("channel.new")}
+              </CreateActionButton>
             </div>
-
-            {channelFormOpen && (
-              <form className="task-form compact-form" onSubmit={createChannel}>
-                <label>
-                  Name
-                  <input
-                    value={channelForm.name}
-                    onChange={(event) => setChannelForm({ ...channelForm, name: event.target.value })}
-                    placeholder="demo-updates"
-                  />
-                </label>
-                <label>
-                  Description
-                  <input
-                    value={channelForm.description}
-                    onChange={(event) => setChannelForm({ ...channelForm, description: event.target.value })}
-                    placeholder="What is this channel for?"
-                  />
-                </label>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={channelForm.isPrivate}
-                    onChange={(event) => setChannelForm({ ...channelForm, isPrivate: event.target.checked })}
-                  />
-                  Private channel
-                </label>
-                <button className="primary-button compact" type="submit" disabled={channelSaving || !channelForm.name.trim()}>
-                  <Plus size={16} /> {channelSaving ? "Creating..." : "Create"}
-                </button>
-              </form>
-            )}
 
             <div className="channel-list">
               {channels.length === 0 && (
@@ -955,6 +990,7 @@ export default function Channels() {
             </div>
           </aside>
         </section>
+        </>
       )}
     </div>
   );

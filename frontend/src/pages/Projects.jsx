@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Search, Trash2, UserPlus } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
+import CreateActionButton from "../components/CreateActionButton.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
+import FormModal from "../components/FormModal.jsx";
 import Avatar from "../components/Avatar.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import {
@@ -61,6 +63,7 @@ export default function Projects() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [createError, setCreateError] = useState("");
+  const projectNameRef = useRef(null);
 
   const selectedProject = useMemo(() => {
     return projects.find((project) => project.id === selectedProjectId);
@@ -209,6 +212,13 @@ export default function Projects() {
     setCreateError("");
   }
 
+  function closeCreateProjectModal() {
+    setFormOpen(false);
+    setForm({ ...blankForm, workspaceId: form.workspaceId });
+    setFormErrors({});
+    setCreateError("");
+  }
+
   function selectProject(projectId) {
     setSelectedProjectId(projectId);
     setMembers([]);
@@ -354,93 +364,85 @@ export default function Projects() {
     <div className="page-stack">
       {canCreateProject && (
         <div className="page-actions">
-          <button
-            className="primary-button small"
-            type="button"
+          <CreateActionButton
+            ariaLabel={t("project.new")}
             onClick={() => {
-              setFormOpen((open) => !open);
+              setFormOpen(true);
               setCreateError("");
             }}
           >
-            <Plus size={18} /> {t("project.new")}
-          </button>
+            {t("project.new")}
+          </CreateActionButton>
         </div>
       )}
 
-      {canCreateProject && formOpen && (
-        <section className="panel create-panel">
-          <div className="panel-header">
-            <h3>{t("project.createTitle")}</h3>
-            <span>{t("project.createHelp")}</span>
+      <FormModal
+        open={canCreateProject && formOpen}
+        title={t("project.createTitle")}
+        description={t("project.createHelp")}
+        onClose={closeCreateProjectModal}
+        closeLabel={t("project.closeCreate")}
+        initialFocusRef={projectNameRef}
+        size="lg"
+      >
+        {createError && <div className="error-text"><strong>{t("project.unableCreate")}</strong> {createError}</div>}
+
+        <form className="task-form" onSubmit={createProject} noValidate>
+          <div className="form-grid-2">
+            <label>
+              {t("project.workspace")}
+              <select
+                name="workspaceId"
+                value={form.workspaceId}
+                onChange={updateField}
+                disabled={loading || workspaces.length === 0}
+              >
+                {manageableWorkspaces.length === 0 && <option value="">{t("project.noWorkspace")}</option>}
+                {manageableWorkspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+                ))}
+              </select>
+              <ErrorMessage>{formErrors.workspaceId}</ErrorMessage>
+            </label>
+
+            <label>
+              {t("project.dueDate")}
+              <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
+            </label>
           </div>
 
-          {createError && <div className="error-text"><strong>{t("project.unableCreate")}</strong> {createError}</div>}
+          <label>
+            {t("project.name")}
+            <input
+              ref={projectNameRef}
+              name="name"
+              value={form.name}
+              onChange={updateField}
+              placeholder={t("project.placeholder.name")}
+            />
+            <ErrorMessage>{formErrors.name}</ErrorMessage>
+          </label>
 
-          <form className="task-form" onSubmit={createProject} noValidate>
-            <div className="form-grid-2">
-              <label>
-                {t("project.workspace")}
-                <select
-                  name="workspaceId"
-                  value={form.workspaceId}
-                  onChange={updateField}
-                  disabled={loading || workspaces.length === 0}
-                >
-                  {manageableWorkspaces.length === 0 && <option value="">{t("project.noWorkspace")}</option>}
-                  {manageableWorkspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
-                  ))}
-                </select>
-                <ErrorMessage>{formErrors.workspaceId}</ErrorMessage>
-              </label>
+          <label>
+            {t("project.description")}
+            <textarea
+              name="description"
+              value={form.description}
+              onChange={updateField}
+              placeholder={t("project.placeholder.description")}
+            />
+          </label>
 
-              <label>
-                {t("project.dueDate")}
-                <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
-              </label>
-            </div>
-
-            <label>
-              {t("project.name")}
-              <input
-                name="name"
-                value={form.name}
-                onChange={updateField}
-                placeholder={t("project.placeholder.name")}
-              />
-              <ErrorMessage>{formErrors.name}</ErrorMessage>
-            </label>
-
-            <label>
-              {t("project.description")}
-              <textarea
-                name="description"
-                value={form.description}
-                onChange={updateField}
-                placeholder={t("project.placeholder.description")}
-              />
-            </label>
-
-            <div className="button-row">
-              <button className="primary-button" type="submit" disabled={saving || loading || manageableWorkspaces.length === 0}>
-                <Plus size={18} /> {saving ? t("project.creating") : t("project.create")}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  setFormOpen(false);
-                  setForm({ ...blankForm, workspaceId: form.workspaceId });
-                  setFormErrors({});
-                  setCreateError("");
-                }}
-              >
-                {t("workspace.cancel")}
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
+          <div className="button-row">
+            <button className="primary-button" type="submit" disabled={saving || loading || manageableWorkspaces.length === 0}>
+              <Plus size={18} /> {saving ? t("project.creating") : t("project.create")}
+            </button>
+            <button className="secondary-button" type="button" onClick={closeCreateProjectModal}>
+              {t("workspace.cancel")}
+            </button>
+          </div>
+        </form>
+      </FormModal>
 
       <section className="panel">
         <div className="toolbar">

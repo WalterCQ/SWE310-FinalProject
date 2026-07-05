@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Plus, Search, Send, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import Avatar from "../components/Avatar.jsx";
+import CreateActionButton from "../components/CreateActionButton.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
+import FormModal from "../components/FormModal.jsx";
 import {
   formatApiError,
   projects as projectsApi,
@@ -89,14 +91,17 @@ export default function Tasks() {
   const [commentsByTask, setCommentsByTask] = useState({});
   const [commentDrafts, setCommentDrafts] = useState({});
   const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
   const [form, setForm] = useState(blankForm);
   const [errors, setErrors] = useState({});
+  const [createTaskError, setCreateTaskError] = useState("");
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mutatingTaskId, setMutatingTaskId] = useState("");
   const [apiError, setApiError] = useState("");
+  const titleInputRef = useRef(null);
 
   const projectLookup = useMemo(() => {
     return Object.fromEntries(projects.map((project) => [project.id, project]));
@@ -111,7 +116,7 @@ export default function Tasks() {
   const selectedProjectRole = projectRolesById[selectedProjectId]
     ?? projectMembers.find((member) => isCurrentUser(member.userId))?.roleInProject;
   const canCreateSelectedProjectTask = canCreateProjectTask(selectedWorkspaceRole, selectedProjectRole);
-  const showCreateTaskForm = !isMyTasksView && canCreateSelectedProjectTask;
+  const showCreateTaskAction = !isMyTasksView && canCreateSelectedProjectTask;
 
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -299,9 +304,22 @@ export default function Tasks() {
     });
   }, [selectedTaskId, loadingTasks, tasks]);
 
+  useEffect(() => {
+    if (!showCreateTaskAction && isCreateTaskOpen) {
+      closeCreateTaskModal();
+    }
+  }, [showCreateTaskAction, isCreateTaskOpen]);
+
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
     setErrors({ ...errors, [event.target.name]: "" });
+    setCreateTaskError("");
+  }
+
+  function closeCreateTaskModal() {
+    setIsCreateTaskOpen(false);
+    setErrors({});
+    setCreateTaskError("");
   }
 
   function validate() {
@@ -356,7 +374,7 @@ export default function Tasks() {
   async function addTask(event) {
     event.preventDefault();
     if (!canCreateSelectedProjectTask) {
-      setApiError("You do not have permission to create tasks in this project.");
+      setCreateTaskError("You do not have permission to create tasks in this project.");
       return;
     }
 
@@ -364,6 +382,7 @@ export default function Tasks() {
 
     setSaving(true);
     setApiError("");
+    setCreateTaskError("");
 
     try {
       const createdTask = await tasksApi.create(selectedProjectId, {
@@ -379,9 +398,10 @@ export default function Tasks() {
       }
 
       setForm(blankForm);
+      setIsCreateTaskOpen(false);
       await loadProjectTasks();
     } catch (error) {
-      setApiError(formatApiError(error));
+      setCreateTaskError(formatApiError(error));
     } finally {
       setSaving(false);
     }
@@ -498,93 +518,101 @@ export default function Tasks() {
 
       {apiError && <section className="panel"><strong>{t("task.apiError")}</strong><p>{apiError}</p></section>}
 
-      <section className={`task-layout ${isMyTasksView || !showCreateTaskForm ? "wide" : ""}`}>
-        {showCreateTaskForm && (
-          <article className="panel form-panel">
-            <div className="panel-header">
-              <h3>{t("task.createTitle")}</h3>
-              <span>{t("task.createHelp")}</span>
-            </div>
+      <FormModal
+        open={showCreateTaskAction && isCreateTaskOpen}
+        title={t("task.createTitle")}
+        description={t("task.createHelp")}
+        onClose={closeCreateTaskModal}
+        closeLabel={t("task.closeCreate")}
+        initialFocusRef={titleInputRef}
+      >
+        {createTaskError && <div className="error-text"><strong>{t("task.unableCreate")}</strong> {createTaskError}</div>}
 
-            <form className="task-form" onSubmit={addTask} noValidate>
-              <label>
-                {t("task.project")}
-                <select
-                  value={selectedProjectId}
-                  onChange={(event) => {
-                    const nextProjectId = event.target.value;
-                    setSelectedProjectId(nextProjectId);
-                    setErrors({ ...errors, project: "" });
-                    setForm((current) => ({ ...current, assigneeId: "" }));
-                    setProjectMembers(projectMembersById[nextProjectId] || []);
-                  }}
-                  disabled={loadingProjects || projects.length === 0}
-                >
-                  {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>{project.name}</option>
-                  ))}
-                </select>
-                <ErrorMessage>{errors.project}</ErrorMessage>
-              </label>
+        <form className="task-form" onSubmit={addTask} noValidate>
+          <label>
+            {t("task.project")}
+            <select
+              value={selectedProjectId}
+              onChange={(event) => {
+                const nextProjectId = event.target.value;
+                setSelectedProjectId(nextProjectId);
+                setErrors({ ...errors, project: "" });
+                setCreateTaskError("");
+                setForm((current) => ({ ...current, assigneeId: "" }));
+                setProjectMembers(projectMembersById[nextProjectId] || []);
+              }}
+              disabled={loadingProjects || projects.length === 0}
+            >
+              {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+            <ErrorMessage>{errors.project}</ErrorMessage>
+          </label>
 
-              <label>
-                {t("task.taskTitle")}
-                <input name="title" value={form.title} onChange={updateField} placeholder={t("task.placeholder.title")} />
-                <ErrorMessage>{errors.title}</ErrorMessage>
-              </label>
+          <label>
+            {t("task.taskTitle")}
+            <input ref={titleInputRef} name="title" value={form.title} onChange={updateField} placeholder={t("task.placeholder.title")} />
+            <ErrorMessage>{errors.title}</ErrorMessage>
+          </label>
 
-              <label>
-                {t("task.description")}
-                <textarea name="description" value={form.description} onChange={updateField} placeholder={t("task.placeholder.description")} />
-                <ErrorMessage>{errors.description}</ErrorMessage>
-              </label>
+          <label>
+            {t("task.description")}
+            <textarea name="description" value={form.description} onChange={updateField} placeholder={t("task.placeholder.description")} />
+            <ErrorMessage>{errors.description}</ErrorMessage>
+          </label>
 
-              <div className="form-grid-2">
-                <label>
-                  {t("task.status")}
-                  <select name="status" value={form.status} onChange={updateField}>
-                    {statusOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
-                    ))}
-                  </select>
-                  <ErrorMessage>{errors.status}</ErrorMessage>
-                </label>
+          <div className="form-grid-2">
+            <label>
+              {t("task.status")}
+              <select name="status" value={form.status} onChange={updateField}>
+                {statusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
+                ))}
+              </select>
+              <ErrorMessage>{errors.status}</ErrorMessage>
+            </label>
 
-                <label>
-                  {t("task.priority")}
-                  <select name="priority" value={form.priority} onChange={updateField}>
-                    {priorityOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
-                    ))}
-                  </select>
-                  <ErrorMessage>{errors.priority}</ErrorMessage>
-                </label>
+            <label>
+              {t("task.priority")}
+              <select name="priority" value={form.priority} onChange={updateField}>
+                {priorityOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
+                ))}
+              </select>
+              <ErrorMessage>{errors.priority}</ErrorMessage>
+            </label>
 
-                <label>
-                  Assignee
-                  <select name="assigneeId" value={form.assigneeId} onChange={updateField} disabled={loadingMembers}>
-                    <option value="">Unassigned</option>
-                    {projectMembers.map((member) => (
-                      <option key={member.userId} value={member.userId}>{member.name}</option>
-                    ))}
-                  </select>
-                </label>
+            <label>
+              Assignee
+              <select name="assigneeId" value={form.assigneeId} onChange={updateField} disabled={loadingMembers}>
+                <option value="">Unassigned</option>
+                {projectMembers.map((member) => (
+                  <option key={member.userId} value={member.userId}>{member.name}</option>
+                ))}
+              </select>
+            </label>
 
-                <label>
-                  {t("task.dueDate")}
-                  <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
-                  <ErrorMessage>{errors.dueDate}</ErrorMessage>
-                </label>
-              </div>
+            <label>
+              {t("task.dueDate")}
+              <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
+              <ErrorMessage>{errors.dueDate}</ErrorMessage>
+            </label>
+          </div>
 
-              <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId || !canCreateSelectedProjectTask}>
-                <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
-              </button>
-            </form>
-          </article>
-        )}
+          <div className="button-row">
+            <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId || !canCreateSelectedProjectTask}>
+              <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
+            </button>
+            <button className="secondary-button" type="button" onClick={closeCreateTaskModal}>
+              {t("task.cancelCreate")}
+            </button>
+          </div>
+        </form>
+      </FormModal>
 
+      <section className="task-layout">
         <section className="kanban-area">
           <div className="toolbar task-toolbar">
             <div className="search-box inline">
@@ -595,13 +623,14 @@ export default function Tasks() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
-            {!isMyTasksView && !showCreateTaskForm && (
+            {!isMyTasksView && (
               <select
                 className="control-select"
                 value={selectedProjectId}
                 onChange={(event) => {
                   const nextProjectId = event.target.value;
                   setSelectedProjectId(nextProjectId);
+                  setForm((current) => ({ ...current, assigneeId: "" }));
                   setProjectMembers(projectMembersById[nextProjectId] || []);
                 }}
                 disabled={loadingProjects || projects.length === 0}
@@ -613,6 +642,18 @@ export default function Tasks() {
               </select>
             )}
             <span>{filteredTasks.length} tasks</span>
+            {showCreateTaskAction && (
+              <CreateActionButton
+                ariaLabel={t("task.openCreate")}
+                onClick={() => {
+                  setCreateTaskError("");
+                  setIsCreateTaskOpen(true);
+                }}
+                disabled={loadingProjects || projects.length === 0}
+              >
+                {t("task.openCreate")}
+              </CreateActionButton>
+            )}
           </div>
 
           <section className="kanban-grid">

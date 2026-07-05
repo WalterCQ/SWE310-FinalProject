@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, FolderKanban, Trash2, UserPlus, Users } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
+import CreateActionButton from "../components/CreateActionButton.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
+import FormModal from "../components/FormModal.jsx";
 import { formatApiError, workspaces as workspacesApi } from "../api/taskflowApi.js";
 import { asArray, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
 import { canDeleteWorkspace, canManageWorkspaceMembers, isWorkspaceAdmin } from "../api/permissions.js";
@@ -40,6 +42,7 @@ export default function Workspaces() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [createError, setCreateError] = useState("");
+  const workspaceNameRef = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -111,6 +114,13 @@ export default function Workspaces() {
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
     setFormErrors({ ...formErrors, [event.target.name]: "" });
+    setCreateError("");
+  }
+
+  function closeCreateWorkspaceModal() {
+    setFormOpen(false);
+    setForm(blankForm);
+    setFormErrors({});
     setCreateError("");
   }
 
@@ -247,70 +257,62 @@ export default function Workspaces() {
     <div className="page-stack">
       {canCreateWorkspace && (
         <div className="page-actions">
-          <button
-            className="primary-button small"
-            type="button"
+          <CreateActionButton
+            ariaLabel={t("workspace.new")}
             onClick={() => {
-              setFormOpen((open) => !open);
+              setFormOpen(true);
               setCreateError("");
             }}
           >
-            <Plus size={18} /> {t("workspace.new")}
-          </button>
+            {t("workspace.new")}
+          </CreateActionButton>
         </div>
       )}
 
-      {canCreateWorkspace && formOpen && (
-        <section className="panel create-panel">
-          <div className="panel-header">
-            <h3>{t("workspace.createTitle")}</h3>
-            <span>{t("workspace.createHelp")}</span>
+      <FormModal
+        open={canCreateWorkspace && formOpen}
+        title={t("workspace.createTitle")}
+        description={t("workspace.createHelp")}
+        onClose={closeCreateWorkspaceModal}
+        closeLabel={t("workspace.closeCreate")}
+        initialFocusRef={workspaceNameRef}
+        size="lg"
+      >
+        {createError && <div className="error-text"><strong>{t("workspace.unableCreate")}</strong> {createError}</div>}
+
+        <form className="task-form" onSubmit={createWorkspace} noValidate>
+          <label>
+            {t("workspace.name")}
+            <input
+              ref={workspaceNameRef}
+              name="name"
+              value={form.name}
+              onChange={updateField}
+              placeholder={t("workspace.placeholder.name")}
+            />
+            <ErrorMessage>{formErrors.name}</ErrorMessage>
+          </label>
+
+          <label>
+            {t("workspace.description")}
+            <textarea
+              name="description"
+              value={form.description}
+              onChange={updateField}
+              placeholder={t("workspace.placeholder.description")}
+            />
+          </label>
+
+          <div className="button-row">
+            <button className="primary-button" type="submit" disabled={saving}>
+              <Plus size={18} /> {saving ? t("workspace.creating") : t("workspace.create")}
+            </button>
+            <button className="secondary-button" type="button" onClick={closeCreateWorkspaceModal}>
+              {t("workspace.cancel")}
+            </button>
           </div>
-
-          {createError && <div className="error-text"><strong>{t("workspace.unableCreate")}</strong> {createError}</div>}
-
-          <form className="task-form" onSubmit={createWorkspace} noValidate>
-            <label>
-              {t("workspace.name")}
-              <input
-                name="name"
-                value={form.name}
-                onChange={updateField}
-                placeholder={t("workspace.placeholder.name")}
-              />
-              <ErrorMessage>{formErrors.name}</ErrorMessage>
-            </label>
-
-            <label>
-              {t("workspace.description")}
-              <textarea
-                name="description"
-                value={form.description}
-                onChange={updateField}
-                placeholder={t("workspace.placeholder.description")}
-              />
-            </label>
-
-            <div className="button-row">
-              <button className="primary-button" type="submit" disabled={saving}>
-                <Plus size={18} /> {saving ? t("workspace.creating") : t("workspace.create")}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  setFormOpen(false);
-                  setForm(blankForm);
-                  setFormErrors({});
-                  setCreateError("");
-                }}
-              >
-                {t("workspace.cancel")}
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
+        </form>
+      </FormModal>
 
       {loading && <section className="panel">{t("workspace.loading")}</section>}
       {error && <section className="panel"><strong>{t("workspace.unableLoad")}</strong><p>{error}</p></section>}
