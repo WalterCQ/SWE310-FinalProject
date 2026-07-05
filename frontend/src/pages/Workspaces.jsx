@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, FolderKanban, Trash2, UserPlus, Users } from "lucide-react";
+import { FolderKanban, KeyRound, Plus, Save, Trash2, UserPlus, Users } from "lucide-react";
+import { motion } from "motion/react";
 import { useSearchParams } from "react-router-dom";
 import CreateActionButton from "../components/CreateActionButton.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
-import FormModal from "../components/FormModal.jsx";
+import LinearModal from "../components/LinearModal.jsx";
 import { formatApiError, workspaces as workspacesApi } from "../api/taskflowApi.js";
 import { asArray, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
 import { canDeleteWorkspace, canManageWorkspaceMembers, isWorkspaceAdmin } from "../api/permissions.js";
@@ -11,6 +12,13 @@ import { useI18n } from "../i18n.jsx";
 
 const colors = ["amber", "green", "red", "yellow"];
 const blankForm = { name: "", description: "" };
+const blankAiProviderForm = {
+  providerName: "OpenAICompatible",
+  baseUrl: "",
+  model: "deepseek-ai/DeepSeek-V4-Flash",
+  apiKey: "",
+  supportsToolCalls: true,
+};
 const roleOptions = [
   { value: "0", label: "Owner" },
   { value: "1", label: "Admin" },
@@ -28,14 +36,28 @@ function blankMemberState() {
   };
 }
 
+function blankAiProviderState() {
+  return {
+    ...blankAiProviderForm,
+    hasProvider: false,
+    hasApiKey: false,
+    loading: false,
+    saving: false,
+    deleting: false,
+    loaded: false,
+    error: "",
+    message: "",
+  };
+}
+
 export default function Workspaces() {
   const { t } = useI18n();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const selectedWorkspaceId = searchParams.get("workspaceId") || "";
   const currentUserId = localStorage.getItem("userId") || "";
   const [workspaces, setWorkspaces] = useState([]);
   const [membersByWorkspace, setMembersByWorkspace] = useState({});
-  const [formOpen, setFormOpen] = useState(false);
+  const [aiProvidersByWorkspace, setAiProvidersByWorkspace] = useState({});
   const [form, setForm] = useState(blankForm);
   const [formErrors, setFormErrors] = useState({});
   const [loading, setLoading] = useState(true);
@@ -105,12 +127,6 @@ export default function Workspaces() {
     state.items.some((member) => isCurrentUser(member.userId) && isWorkspaceAdmin(member.role))
   );
 
-  useEffect(() => {
-    if (!loading && !canCreateWorkspace && formOpen) {
-      setFormOpen(false);
-    }
-  }, [canCreateWorkspace, formOpen, loading]);
-
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
     setFormErrors({ ...formErrors, [event.target.name]: "" });
@@ -118,7 +134,6 @@ export default function Workspaces() {
   }
 
   function closeCreateWorkspaceModal() {
-    setFormOpen(false);
     setForm(blankForm);
     setFormErrors({});
     setCreateError("");
@@ -133,6 +148,114 @@ export default function Workspaces() {
         ...updates,
       },
     }));
+  }
+
+  function updateAiProviderState(workspaceId, updates) {
+    setAiProvidersByWorkspace((current) => ({
+      ...current,
+      [workspaceId]: {
+        ...blankAiProviderState(),
+        ...(current[workspaceId] || {}),
+        ...updates,
+      },
+    }));
+  }
+
+  function updateAiProviderField(workspaceId, field, value) {
+    updateAiProviderState(workspaceId, { [field]: value, error: "", message: "" });
+  }
+
+  async function loadAiProvider(workspaceId) {
+    updateAiProviderState(workspaceId, { loading: true, error: "", message: "" });
+
+    try {
+      const provider = await workspacesApi.getAiProvider(workspaceId);
+      updateAiProviderState(workspaceId, {
+        providerName: provider.providerName || blankAiProviderForm.providerName,
+        baseUrl: provider.baseUrl || "",
+        model: provider.model || blankAiProviderForm.model,
+        apiKey: "",
+        supportsToolCalls: Boolean(provider.supportsToolCalls),
+        hasProvider: true,
+        hasApiKey: Boolean(provider.hasApiKey),
+        loading: false,
+        loaded: true,
+      });
+    } catch (apiError) {
+      if (apiError.statusCode === 404) {
+        updateAiProviderState(workspaceId, {
+          ...blankAiProviderForm,
+          hasProvider: false,
+          hasApiKey: false,
+          loading: false,
+          loaded: true,
+        });
+        return;
+      }
+
+      updateAiProviderState(workspaceId, {
+        error: formatApiError(apiError),
+        loading: false,
+        loaded: true,
+      });
+    }
+  }
+
+  async function saveAiProvider(workspaceId) {
+    const state = aiProvidersByWorkspace[workspaceId] || blankAiProviderState();
+
+    if (!state.hasApiKey && !state.apiKey.trim()) {
+      updateAiProviderState(workspaceId, { error: "API key is required." });
+      return;
+    }
+
+    updateAiProviderState(workspaceId, { saving: true, error: "", message: "" });
+
+    try {
+      const savedProvider = await workspacesApi.saveAiProvider(workspaceId, {
+        providerName: (state.providerName || blankAiProviderForm.providerName).trim(),
+        baseUrl: state.baseUrl.trim() || null,
+        model: (state.model || blankAiProviderForm.model).trim(),
+        apiKey: state.apiKey.trim() || null,
+        supportsToolCalls: state.supportsToolCalls,
+      });
+
+      updateAiProviderState(workspaceId, {
+        providerName: savedProvider.providerName || (state.providerName || blankAiProviderForm.providerName).trim(),
+        baseUrl: savedProvider.baseUrl || "",
+        model: savedProvider.model || (state.model || blankAiProviderForm.model).trim(),
+        apiKey: "",
+        supportsToolCalls: Boolean(savedProvider.supportsToolCalls),
+        hasProvider: true,
+        hasApiKey: Boolean(savedProvider.hasApiKey),
+        saving: false,
+        loaded: true,
+        message: "API key saved.",
+      });
+    } catch (apiError) {
+      updateAiProviderState(workspaceId, { error: formatApiError(apiError), saving: false });
+    }
+  }
+
+  async function deleteAiProvider(workspaceId) {
+    const confirmed = window.confirm("Remove this workspace AI provider?");
+    if (!confirmed) return;
+
+    updateAiProviderState(workspaceId, { deleting: true, error: "", message: "" });
+
+    try {
+      await workspacesApi.deleteAiProvider(workspaceId);
+      updateAiProviderState(workspaceId, {
+        ...blankAiProviderForm,
+        hasProvider: false,
+        hasApiKey: false,
+        deleting: false,
+        loaded: true,
+        message: "AI provider removed.",
+      });
+    } catch (apiError) {
+      updateAiProviderState(workspaceId, { error: formatApiError(apiError), deleting: false });
+    }
   }
 
   async function reloadMembers(workspaceId) {
@@ -154,7 +277,7 @@ export default function Workspaces() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  async function createWorkspace(event) {
+  async function createWorkspace(event, closeModal) {
     event.preventDefault();
     if (!validateForm()) return;
 
@@ -172,7 +295,8 @@ export default function Workspaces() {
         .sort((left, right) => left.name.localeCompare(right.name)));
       setMembersByWorkspace((current) => ({ ...current, [mappedWorkspace.id]: blankMemberState() }));
       setForm(blankForm);
-      setFormOpen(false);
+      setSearchParams({ workspaceId: mappedWorkspace.id });
+      closeModal?.();
       await reloadMembers(mappedWorkspace.id);
     } catch (apiError) {
       setCreateError(formatApiError(apiError));
@@ -257,62 +381,72 @@ export default function Workspaces() {
     <div className="page-stack">
       {canCreateWorkspace && (
         <div className="page-actions">
-          <CreateActionButton
-            ariaLabel={t("workspace.new")}
-            onClick={() => {
-              setFormOpen(true);
-              setCreateError("");
-            }}
+          <LinearModal
+            closeLabel={t("workspace.closeCreate")}
+            description={t("workspace.createHelp")}
+            icon={Plus}
+            initialFocusRef={workspaceNameRef}
+            layoutId="workspace-create-modal"
+            onClose={closeCreateWorkspaceModal}
+            size="lg"
+            title={t("workspace.createTitle")}
+            trigger={({ iconLayoutId, layoutId, open, titleLayoutId }) => (
+              <CreateActionButton
+                as={motion.button}
+                ariaLabel={t("workspace.new")}
+                iconLayoutId={iconLayoutId}
+                layoutId={layoutId}
+                titleLayoutId={titleLayoutId}
+                onClick={() => {
+                  setCreateError("");
+                  open();
+                }}
+              >
+                {t("workspace.new")}
+              </CreateActionButton>
+            )}
           >
-            {t("workspace.new")}
-          </CreateActionButton>
+            {({ close }) => (
+              <>
+                {createError && <div className="error-text"><strong>{t("workspace.unableCreate")}</strong> {createError}</div>}
+
+                <form className="task-form" onSubmit={(event) => createWorkspace(event, close)} noValidate>
+                  <label>
+                    {t("workspace.name")}
+                    <input
+                      ref={workspaceNameRef}
+                      name="name"
+                      value={form.name}
+                      onChange={updateField}
+                      placeholder={t("workspace.placeholder.name")}
+                    />
+                    <ErrorMessage>{formErrors.name}</ErrorMessage>
+                  </label>
+
+                  <label>
+                    {t("workspace.description")}
+                    <textarea
+                      name="description"
+                      value={form.description}
+                      onChange={updateField}
+                      placeholder={t("workspace.placeholder.description")}
+                    />
+                  </label>
+
+                  <div className="button-row">
+                    <button className="primary-button" type="submit" disabled={saving}>
+                      <Plus size={18} /> {saving ? t("workspace.creating") : t("workspace.create")}
+                    </button>
+                    <button className="secondary-button" type="button" onClick={close}>
+                      {t("workspace.cancel")}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
+          </LinearModal>
         </div>
       )}
-
-      <FormModal
-        open={canCreateWorkspace && formOpen}
-        title={t("workspace.createTitle")}
-        description={t("workspace.createHelp")}
-        onClose={closeCreateWorkspaceModal}
-        closeLabel={t("workspace.closeCreate")}
-        initialFocusRef={workspaceNameRef}
-        size="lg"
-      >
-        {createError && <div className="error-text"><strong>{t("workspace.unableCreate")}</strong> {createError}</div>}
-
-        <form className="task-form" onSubmit={createWorkspace} noValidate>
-          <label>
-            {t("workspace.name")}
-            <input
-              ref={workspaceNameRef}
-              name="name"
-              value={form.name}
-              onChange={updateField}
-              placeholder={t("workspace.placeholder.name")}
-            />
-            <ErrorMessage>{formErrors.name}</ErrorMessage>
-          </label>
-
-          <label>
-            {t("workspace.description")}
-            <textarea
-              name="description"
-              value={form.description}
-              onChange={updateField}
-              placeholder={t("workspace.placeholder.description")}
-            />
-          </label>
-
-          <div className="button-row">
-            <button className="primary-button" type="submit" disabled={saving}>
-              <Plus size={18} /> {saving ? t("workspace.creating") : t("workspace.create")}
-            </button>
-            <button className="secondary-button" type="button" onClick={closeCreateWorkspaceModal}>
-              {t("workspace.cancel")}
-            </button>
-          </div>
-        </form>
-      </FormModal>
 
       {loading && <section className="panel">{t("workspace.loading")}</section>}
       {error && <section className="panel"><strong>{t("workspace.unableLoad")}</strong><p>{error}</p></section>}
@@ -328,6 +462,8 @@ export default function Workspaces() {
             const currentWorkspaceRole = getCurrentWorkspaceRole(workspace.id);
             const canManageMembers = canManageWorkspaceMembers(currentWorkspaceRole);
             const canDeleteCurrentWorkspace = canDeleteWorkspace(currentWorkspaceRole);
+            const aiProviderState = aiProvidersByWorkspace[workspace.id] || blankAiProviderState();
+            const aiProviderBusy = aiProviderState.loading || aiProviderState.saving || aiProviderState.deleting;
 
             return (
               <article
@@ -431,6 +567,64 @@ export default function Workspaces() {
                     </div>
                   )}
                 </div>
+
+                {canManageMembers && (
+                  <div className="ai-provider-manager">
+                    <div className="member-manager-header">
+                      <strong><KeyRound size={15} /> AI API key</strong>
+                      <div className="member-manager-actions">
+                        <button
+                          className="secondary-button compact"
+                          type="button"
+                          onClick={() => loadAiProvider(workspace.id)}
+                          disabled={aiProviderState.loading}
+                        >
+                          {aiProviderState.loaded ? "Refresh" : "Load"}
+                        </button>
+                        {aiProviderState.hasProvider && (
+                          <button
+                            className="danger-button compact"
+                            type="button"
+                            onClick={() => deleteAiProvider(workspace.id)}
+                            disabled={aiProviderBusy}
+                          >
+                            <Trash2 size={14} /> Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {aiProviderState.error && <div className="error-text">{aiProviderState.error}</div>}
+                    {aiProviderState.message && <div className="success-text">{aiProviderState.message}</div>}
+                    {aiProviderState.loading && <p>Loading AI provider...</p>}
+
+                    <div className="ai-key-status">
+                      {aiProviderState.hasApiKey ? "API key configured. Leave blank to keep current key." : "No API key configured."}
+                    </div>
+
+                    <div className="ai-key-field">
+                      <label>
+                        API Key
+                        <input
+                          value={aiProviderState.apiKey}
+                          onChange={(event) => updateAiProviderField(workspace.id, "apiKey", event.target.value)}
+                          disabled={aiProviderBusy}
+                          placeholder={aiProviderState.hasApiKey ? "Leave blank to keep current key" : "sk-..."}
+                          type="password"
+                        />
+                      </label>
+                    </div>
+
+                    <button
+                      className="primary-button compact"
+                      type="button"
+                      onClick={() => saveAiProvider(workspace.id)}
+                      disabled={aiProviderBusy}
+                    >
+                      <Save size={15} /> {aiProviderState.saving ? "Saving..." : "Save API key"}
+                    </button>
+                  </div>
+                )}
               </article>
             );
           })}

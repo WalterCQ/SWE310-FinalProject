@@ -1061,22 +1061,22 @@ public class AiCommandService(
 
     private string ResolveMainModel(AiProviderRuntime provider)
     {
-        return provider.Model;
+        return configuration["AI:MainModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private string ResolveProModel(AiProviderRuntime provider)
     {
-        return provider.Model;
+        return configuration["AI:ProModel"] ?? configuration["AI:MainModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private string ResolveVisionModel(AiProviderRuntime provider)
     {
-        return configuration["AI:VisionModel"] ?? provider.Model;
+        return configuration["AI:VisionModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private string ResolveEmbeddingModel(AiProviderRuntime provider)
     {
-        return configuration["AI:EmbeddingModel"] ?? provider.Model;
+        return configuration["AI:EmbeddingModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private static ChannelAttachmentResponse ToAttachmentResponse(ChannelAttachment attachment)

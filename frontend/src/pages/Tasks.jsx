@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Plus, Search, Send, Trash2 } from "lucide-react";
+import { motion } from "motion/react";
 import { useSearchParams } from "react-router-dom";
 import Avatar from "../components/Avatar.jsx";
 import CreateActionButton from "../components/CreateActionButton.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import ErrorMessage from "../components/ErrorMessage.jsx";
-import FormModal from "../components/FormModal.jsx";
+import LinearModal from "../components/LinearModal.jsx";
 import {
   formatApiError,
   projects as projectsApi,
@@ -91,7 +92,6 @@ export default function Tasks() {
   const [commentsByTask, setCommentsByTask] = useState({});
   const [commentDrafts, setCommentDrafts] = useState({});
   const [search, setSearch] = useState(searchParams.get("search") || "");
-  const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
   const [form, setForm] = useState(blankForm);
   const [errors, setErrors] = useState({});
   const [createTaskError, setCreateTaskError] = useState("");
@@ -304,12 +304,6 @@ export default function Tasks() {
     });
   }, [selectedTaskId, loadingTasks, tasks]);
 
-  useEffect(() => {
-    if (!showCreateTaskAction && isCreateTaskOpen) {
-      closeCreateTaskModal();
-    }
-  }, [showCreateTaskAction, isCreateTaskOpen]);
-
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
     setErrors({ ...errors, [event.target.name]: "" });
@@ -317,7 +311,6 @@ export default function Tasks() {
   }
 
   function closeCreateTaskModal() {
-    setIsCreateTaskOpen(false);
     setErrors({});
     setCreateTaskError("");
   }
@@ -371,7 +364,7 @@ export default function Tasks() {
     setCommentsByTask(Object.fromEntries(commentEntries));
   }
 
-  async function addTask(event) {
+  async function addTask(event, closeModal) {
     event.preventDefault();
     if (!canCreateSelectedProjectTask) {
       setCreateTaskError("You do not have permission to create tasks in this project.");
@@ -398,7 +391,7 @@ export default function Tasks() {
       }
 
       setForm(blankForm);
-      setIsCreateTaskOpen(false);
+      closeModal?.();
       await loadProjectTasks();
     } catch (error) {
       setCreateTaskError(formatApiError(error));
@@ -518,100 +511,6 @@ export default function Tasks() {
 
       {apiError && <section className="panel"><strong>{t("task.apiError")}</strong><p>{apiError}</p></section>}
 
-      <FormModal
-        open={showCreateTaskAction && isCreateTaskOpen}
-        title={t("task.createTitle")}
-        description={t("task.createHelp")}
-        onClose={closeCreateTaskModal}
-        closeLabel={t("task.closeCreate")}
-        initialFocusRef={titleInputRef}
-      >
-        {createTaskError && <div className="error-text"><strong>{t("task.unableCreate")}</strong> {createTaskError}</div>}
-
-        <form className="task-form" onSubmit={addTask} noValidate>
-          <label>
-            {t("task.project")}
-            <select
-              value={selectedProjectId}
-              onChange={(event) => {
-                const nextProjectId = event.target.value;
-                setSelectedProjectId(nextProjectId);
-                setErrors({ ...errors, project: "" });
-                setCreateTaskError("");
-                setForm((current) => ({ ...current, assigneeId: "" }));
-                setProjectMembers(projectMembersById[nextProjectId] || []);
-              }}
-              disabled={loadingProjects || projects.length === 0}
-            >
-              {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>{project.name}</option>
-              ))}
-            </select>
-            <ErrorMessage>{errors.project}</ErrorMessage>
-          </label>
-
-          <label>
-            {t("task.taskTitle")}
-            <input ref={titleInputRef} name="title" value={form.title} onChange={updateField} placeholder={t("task.placeholder.title")} />
-            <ErrorMessage>{errors.title}</ErrorMessage>
-          </label>
-
-          <label>
-            {t("task.description")}
-            <textarea name="description" value={form.description} onChange={updateField} placeholder={t("task.placeholder.description")} />
-            <ErrorMessage>{errors.description}</ErrorMessage>
-          </label>
-
-          <div className="form-grid-2">
-            <label>
-              {t("task.status")}
-              <select name="status" value={form.status} onChange={updateField}>
-                {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
-                ))}
-              </select>
-              <ErrorMessage>{errors.status}</ErrorMessage>
-            </label>
-
-            <label>
-              {t("task.priority")}
-              <select name="priority" value={form.priority} onChange={updateField}>
-                {priorityOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
-                ))}
-              </select>
-              <ErrorMessage>{errors.priority}</ErrorMessage>
-            </label>
-
-            <label>
-              Assignee
-              <select name="assigneeId" value={form.assigneeId} onChange={updateField} disabled={loadingMembers}>
-                <option value="">Unassigned</option>
-                {projectMembers.map((member) => (
-                  <option key={member.userId} value={member.userId}>{member.name}</option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              {t("task.dueDate")}
-              <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
-              <ErrorMessage>{errors.dueDate}</ErrorMessage>
-            </label>
-          </div>
-
-          <div className="button-row">
-            <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId || !canCreateSelectedProjectTask}>
-              <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
-            </button>
-            <button className="secondary-button" type="button" onClick={closeCreateTaskModal}>
-              {t("task.cancelCreate")}
-            </button>
-          </div>
-        </form>
-      </FormModal>
-
       <section className="task-layout">
         <section className="kanban-area">
           <div className="toolbar task-toolbar">
@@ -643,16 +542,121 @@ export default function Tasks() {
             )}
             <span>{filteredTasks.length} tasks</span>
             {showCreateTaskAction && (
-              <CreateActionButton
-                ariaLabel={t("task.openCreate")}
-                onClick={() => {
-                  setCreateTaskError("");
-                  setIsCreateTaskOpen(true);
-                }}
-                disabled={loadingProjects || projects.length === 0}
+              <LinearModal
+                closeLabel={t("task.closeCreate")}
+                description={t("task.createHelp")}
+                icon={Plus}
+                initialFocusRef={titleInputRef}
+                layoutId="task-create-modal"
+                onClose={closeCreateTaskModal}
+                size="lg"
+                title={t("task.createTitle")}
+                trigger={({ iconLayoutId, layoutId, open, titleLayoutId }) => (
+                  <CreateActionButton
+                    as={motion.button}
+                    ariaLabel={t("task.openCreate")}
+                    disabled={loadingProjects || projects.length === 0}
+                    iconLayoutId={iconLayoutId}
+                    layoutId={layoutId}
+                    titleLayoutId={titleLayoutId}
+                    onClick={() => {
+                      setCreateTaskError("");
+                      open();
+                    }}
+                  >
+                    {t("task.openCreate")}
+                  </CreateActionButton>
+                )}
               >
-                {t("task.openCreate")}
-              </CreateActionButton>
+                {({ close }) => (
+                  <>
+                    {createTaskError && <div className="error-text"><strong>{t("task.unableCreate")}</strong> {createTaskError}</div>}
+
+                    <form className="task-form" onSubmit={(event) => addTask(event, close)} noValidate>
+                      <label>
+                        {t("task.project")}
+                        <select
+                          value={selectedProjectId}
+                          onChange={(event) => {
+                            const nextProjectId = event.target.value;
+                            setSelectedProjectId(nextProjectId);
+                            setErrors({ ...errors, project: "" });
+                            setCreateTaskError("");
+                            setForm((current) => ({ ...current, assigneeId: "" }));
+                            setProjectMembers(projectMembersById[nextProjectId] || []);
+                          }}
+                          disabled={loadingProjects || projects.length === 0}
+                        >
+                          {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>{project.name}</option>
+                          ))}
+                        </select>
+                        <ErrorMessage>{errors.project}</ErrorMessage>
+                      </label>
+
+                      <label>
+                        {t("task.taskTitle")}
+                        <input ref={titleInputRef} name="title" value={form.title} onChange={updateField} placeholder={t("task.placeholder.title")} />
+                        <ErrorMessage>{errors.title}</ErrorMessage>
+                      </label>
+
+                      <label>
+                        {t("task.description")}
+                        <textarea name="description" value={form.description} onChange={updateField} placeholder={t("task.placeholder.description")} />
+                        <ErrorMessage>{errors.description}</ErrorMessage>
+                      </label>
+
+                      <div className="form-grid-2">
+                        <label>
+                          {t("task.status")}
+                          <select name="status" value={form.status} onChange={updateField}>
+                            {statusOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
+                            ))}
+                          </select>
+                          <ErrorMessage>{errors.status}</ErrorMessage>
+                        </label>
+
+                        <label>
+                          {t("task.priority")}
+                          <select name="priority" value={form.priority} onChange={updateField}>
+                            {priorityOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
+                            ))}
+                          </select>
+                          <ErrorMessage>{errors.priority}</ErrorMessage>
+                        </label>
+
+                        <label>
+                          Assignee
+                          <select name="assigneeId" value={form.assigneeId} onChange={updateField} disabled={loadingMembers}>
+                            <option value="">Unassigned</option>
+                            {projectMembers.map((member) => (
+                              <option key={member.userId} value={member.userId}>{member.name}</option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label>
+                          {t("task.dueDate")}
+                          <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
+                          <ErrorMessage>{errors.dueDate}</ErrorMessage>
+                        </label>
+                      </div>
+
+                      <div className="button-row">
+                        <button className="primary-button" type="submit" disabled={saving || loadingProjects || !selectedProjectId || !canCreateSelectedProjectTask}>
+                          <Plus size={18} /> {saving ? t("task.adding") : t("task.add")}
+                        </button>
+                        <button className="secondary-button" type="button" onClick={close}>
+                          {t("task.cancelCreate")}
+                        </button>
+                      </div>
+                    </form>
+                  </>
+                )}
+              </LinearModal>
             )}
           </div>
 

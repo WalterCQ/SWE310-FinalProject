@@ -1,16 +1,17 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.Helpers;
 
 namespace TaskFlow.Api.DTOs.Messages;
 
 public class CreateMessageRequest
 {
-    [Required, StringLength(4000)]
+    [Required, StringLength(4000), NonWhiteSpace]
     public string Content { get; set; } = string.Empty;
 }
 
 public class UpdateMessageRequest
 {
-    [Required, StringLength(4000)]
+    [Required, StringLength(4000), NonWhiteSpace]
     public string Content { get; set; } = string.Empty;
 }
 

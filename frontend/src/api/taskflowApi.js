@@ -63,6 +63,9 @@ export const workspaces = {
   addMember: (workspaceId, payload) => request({ method: "POST", url: `/api/workspaces/${workspaceId}/members`, data: payload }),
   updateMember: (workspaceId, userId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}/members/${userId}`, data: payload }),
   removeMember: (workspaceId, userId) => request({ method: "DELETE", url: `/api/workspaces/${workspaceId}/members/${userId}` }),
+  getAiProvider: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/ai/provider` }),
+  saveAiProvider: (workspaceId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}/ai/provider`, data: payload }),
+  deleteAiProvider: (workspaceId) => request({ method: "DELETE", url: `/api/workspaces/${workspaceId}/ai/provider` }),
 };
 
 export const dashboard = {
@@ -124,6 +127,10 @@ export const auth = {
   me: () => request({ method: "GET", url: "/api/auth/me" }),
 };
 
+export const admin = {
+  overview: () => request({ method: "GET", url: "/api/admin/overview" }),
+};
+
 export const ai = {
   command: (payload) => request({ method: "POST", url: "/api/ai/command", data: payload }),
   channelCommand: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/ai`, data: payload }),
@@ -168,6 +175,7 @@ export default {
   messages,
   notifications,
   auth,
+  admin,
   ai,
   agent,
 };

@@ -1,11 +1,12 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.Helpers;
 using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.DTOs.Workspaces;
 
 public class CreateWorkspaceRequest
 {
-    [Required, StringLength(160)]
+    [Required, StringLength(160), NonWhiteSpace]
     public string Name { get; set; } = string.Empty;
 
     [StringLength(1000)]
@@ -14,7 +15,7 @@ public class CreateWorkspaceRequest
 
 public class UpdateWorkspaceRequest
 {
-    [Required, StringLength(160)]
+    [Required, StringLength(160), NonWhiteSpace]
     public string Name { get; set; } = string.Empty;
 
     [StringLength(1000)]
@@ -36,14 +37,16 @@ public class WorkspaceResponse
 
 public class AddWorkspaceMemberRequest
 {
-    [Required, EmailAddress, StringLength(256)]
+    [Required, EmailAddress, StringLength(256), NonWhiteSpace]
     public string Email { get; set; } = string.Empty;
 
+    [DefinedEnum]
     public WorkspaceRole Role { get; set; } = WorkspaceRole.Member;
 }
 
 public class UpdateWorkspaceMemberRoleRequest
 {
+    [DefinedEnum]
     public WorkspaceRole Role { get; set; } = WorkspaceRole.Member;
 }
 

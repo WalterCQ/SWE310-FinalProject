@@ -66,7 +66,7 @@ static async Task<Dictionary<string, Guid>> SeedUsersAsync(AppDbContext dbContex
 {
     var users = new[]
     {
-        new SeedUser("TaskFlow Demo", "demo@taskflow.com", "Demo123!", GlobalRole.User),
+        new SeedUser("TaskFlow Demo", "demo@taskflow.com", "Demo123!", GlobalRole.Admin),
         new SeedUser("Oday Frontend", "oday@taskflow.com", "Demo123!", GlobalRole.User),
         new SeedUser("John Backend", "john@taskflow.com", "Demo123!", GlobalRole.User),
         new SeedUser("Sarah AI", "sarah@taskflow.com", "Demo123!", GlobalRole.User)

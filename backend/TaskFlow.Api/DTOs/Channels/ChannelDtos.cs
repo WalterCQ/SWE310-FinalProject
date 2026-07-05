@@ -1,10 +1,11 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.Helpers;
 
 namespace TaskFlow.Api.DTOs.Channels;
 
 public class CreateChannelRequest
 {
-    [Required, StringLength(120)]
+    [Required, StringLength(120), NonWhiteSpace]
     public string Name { get; set; } = string.Empty;
 
     [StringLength(1000)]
@@ -27,7 +28,7 @@ public class ChannelResponse
 
 public class AddChannelMemberRequest
 {
-    [Required, EmailAddress, StringLength(256)]
+    [Required, EmailAddress, StringLength(256), NonWhiteSpace]
     public string Email { get; set; } = string.Empty;
 }
 

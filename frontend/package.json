@@ -13,10 +13,12 @@
     "vite": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "latest",
     "axios": "latest",
     "recharts": "latest",
     "lucide-react": "latest",
+    "motion": "^12.42.2",
     "@microsoft/signalr": "latest"
   },
   "devDependencies": {}

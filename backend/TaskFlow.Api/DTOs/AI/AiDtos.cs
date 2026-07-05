@@ -1,32 +1,38 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.Helpers;
 
 namespace TaskFlow.Api.DTOs.AI;
 
 public class AiCommandRequest
 {
+    [NonEmptyGuid]
     public Guid WorkspaceId { get; set; }
 
-    [Required, StringLength(4000)]
+    [Required, StringLength(4000), NonWhiteSpace]
     public string Command { get; set; } = string.Empty;
 }
 
 public class AiChannelSummaryRequest
 {
+    [NonEmptyGuid]
     public Guid ChannelId { get; set; }
 }
 
 public class AiProjectSummaryRequest
 {
+    [NonEmptyGuid]
     public Guid ProjectId { get; set; }
 }
 
 public class AiRiskAnalysisRequest
 {
+    [NonEmptyGuid]
     public Guid ProjectId { get; set; }
 }
 
 public class AiGenerateTasksFromMessageRequest
 {
+    [NonEmptyGuid]
     public Guid ProjectId { get; set; }
     public Guid? MessageId { get; set; }
 
@@ -36,9 +42,10 @@ public class AiGenerateTasksFromMessageRequest
 
 public class AiWorkspaceQuestionRequest
 {
+    [NonEmptyGuid]
     public Guid WorkspaceId { get; set; }
 
-    [Required, StringLength(1000)]
+    [Required, StringLength(1000), NonWhiteSpace]
     public string Question { get; set; } = string.Empty;
 }
 
@@ -51,7 +58,7 @@ public class AiResponse
 
 public class AiChannelCommandRequest
 {
-    [Required, StringLength(4000)]
+    [Required, StringLength(4000), NonWhiteSpace]
     public string Command { get; set; } = string.Empty;
 
     public Guid? AttachmentId { get; set; }

@@ -1,5 +1,6 @@
 using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.SwaggerGen;
+using TaskFlow.Api.DTOs.Admin;
 using TaskFlow.Api.DTOs.AI;
 using TaskFlow.Api.DTOs.Agent;
 using TaskFlow.Api.DTOs.Auth;
@@ -21,6 +22,12 @@ public class ApiDocumentationOperationFilter : IOperationFilter
     private static readonly IReadOnlyDictionary<string, EndpointDoc> Docs =
         new Dictionary<string, EndpointDoc>(StringComparer.OrdinalIgnoreCase)
         {
+            ["Admin.GetOverview"] = new(
+                "Get admin-only system overview",
+                "Returns aggregate system counts and security evidence for the coursework demo. This endpoint is explicitly restricted to users whose JWT contains the Admin global role claim.",
+                StatusCodes.Status200OK,
+                typeof(AdminOverviewResponse)),
+
             ["Auth.Register"] = new(
                 "Register a new user",
                 "Creates a user account after validating name, email, and password. Duplicate email addresses return 400. Newly registered users are granted access to the shared demo workspace when seeded demo data is available.",
@@ -186,6 +193,21 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Returns up to 200 messages from a channel in chronological order. Private-channel access is enforced before messages are returned.",
                 StatusCodes.Status200OK,
                 typeof(IEnumerable<MessageResponse>)),
+            ["Channels.GetChannelAttachments"] = new(
+                "List channel AI attachments",
+                "Returns AI-indexed files uploaded to a channel. The current user must be allowed to access the channel before attachment metadata is returned.",
+                StatusCodes.Status200OK,
+                typeof(IReadOnlyCollection<ChannelAttachmentResponse>)),
+            ["Channels.UploadChannelAttachment"] = new(
+                "Upload and index a channel attachment",
+                "Uploads a PDF, Word, text, markdown, or image attachment for channel AI context. The backend validates channel access, file presence, file size, supported content type, extracted text, and workspace AI provider configuration before storing searchable chunks.",
+                StatusCodes.Status200OK,
+                typeof(ChannelAttachmentResponse)),
+            ["Channels.RunChannelAi"] = new(
+                "Run a channel AI command",
+                "Executes an @TaskFlow AI command against recent channel messages and optional indexed attachment context. Requires channel access and workspace AI permission, then returns grounded sources, suggested tasks, or generated artifacts.",
+                StatusCodes.Status200OK,
+                typeof(AiChannelCommandResponse)),
             ["Channels.GetChannelMembers"] = new(
                 "List channel members",
                 "Returns the users who belong to a channel. Requires channel access; private channel access is enforced before members are returned.",

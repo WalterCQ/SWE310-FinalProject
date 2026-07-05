@@ -1,16 +1,18 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.Helpers;
 using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.DTOs.Tasks;
 
 public class CreateTaskRequest
 {
-    [Required, StringLength(200)]
+    [Required, StringLength(200), NonWhiteSpace]
     public string Title { get; set; } = string.Empty;
 
     [StringLength(2000)]
     public string? Description { get; set; }
 
+    [DefinedEnum]
     public TaskPriority Priority { get; set; } = TaskPriority.Medium;
     public Guid? AssigneeId { get; set; }
     public DateTime? DeadlineUtc { get; set; }
@@ -18,12 +20,13 @@ public class CreateTaskRequest
 
 public class UpdateTaskRequest
 {
-    [Required, StringLength(200)]
+    [Required, StringLength(200), NonWhiteSpace]
     public string Title { get; set; } = string.Empty;
 
     [StringLength(2000)]
     public string? Description { get; set; }
 
+    [DefinedEnum]
     public TaskPriority Priority { get; set; } = TaskPriority.Medium;
     public Guid? AssigneeId { get; set; }
     public DateTime? DeadlineUtc { get; set; }
@@ -31,6 +34,7 @@ public class UpdateTaskRequest
 
 public class UpdateTaskStatusRequest
 {
+    [DefinedEnum]
     public TaskItemStatus Status { get; set; }
 }
 
@@ -46,7 +50,7 @@ public class SetTaskDeadlineRequest
 
 public class CreateTaskCommentRequest
 {
-    [Required, StringLength(2000)]
+    [Required, StringLength(2000), NonWhiteSpace]
     public string Content { get; set; } = string.Empty;
 }
 

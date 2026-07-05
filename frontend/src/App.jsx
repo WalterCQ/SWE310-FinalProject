@@ -8,6 +8,7 @@ import Channels from "./pages/Channels.jsx";
 import Projects from "./pages/Projects.jsx";
 import Tasks from "./pages/Tasks.jsx";
 import Notifications from "./pages/Notifications.jsx";
+import Admin from "./pages/Admin.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Topbar from "./components/Topbar.jsx";
 import { auth } from "./api/taskflowApi.js";
@@ -21,6 +22,7 @@ const routeMeta = {
   "/projects": { eyebrowKey: "project.eyebrow", titleKey: "project.title" },
   "/tasks": { eyebrowKey: "task.eyebrow", titleKey: "task.title" },
   "/notifications": { eyebrowKey: "notifications.eyebrow", titleKey: "notifications.title" },
+  "/admin": { eyebrowKey: "admin.eyebrow", titleKey: "admin.title" },
 };
 
 function getPageMeta(pathname, search, t) {
@@ -139,6 +141,9 @@ export default function App() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/notifications" element={<Notifications />} />
+      </Route>
+      <Route element={<ProtectedShell allowedRoles={["Admin"]} />}>
+        <Route path="/admin" element={<Admin />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

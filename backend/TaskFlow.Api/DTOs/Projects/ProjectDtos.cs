@@ -1,11 +1,12 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.Helpers;
 using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.DTOs.Projects;
 
 public class CreateProjectRequest
 {
-    [Required, StringLength(160)]
+    [Required, StringLength(160), NonWhiteSpace]
     public string Name { get; set; } = string.Empty;
 
     [StringLength(1000)]
@@ -16,12 +17,13 @@ public class CreateProjectRequest
 
 public class UpdateProjectRequest
 {
-    [Required, StringLength(160)]
+    [Required, StringLength(160), NonWhiteSpace]
     public string Name { get; set; } = string.Empty;
 
     [StringLength(1000)]
     public string? Description { get; set; }
 
+    [DefinedEnum]
     public ProjectStatus Status { get; set; } = ProjectStatus.Active;
     public DateTime? DeadlineUtc { get; set; }
 }
@@ -44,14 +46,16 @@ public class ProjectResponse
 
 public class AddProjectMemberRequest
 {
-    [Required, EmailAddress, StringLength(256)]
+    [Required, EmailAddress, StringLength(256), NonWhiteSpace]
     public string Email { get; set; } = string.Empty;
 
+    [DefinedEnum]
     public ProjectRole RoleInProject { get; set; } = ProjectRole.Contributor;
 }
 
 public class UpdateProjectMemberRoleRequest
 {
+    [DefinedEnum]
     public ProjectRole RoleInProject { get; set; } = ProjectRole.Contributor;
 }
 

@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  ShieldCheck,
   SquareCheckBig,
 } from "lucide-react";
 import { clearAuthStorage } from "../api/authStorage.js";
@@ -20,6 +21,7 @@ const navItems = [
   { labelKey: "nav.projects", path: "/projects", icon: KanbanSquare },
   { labelKey: "nav.tasks", path: "/tasks", icon: SquareCheckBig },
   { labelKey: "nav.notifications", path: "/notifications", icon: Bell },
+  { labelKey: "nav.admin", path: "/admin", icon: ShieldCheck, allowedRoles: ["Admin"] },
 ];
 
 export default function Sidebar({ user }) {
