@@ -47,7 +47,7 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
                 {
                     Namespace = @namespace,
                     Vectors = batch.ToList()
-                }, cancellationToken);
+                });
             }
         }
         catch (PineconeVectorStoreException)
@@ -94,9 +94,9 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
                 TopK = (uint)Math.Max(1, topK),
                 IncludeMetadata = true,
                 Filter = filter
-            }, cancellationToken);
+            });
 
-            return response.Matches
+            return (response.Matches ?? [])
                 .Where(match => match.Metadata is not null)
                 .Select(match =>
                 {
@@ -137,7 +137,7 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
                 {
                     ["attachmentId"] = new Metadata { ["$eq"] = attachmentId.ToString("D") }
                 }
-            }, cancellationToken);
+            });
         }
         catch (PineconeVectorStoreException)
         {
@@ -153,7 +153,7 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
     {
         try
         {
-            await GetIndex().DeleteNamespaceAsync(ResolveNamespace(workspaceId), cancellationToken);
+            await GetIndex().DeleteNamespaceAsync(ResolveNamespace(workspaceId));
         }
         catch (PineconeVectorStoreException)
         {
