@@ -767,6 +767,8 @@ export default function Channels() {
         sources: response?.sources || [],
         suggestedTasks: response?.suggestedTasks || [],
         createdTaskTitle: response?.createdTaskTitle || "",
+        agentJobId: response?.agentJobId || "",
+        requiresApproval: Boolean(response?.requiresApproval),
       };
       setAiMessages((current) => [...current, aiMessage]);
       return response;
@@ -1142,6 +1144,13 @@ export default function Channels() {
                     {message.isAi && message.createdTaskTitle && (
                       <div className="created-task-chip">
                         <ListTodo size={14} /> {t("channel.createdTask", { title: message.createdTaskTitle })}
+                      </div>
+                    )}
+                    {message.isAi && message.agentJobId && (
+                      <div className="created-task-chip agent-job-chip">
+                        <ClipboardCheck size={14} />
+                        {message.requiresApproval ? t("channel.agentApprovalRequired") : t("channel.agentJobCreated")}
+                        <code>{message.agentJobId.slice(0, 8)}</code>
                       </div>
                     )}
                   </div>
