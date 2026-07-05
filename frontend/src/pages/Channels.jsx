@@ -44,9 +44,11 @@ import {
   mapChannelMember,
   mapMessage,
   mapWorkspace,
+  mapWorkspaceMember,
   selectPrimaryWorkspace,
 } from "../api/mappers.js";
 import { useI18n } from "../i18n.jsx";
+import { usePageRoleContext } from "../pageRoleContext.jsx";
 
 function normalizeRealtimeMessage(message) {
   return {
@@ -137,10 +139,13 @@ const AI_PANEL_OPEN_KEY = "taskflow.aiPanelOpen";
 
 export default function Channels() {
   const { t } = useI18n();
+  const { setContextRole } = usePageRoleContext();
   const [searchParams] = useSearchParams();
   const selectedChannelId = searchParams.get("channelId") || "";
+  const currentUserId = localStorage.getItem("userId") || "";
   const [workspaceId, setWorkspaceId] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
+  const [currentWorkspaceRole, setCurrentWorkspaceRole] = useState("");
   const [channels, setChannels] = useState([]);
   const [activeChannelId, setActiveChannelId] = useState("");
   const [channelForm, setChannelForm] = useState(blankChannelForm);
@@ -211,9 +216,18 @@ export default function Channels() {
       && (selectedFile || isConnected)
   );
 
+  function isCurrentUser(userId) {
+    return Boolean(userId && currentUserId && String(userId).toLowerCase() === currentUserId.toLowerCase());
+  }
+
   useEffect(() => {
     activeChannelRef.current = activeChannelId;
   }, [activeChannelId]);
+
+  useEffect(() => {
+    setContextRole(currentWorkspaceRole || "");
+    return () => setContextRole("");
+  }, [currentWorkspaceRole, setContextRole]);
 
   useEffect(() => {
     setOpenMemberMenuId("");
@@ -239,10 +253,19 @@ export default function Channels() {
           if (active) {
             setWorkspaceId("");
             setWorkspaceName("");
+            setCurrentWorkspaceRole("");
             setChannels([]);
             setActiveChannelId("");
           }
           return;
+        }
+
+        let workspaceRole = "";
+        try {
+          const workspaceMembers = asArray(await workspacesApi.members(workspace.id)).map(mapWorkspaceMember);
+          workspaceRole = workspaceMembers.find((member) => isCurrentUser(member.userId))?.role ?? "";
+        } catch {
+          workspaceRole = "";
         }
 
         const channelItems = asArray(await channelsApi.listByWorkspace(workspace.id)).map(mapChannel);
@@ -250,6 +273,7 @@ export default function Channels() {
         if (active) {
           setWorkspaceId(workspace.id);
           setWorkspaceName(workspace.name);
+          setCurrentWorkspaceRole(workspaceRole);
           setChannels(channelItems);
           setActiveChannelId(
             channelItems.some((channel) => channel.id === selectedChannelId)

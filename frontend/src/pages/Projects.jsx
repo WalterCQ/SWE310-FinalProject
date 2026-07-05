@@ -15,6 +15,7 @@ import {
 import { asArray, mapProject, mapProjectMember, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
 import { canManageProjectMembers, canManageWorkspaceMembers } from "../api/permissions.js";
 import { enumProjectRoleKey, enumProjectStatusKey, useI18n } from "../i18n.jsx";
+import { usePageRoleContext } from "../pageRoleContext.jsx";
 
 const blankForm = {
   workspaceId: "",
@@ -43,6 +44,7 @@ function toDeadlineUtc(dateValue) {
 
 export default function Projects() {
   const { t } = useI18n();
+  const { setContextRole } = usePageRoleContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedProjectParam = searchParams.get("projectId") || "";
   const currentUserId = localStorage.getItem("userId") || "";
@@ -87,6 +89,7 @@ export default function Projects() {
     workspaceRolesById[selectedProject.workspaceId],
     currentProjectRole
   );
+  const currentContextRole = currentProjectRole || (selectedProject ? workspaceRolesById[selectedProject.workspaceId] : "");
 
   useEffect(() => {
     const nextSearch = searchParams.get("search") || "";
@@ -96,6 +99,11 @@ export default function Projects() {
     if (nextStatus !== statusFilter) setStatusFilter(nextStatus);
     if (nextProjectId) setSelectedProjectId(nextProjectId);
   }, [searchParams]);
+
+  useEffect(() => {
+    setContextRole(currentContextRole || "");
+    return () => setContextRole("");
+  }, [currentContextRole, setContextRole]);
 
   useEffect(() => {
     const nextParams = {};

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Api.Data;
@@ -23,12 +24,14 @@ public class AgentJobProcessor(
     INotificationService notificationService,
     IDashboardService dashboardService,
     IAiProviderService aiProviderService,
+    IAiContextService aiContextService,
     IGitHubRepositoryService gitHubRepositoryService,
     IDataProtectionProvider dataProtectionProvider,
     IHttpClientFactory httpClientFactory,
+    AgentSkillRegistry skillRegistry,
     ILogger<AgentJobProcessor> logger)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions JsonOptions = new(AgentJsonUtilities.DefaultOptions)
     {
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter() }
@@ -97,17 +100,22 @@ public class AgentJobProcessor(
 
     private async Task BuildPlanAsync(AgentJob job, CancellationToken cancellationToken)
     {
-        var step = AddStep(job.Id, "Build execution plan", "MainAgent", 10);
-        job.CurrentSubAgent = "MainAgent";
+        var step = AddStep(job.Id, "Build execution plan", "ManagerAgent", 10);
+        job.CurrentSubAgent = "ManagerAgent";
         step.Status = AgentStepStatus.Running;
         step.StartedAtUtc = DateTime.UtcNow;
-        AddEvent(job.Id, job.UserId, AgentEventType.Planning, "Main Agent is building the execution plan.");
+        AddEvent(job.Id, job.UserId, AgentEventType.Planning, "Manager Agent is building the execution plan.");
 
         var subAgents = InferSubAgents(job.Goal, job.ArtifactTarget);
+        var toolIntents = BuildToolIntents(job, subAgents);
         var providerNotes = await TryAskProviderForPlanNotesAsync(job, subAgents, cancellationToken);
         var plan = new AgentPlan(
-            "Main Agent will coordinate subagents, then request explicit approval before every TaskFlow write.",
+            "Microsoft Agent Framework manager workflow will plan typed tool intents, then TaskFlow services execute them with approval gates.",
+            "ManagerAgent",
+            "Microsoft.Agents.AI",
             subAgents,
+            toolIntents,
+            skillRegistry.RegisteredSkillIds,
             providerNotes,
             [
                 "All write actions are dry-run previews first.",
@@ -151,7 +159,7 @@ public class AgentJobProcessor(
         }
 
         var alreadyOrchestrated = await dbContext.AgentSteps
-            .AnyAsync(step => step.AgentJobId == job.Id && step.Name == "Run subagents", cancellationToken);
+            .AnyAsync(step => step.AgentJobId == job.Id && step.Name == "Run manager workflow", cancellationToken);
         if (alreadyOrchestrated)
         {
             CompleteJob(job);
@@ -177,14 +185,31 @@ public class AgentJobProcessor(
 
     private async Task RunSubagentsAsync(AgentJob job, CancellationToken cancellationToken)
     {
-        var step = AddStep(job.Id, "Run subagents", "MainAgent", 20);
-        job.CurrentSubAgent = "MainAgent";
+        var step = AddStep(job.Id, "Run manager workflow", "ManagerAgent", 20);
+        job.CurrentSubAgent = "ManagerAgent";
         step.Status = AgentStepStatus.Running;
         step.StartedAtUtc = DateTime.UtcNow;
-        AddEvent(job.Id, job.UserId, AgentEventType.StepStarted, "Main Agent started subagent orchestration.");
+        AddEvent(job.Id, job.UserId, AgentEventType.StepStarted, "Manager Agent started typed tool orchestration.");
 
         var subAgents = InferSubAgents(job.Goal, job.ArtifactTarget);
-        var ragContext = await LoadRagContextAsync(job, cancellationToken);
+        var toolIntents = BuildToolIntents(job, subAgents);
+        var agentContext = await LoadAgentContextAsync(job, cancellationToken);
+        step.InputJson = JsonSerializer.Serialize(new
+        {
+            job.Goal,
+            job.ArtifactTarget,
+            subAgents,
+            toolIntents,
+            contextSources = agentContext.Sources,
+            registeredSkills = skillRegistry.RegisteredSkillIds
+        }, JsonOptions);
+        AddEvent(
+            job.Id,
+            job.UserId,
+            AgentEventType.StepStarted,
+            "Manager Agent loaded approved context sources.",
+            JsonSerializer.Serialize(new { sources = agentContext.Sources, lineCount = agentContext.ContextLines.Count }, JsonOptions));
+
         foreach (var subAgent in subAgents)
         {
             dbContext.AgentSubJobs.Add(new AgentSubJob
@@ -196,26 +221,51 @@ public class AgentJobProcessor(
                 Status = AgentSubJobStatus.Completed,
                 StartedAtUtc = DateTime.UtcNow,
                 CompletedAtUtc = DateTime.UtcNow,
-                ResultJson = JsonSerializer.Serialize(new { subAgent, result = "Completed deterministic MVP pass." }, JsonOptions)
+                ResultJson = JsonSerializer.Serialize(new
+                {
+                    subAgent,
+                    result = "Completed manager tool intent pass.",
+                    toolIntents = toolIntents.Where(intent => intent.SubAgentName == subAgent).ToArray(),
+                    contextSources = agentContext.Sources
+                }, JsonOptions)
             });
             job.CurrentSubAgent = subAgent;
         }
 
         if (subAgents.Contains("SummarySubAgent"))
         {
-            await AddSummaryArtifactAsync(job, step.Id);
+            await AddSummaryArtifactAsync(job, step.Id, agentContext.ContextLines);
         }
 
         if (subAgents.Contains("CodeSubAgent"))
         {
+            var codePatchResult = await BuildCodePatchAsync(job, step.Id, agentContext.ContextLines, cancellationToken);
             var patchArtifact = AddArtifact(
                 job.Id,
                 step.Id,
                 AgentArtifactKind.CodePatch,
                 "code-subagent.patch",
                 "text/x-patch",
-                BuildCodePatchArtifact(job, ragContext),
+                codePatchResult.Patch,
                 storeAsBlob: true);
+
+            if (!string.IsNullOrWhiteSpace(codePatchResult.ValidationResult))
+            {
+                AddArtifact(
+                    job.Id,
+                    step.Id,
+                    AgentArtifactKind.CodePatch,
+                    "code-validation-result.md",
+                    $"""
+                    # Code Validation Result
+
+                    {codePatchResult.ValidationResult}
+
+                    ## Diff Summary
+
+                    {codePatchResult.DiffSummary}
+                    """);
+            }
 
             if (job.GitHubRepositoryConnectionId.HasValue)
             {
@@ -225,28 +275,44 @@ public class AgentJobProcessor(
 
         if (subAgents.Contains("DeckSubAgent"))
         {
-            var deckSlides = BuildDeckSlides(job.Goal, ragContext);
-            AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, "deck-subagent-outline.md", BuildDeckArtifact(job.Goal, ragContext));
-            AddArtifact(
-                job.Id,
-                step.Id,
-                AgentArtifactKind.Deck,
-                "taskflow-ai-deck.pptx",
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                AgentArtifactDocumentBuilder.BuildDeckPptx(job.Goal, deckSlides));
+            AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, "deck-subagent-source.md", skillRegistry.BuildMarkdown("TaskFlow AI Deck", job.Goal, agentContext.ContextLines));
+            try
+            {
+                var deck = await skillRegistry.BuildDeckAsync(job.Goal, agentContext.ContextLines, cancellationToken);
+                AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, deck.FileName, deck.ContentType, deck.Content);
+                AddEvent(
+                    job.Id,
+                    job.UserId,
+                    AgentEventType.ArtifactCreated,
+                    $"Runtime skill completed: {deck.SkillId}",
+                    JsonSerializer.Serialize(new { deck.SkillId, deck.FileName, output = deck.OutputLog }, JsonOptions));
+            }
+            catch (Exception ex)
+            {
+                AddSkillFailure(job, step.Id, AgentArtifactKind.Deck, "ppt-master", ex);
+                throw;
+            }
         }
 
         if (subAgents.Contains("ReportSubAgent"))
         {
-            var reportSections = BuildReportSections(job.Goal, ragContext);
-            AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, "report-subagent-draft.md", BuildReportArtifact(job.Goal, ragContext));
-            AddArtifact(
-                job.Id,
-                step.Id,
-                AgentArtifactKind.Report,
-                "taskflow-ai-report.docx",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                AgentArtifactDocumentBuilder.BuildReportDocx(job.Goal, reportSections));
+            AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, "report-subagent-draft.md", skillRegistry.BuildMarkdown("TaskFlow AI Report", job.Goal, agentContext.ContextLines));
+            try
+            {
+                var report = await skillRegistry.BuildDocxAsync(job.Goal, agentContext.ContextLines, cancellationToken);
+                AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, report.FileName, report.ContentType, report.Content);
+                AddEvent(
+                    job.Id,
+                    job.UserId,
+                    AgentEventType.ArtifactCreated,
+                    $"Runtime skill completed: {report.SkillId}",
+                    JsonSerializer.Serialize(new { report.SkillId, report.FileName, output = report.OutputLog }, JsonOptions));
+            }
+            catch (Exception ex)
+            {
+                AddSkillFailure(job, step.Id, AgentArtifactKind.Report, "docx", ex);
+                throw;
+            }
         }
 
         if (subAgents.Contains("TaskFlowActionSubAgent"))
@@ -256,8 +322,14 @@ public class AgentJobProcessor(
 
         step.Status = AgentStepStatus.Completed;
         step.CompletedAtUtc = DateTime.UtcNow;
-        step.OutputJson = JsonSerializer.Serialize(new { subAgents }, JsonOptions);
-        AddEvent(job.Id, job.UserId, AgentEventType.StepCompleted, "Subagent orchestration completed.");
+        step.OutputJson = JsonSerializer.Serialize(new
+        {
+            subAgents,
+            toolIntents,
+            contextSources = agentContext.Sources,
+            registeredSkills = skillRegistry.RegisteredSkillIds
+        }, JsonOptions);
+        AddEvent(job.Id, job.UserId, AgentEventType.StepCompleted, "Manager Agent workflow completed.");
     }
 
     private async Task ExecuteApprovedActionsAsync(AgentJob job, CancellationToken cancellationToken)
@@ -550,7 +622,7 @@ public class AgentJobProcessor(
         AddApproval(job, stepId, "CreatePullRequest", "Create GitHub pull request", "GitHubRepositoryConnection", payload, approvalType: "GitHubWrite");
     }
 
-    private async Task AddSummaryArtifactAsync(AgentJob job, Guid stepId)
+    private async Task AddSummaryArtifactAsync(AgentJob job, Guid stepId, IReadOnlyCollection<string> contextLines)
     {
         var projects = await dbContext.Projects
             .AsNoTracking()
@@ -565,8 +637,16 @@ public class AgentJobProcessor(
             "",
             $"Goal: {job.Goal}",
             "",
-            $"Workspace projects considered: {projects.Count}"
+            $"Workspace projects considered: {projects.Count}",
+            "",
+            "## Context sources"
         };
+
+        lines.AddRange(contextLines.Count == 0
+            ? ["- No indexed channel or attachment context was provided."]
+            : contextLines.Take(12).Select(context => $"- {context}"));
+        lines.Add("");
+        lines.Add("## Project snapshot");
 
         foreach (var project in projects)
         {
@@ -577,6 +657,29 @@ public class AgentJobProcessor(
         }
 
         AddArtifact(job.Id, stepId, AgentArtifactKind.Summary, "summary-subagent.md", string.Join(Environment.NewLine, lines));
+    }
+
+    private async Task<AgentRuntimeContext> LoadAgentContextAsync(AgentJob job, CancellationToken cancellationToken)
+    {
+        if (job.ChannelId.HasValue)
+        {
+            var contextResult = await aiContextService.BuildChannelContextAsync(
+                job.ChannelId.Value,
+                job.Goal,
+                job.AttachmentId,
+                cancellationToken);
+            if (!contextResult.Success || contextResult.Data is null)
+            {
+                throw new InvalidOperationException(contextResult.Message);
+            }
+
+            return new AgentRuntimeContext(contextResult.Data.ContextLines, contextResult.Data.Sources);
+        }
+
+        var ragContext = await LoadRagContextAsync(job, cancellationToken);
+        return new AgentRuntimeContext(
+            ragContext,
+            ragContext.Count == 0 ? [] : ["Indexed workspace context"]);
     }
 
     private async Task<IReadOnlyCollection<string>> LoadRagContextAsync(AgentJob job, CancellationToken cancellationToken)

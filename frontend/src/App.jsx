@@ -1,5 +1,5 @@
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
@@ -12,8 +12,9 @@ import Admin from "./pages/Admin.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Topbar from "./components/Topbar.jsx";
 import { auth } from "./api/taskflowApi.js";
-import { clearAuthStorage, getStoredUser, storeAuthUser } from "./api/authStorage.js";
+import { clearAuthStorage, getStoredUser, normalizeGlobalRole, storeAuthUser } from "./api/authStorage.js";
 import { useI18n } from "./i18n.jsx";
+import PageRoleContext from "./pageRoleContext.jsx";
 
 const routeMeta = {
   "/dashboard": { eyebrowKey: "dashboard.eyebrow", titleKey: "dashboard.title" },
@@ -26,6 +27,13 @@ const routeMeta = {
 };
 
 const SIDEBAR_COLLAPSED_KEY = "taskflow.sidebarCollapsed";
+
+function normalizeMemberContextRole(value, fallbackRole) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "manager" || normalized === "1") return "Manager";
+  if (normalized === "member" || normalized === "2") return "Member";
+  return fallbackRole;
+}
 
 function getPageMeta(pathname, search, t) {
   const path = `/${pathname.split("/").filter(Boolean)[0] || "dashboard"}`;
@@ -59,6 +67,8 @@ function ProtectedShell({ allowedRoles }) {
     checking: true,
     user: getStoredUser(),
   });
+  const [contextRole, setContextRole] = useState("");
+  const pageRoleContext = useMemo(() => ({ setContextRole }), [setContextRole]);
   const token = localStorage.getItem("token");
 
   function toggleSidebarCollapsed() {
@@ -81,6 +91,10 @@ function ProtectedShell({ allowedRoles }) {
   useEffect(() => {
     document.title = `${pageMeta.title} | TaskFlow`;
   }, [pageMeta.title]);
+
+  useEffect(() => {
+    setContextRole("");
+  }, [location.pathname]);
 
   useEffect(() => {
     let active = true;
@@ -122,7 +136,10 @@ function ProtectedShell({ allowedRoles }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  const userRole = session.user.globalRole || session.user.role || "Member";
+  const userRole = normalizeGlobalRole(session.user.globalRole || session.user.role);
+  const sidebarRole = userRole === "Administrator"
+    ? userRole
+    : normalizeMemberContextRole(contextRole, userRole);
 
   if (allowedRoles && !allowedRoles.includes(userRole)) {
     return <Navigate to="/dashboard" replace />;
@@ -134,11 +151,14 @@ function ProtectedShell({ allowedRoles }) {
         collapsed={isSidebarCollapsed}
         onToggleCollapsed={toggleSidebarCollapsed}
         user={session.user}
+        displayRole={sidebarRole}
       />
       <main className={`main-area ${isChannelRoute ? "channel-main-area" : ""}`}>
         <Topbar pageMeta={pageMeta} />
         <section className={`page-content ${isChannelRoute ? "channel-page-content" : ""}`}>
-          <Outlet />
+          <PageRoleContext.Provider value={pageRoleContext}>
+            <Outlet />
+          </PageRoleContext.Provider>
         </section>
       </main>
     </div>

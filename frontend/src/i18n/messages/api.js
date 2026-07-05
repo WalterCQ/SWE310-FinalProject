@@ -10,7 +10,8 @@ export const apiMessages = {
     "api.tooLarge": "The uploaded file is too large for this action.",
     "api.tooManyRequests": "Too many requests. Wait a moment and try again.",
     "api.serviceUnavailable": "The backend service is temporarily unavailable. Try again later.",
-    "api.serverError": "The backend encountered an error. Try again later or check the server logs."
+    "api.serverErrorWithEndpoint": "Server error {{statusCode}} while calling {{endpoint}}.",
+    "api.serverError": "Server error 500. The backend did not return a displayable error message."
   },
   "zh-CN": {
     "api.unreachable": "无法连接 API 服务器。请确认后端正在运行后重试。",
@@ -23,7 +24,8 @@ export const apiMessages = {
     "api.tooLarge": "上传文件过大，无法执行此操作。",
     "api.tooManyRequests": "请求过于频繁。请稍后再试。",
     "api.serviceUnavailable": "后端服务暂时不可用。请稍后再试。",
-    "api.serverError": "后端发生错误。请稍后重试，或检查服务器日志。"
+    "api.serverErrorWithEndpoint": "调用 {{endpoint}} 时发生服务器错误 {{statusCode}}。",
+    "api.serverError": "服务器错误 500，后端没有返回可展示的错误信息。"
   },
   "tg-Cyrl-TJ": {
     "api.unreachable": "Ба API server пайваст шудан нашуд. Боварӣ ҳосил кунед, ки backend кор мекунад ва дубора кӯшиш кунед.",
@@ -36,6 +38,7 @@ export const apiMessages = {
     "api.tooLarge": "Файли боргузоришуда барои ин амал хеле калон аст.",
     "api.tooManyRequests": "Дархостҳо хеле зиёданд. Каме интизор шавед ва дубора кӯшиш кунед.",
     "api.serviceUnavailable": "Хидмати backend муваққатан дастрас нест. Баъдтар кӯшиш кунед.",
-    "api.serverError": "Дар backend хато рух дод. Баъдтар кӯшиш кунед ё server logs-ро санҷед."
+    "api.serverErrorWithEndpoint": "Ҳангоми даъвати {{endpoint}} хатои server {{statusCode}} рух дод.",
+    "api.serverError": "Хатои server 500. Backend паёми қобили намоиш барнагардонд."
   }
 };

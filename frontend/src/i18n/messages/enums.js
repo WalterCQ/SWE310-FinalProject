@@ -59,13 +59,13 @@ export const enumMessages = {
     "mapper.noDescription": "暂无描述。",
     "mapper.notification": "通知",
     "enum.workspaceRole.administrator": "管理员",
-    "enum.workspaceRole.manager": "经理",
-    "enum.workspaceRole.member": "成员",
+    "enum.workspaceRole.manager": "管理者",
+    "enum.workspaceRole.member": "用户",
     "enum.projectRole.administrator": "管理员",
-    "enum.projectRole.manager": "经理",
-    "enum.projectRole.member": "成员",
+    "enum.projectRole.manager": "管理者",
+    "enum.projectRole.member": "用户",
     "enum.globalRole.administrator": "管理员",
-    "enum.globalRole.member": "成员"
+    "enum.globalRole.member": "用户"
   },
   "tg-Cyrl-TJ": {
     "enum.taskStatus.toDo": "Иҷронашуда",

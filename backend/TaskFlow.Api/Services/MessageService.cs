@@ -10,7 +10,8 @@ namespace TaskFlow.Api.Services;
 public class MessageService(
     AppDbContext dbContext,
     ICurrentUserService currentUser,
-    IPermissionService permissionService) : IMessageService
+    IPermissionService permissionService,
+    IAiCommandService aiCommandService) : IMessageService
 {
     private const int MaxUploadBytes = 20_000_000;
 
@@ -105,11 +106,20 @@ public class MessageService(
             AttachmentId = attachment.Id,
             Content = memoryStream.ToArray()
         };
+        attachment.Blob = blob;
 
         dbContext.Messages.Add(message);
         dbContext.ChannelAttachments.Add(attachment);
         dbContext.ChannelAttachmentBlobs.Add(blob);
         await dbContext.SaveChangesAsync();
+
+        var indexResult = await aiCommandService.IndexExistingChannelAttachmentAsync(attachment.Id);
+        if (!indexResult.Success)
+        {
+            attachment.Summary = $"AI indexing failed: {indexResult.Message}";
+            attachment.IsAiIndexed = false;
+            await dbContext.SaveChangesAsync();
+        }
 
         var savedMessage = await dbContext.Messages
             .Include(item => item.Sender)
