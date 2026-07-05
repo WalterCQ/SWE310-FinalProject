@@ -58,6 +58,10 @@ export const workspaces = {
   get: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}` }),
   create: (payload) => request({ method: "POST", url: "/api/workspaces", data: payload }),
   update: (workspaceId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}`, data: payload }),
+  members: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/members` }),
+  addMember: (workspaceId, payload) => request({ method: "POST", url: `/api/workspaces/${workspaceId}/members`, data: payload }),
+  updateMember: (workspaceId, userId, payload) => request({ method: "PUT", url: `/api/workspaces/${workspaceId}/members/${userId}`, data: payload }),
+  removeMember: (workspaceId, userId) => request({ method: "DELETE", url: `/api/workspaces/${workspaceId}/members/${userId}` }),
 };
 
 export const dashboard = {
@@ -71,6 +75,10 @@ export const projects = {
   get: (projectId) => request({ method: "GET", url: `/api/projects/${projectId}` }),
   update: (projectId, payload) => request({ method: "PUT", url: `/api/projects/${projectId}`, data: payload }),
   remove: (projectId) => request({ method: "DELETE", url: `/api/projects/${projectId}` }),
+  members: (projectId) => request({ method: "GET", url: `/api/projects/${projectId}/members` }),
+  addMember: (projectId, payload) => request({ method: "POST", url: `/api/projects/${projectId}/members`, data: payload }),
+  updateMember: (projectId, userId, payload) => request({ method: "PUT", url: `/api/projects/${projectId}/members/${userId}`, data: payload }),
+  removeMember: (projectId, userId) => request({ method: "DELETE", url: `/api/projects/${projectId}/members/${userId}` }),
 };
 
 export const tasks = {
@@ -82,12 +90,18 @@ export const tasks = {
   updateStatus: (taskId, status) => request({ method: "PUT", url: `/api/tasks/${taskId}/status`, data: { status } }),
   assign: (taskId, assigneeId) => request({ method: "PUT", url: `/api/tasks/${taskId}/assign`, data: { assigneeId } }),
   setDeadline: (taskId, deadlineUtc) => request({ method: "PUT", url: `/api/tasks/${taskId}/deadline`, data: { deadlineUtc } }),
+  comments: (taskId) => request({ method: "GET", url: `/api/tasks/${taskId}/comments` }),
+  addComment: (taskId, payload) => request({ method: "POST", url: `/api/tasks/${taskId}/comments`, data: payload }),
+  deleteComment: (taskId, commentId) => request({ method: "DELETE", url: `/api/tasks/${taskId}/comments/${commentId}` }),
 };
 
 export const channels = {
   listByWorkspace: (workspaceId) => request({ method: "GET", url: `/api/workspaces/${workspaceId}/channels` }),
   create: (workspaceId, payload) => request({ method: "POST", url: `/api/workspaces/${workspaceId}/channels`, data: payload }),
   messages: (channelId) => request({ method: "GET", url: `/api/channels/${channelId}/messages` }),
+  members: (channelId) => request({ method: "GET", url: `/api/channels/${channelId}/members` }),
+  addMember: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/members`, data: payload }),
+  removeMember: (channelId, userId) => request({ method: "DELETE", url: `/api/channels/${channelId}/members/${userId}` }),
 };
 
 export const messages = {

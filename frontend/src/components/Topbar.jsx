@@ -1,4 +1,4 @@
-import { ClipboardList, Globe2 } from "lucide-react";
+import { Bell, CalendarDays, ClipboardList, Globe2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import GlobalSearch from "./GlobalSearch.jsx";
 import { LOCALES, useI18n } from "../i18n.jsx";
@@ -31,6 +31,18 @@ export default function Topbar({ pageMeta }) {
           onClick={() => navigate("/tasks?view=mine")}
         >
           <ClipboardList size={18} />
+        </button>
+        <button
+          className="icon-button notification-dot"
+          aria-label={t("topbar.notifications")}
+          title={t("topbar.notifications")}
+          type="button"
+          onClick={() => navigate("/notifications")}
+        >
+          <Bell size={18} />
+        </button>
+        <button className="week-button" type="button" onClick={() => navigate("/dashboard")}>
+          <CalendarDays size={18} /> {t("topbar.week")}
         </button>
       </div>
     </header>

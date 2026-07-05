@@ -13,4 +13,7 @@ public interface ITaskService
     Task<ApiResponse<TaskResponse>> UpdateTaskStatusAsync(Guid taskId, UpdateTaskStatusRequest request);
     Task<ApiResponse<TaskResponse>> AssignTaskAsync(Guid taskId, AssignTaskRequest request);
     Task<ApiResponse<TaskResponse>> SetTaskDeadlineAsync(Guid taskId, SetTaskDeadlineRequest request);
+    Task<ApiResponse<IEnumerable<TaskCommentResponse>>> GetTaskCommentsAsync(Guid taskId);
+    Task<ApiResponse<TaskCommentResponse>> AddTaskCommentAsync(Guid taskId, CreateTaskCommentRequest request);
+    Task<ApiResponse<bool>> DeleteTaskCommentAsync(Guid taskId, Guid commentId);
 }

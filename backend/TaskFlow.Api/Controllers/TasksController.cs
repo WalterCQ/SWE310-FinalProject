@@ -58,4 +58,22 @@ public class TasksController(ITaskService taskService) : ControllerBase
     {
         return this.ToActionResult(await taskService.SetTaskDeadlineAsync(taskId, request));
     }
+
+    [HttpGet("tasks/{taskId:guid}/comments")]
+    public async Task<ActionResult> GetTaskComments(Guid taskId)
+    {
+        return this.ToActionResult(await taskService.GetTaskCommentsAsync(taskId));
+    }
+
+    [HttpPost("tasks/{taskId:guid}/comments")]
+    public async Task<ActionResult> AddTaskComment(Guid taskId, CreateTaskCommentRequest request)
+    {
+        return this.ToActionResult(await taskService.AddTaskCommentAsync(taskId, request));
+    }
+
+    [HttpDelete("tasks/{taskId:guid}/comments/{commentId:guid}")]
+    public async Task<ActionResult> DeleteTaskComment(Guid taskId, Guid commentId)
+    {
+        return this.ToActionResult(await taskService.DeleteTaskCommentAsync(taskId, commentId));
+    }
 }

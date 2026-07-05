@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { MessageSquare, Plus, Search, Send, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import Avatar from "../components/Avatar.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
@@ -10,7 +10,13 @@ import {
   tasks as tasksApi,
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
-import { asArray, mapProject, mapTask } from "../api/mappers.js";
+import {
+  asArray,
+  mapProject,
+  mapProjectMember,
+  mapTask,
+  mapTaskComment,
+} from "../api/mappers.js";
 import { enumPriorityKey, enumTaskStatusKey, useI18n } from "../i18n.jsx";
 
 const blankForm = {
@@ -18,6 +24,7 @@ const blankForm = {
   description: "",
   status: "0",
   priority: "1",
+  assigneeId: "",
   dueDate: "",
 };
 
@@ -65,12 +72,17 @@ export default function Tasks() {
   const isMyTasksView = searchParams.get("view") === "mine";
   const currentUserId = localStorage.getItem("userId") || "";
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState(selectedProjectParam);
+  const [projectMembers, setProjectMembers] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [commentsByTask, setCommentsByTask] = useState({});
+  const [commentDrafts, setCommentDrafts] = useState({});
+  const [search, setSearch] = useState(searchParams.get("search") || "");
   const [form, setForm] = useState(blankForm);
   const [errors, setErrors] = useState({});
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(false);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mutatingTaskId, setMutatingTaskId] = useState("");
   const [apiError, setApiError] = useState("");
@@ -79,12 +91,43 @@ export default function Tasks() {
     return Object.fromEntries(projects.map((project) => [project.id, project]));
   }, [projects]);
 
+  const filteredTasks = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return tasks;
+
+    return tasks.filter((task) => {
+      return [task.title, task.description, task.project, task.statusLabel, task.priorityLabel, task.assignee]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [tasks, search]);
+
   const groupedTasks = useMemo(() => {
     return statusColumns.map((status) => ({
       status,
-      items: tasks.filter((task) => task.statusLabel === status),
+      items: filteredTasks.filter((task) => task.statusLabel === status),
     }));
-  }, [tasks]);
+  }, [filteredTasks]);
+
+  useEffect(() => {
+    const nextSearch = searchParams.get("search") || "";
+    const nextProjectId = searchParams.get("projectId") || "";
+
+    if (nextSearch !== search) setSearch(nextSearch);
+    if (nextProjectId && nextProjectId !== selectedProjectId) setSelectedProjectId(nextProjectId);
+  }, [searchParams, search, selectedProjectId]);
+
+  useEffect(() => {
+    const nextParams = {};
+    if (isMyTasksView) {
+      nextParams.view = "mine";
+    } else if (selectedProjectId) {
+      nextParams.projectId = selectedProjectId;
+    }
+    if (selectedTaskId) nextParams.taskId = selectedTaskId;
+    if (search.trim()) nextParams.search = search.trim();
+    setSearchParams(nextParams, { replace: true });
+  }, [isMyTasksView, search, selectedProjectId, selectedTaskId, setSearchParams]);
 
   useEffect(() => {
     let active = true;
@@ -102,11 +145,11 @@ export default function Tasks() {
 
         if (active) {
           setProjects(mappedProjects);
-          setSelectedProjectId(
-            mappedProjects.some((project) => project.id === selectedProjectParam)
-              ? selectedProjectParam
-              : mappedProjects[0]?.id || ""
-          );
+          setSelectedProjectId((current) => {
+            if (mappedProjects.some((project) => project.id === current)) return current;
+            if (mappedProjects.some((project) => project.id === selectedProjectParam)) return selectedProjectParam;
+            return mappedProjects[0]?.id || "";
+          });
         }
       } catch (error) {
         if (active) setApiError(formatApiError(error));
@@ -120,7 +163,7 @@ export default function Tasks() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [selectedProjectParam]);
 
   useEffect(() => {
     if (!selectedProjectParam || projects.length === 0) return;
@@ -132,13 +175,46 @@ export default function Tasks() {
   useEffect(() => {
     let active = true;
 
+    async function loadMembers() {
+      if (!selectedProjectId) {
+        setProjectMembers([]);
+        return;
+      }
+
+      setLoadingMembers(true);
+
+      try {
+        const data = await projectsApi.members(selectedProjectId);
+        if (active) setProjectMembers(asArray(data).map(mapProjectMember));
+      } catch (error) {
+        if (active) setApiError(formatApiError(error));
+      } finally {
+        if (active) setLoadingMembers(false);
+      }
+    }
+
+    loadMembers();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    let active = true;
+
     async function loadTasks() {
       setLoadingTasks(true);
       setApiError("");
 
       try {
         const visibleTasks = await fetchVisibleTasks();
-        if (active) setTasks(visibleTasks);
+        const commentEntries = await fetchTaskComments(visibleTasks);
+
+        if (active) {
+          setTasks(visibleTasks);
+          setCommentsByTask(Object.fromEntries(commentEntries));
+        }
       } catch (error) {
         if (active) setApiError(formatApiError(error));
       } finally {
@@ -179,6 +255,19 @@ export default function Tasks() {
     return Object.keys(nextErrors).length === 0;
   }
 
+  async function fetchTaskComments(taskItems) {
+    return Promise.all(
+      taskItems.map(async (task) => {
+        try {
+          const comments = await tasksApi.comments(task.id);
+          return [task.id, asArray(comments).map(mapTaskComment)];
+        } catch {
+          return [task.id, []];
+        }
+      })
+    );
+  }
+
   async function fetchVisibleTasks(projectId = selectedProjectId) {
     if (isMyTasksView) {
       if (!currentUserId || projects.length === 0) return [];
@@ -197,7 +286,10 @@ export default function Tasks() {
   }
 
   async function loadProjectTasks(projectId = selectedProjectId) {
-    setTasks(await fetchVisibleTasks(projectId));
+    const visibleTasks = await fetchVisibleTasks(projectId);
+    const commentEntries = await fetchTaskComments(visibleTasks);
+    setTasks(visibleTasks);
+    setCommentsByTask(Object.fromEntries(commentEntries));
   }
 
   async function addTask(event) {
@@ -212,7 +304,7 @@ export default function Tasks() {
         title: form.title.trim(),
         description: form.description.trim(),
         priority: Number(form.priority),
-        assigneeId: null,
+        assigneeId: form.assigneeId || null,
         deadlineUtc: toDeadlineUtc(form.dueDate),
       });
 
@@ -257,6 +349,20 @@ export default function Tasks() {
     }
   }
 
+  async function updateTaskAssignee(task, assigneeId) {
+    setMutatingTaskId(task.id);
+    setApiError("");
+
+    try {
+      await tasksApi.assign(task.id, assigneeId || null);
+      await loadProjectTasks();
+    } catch (error) {
+      setApiError(formatApiError(error));
+    } finally {
+      setMutatingTaskId("");
+    }
+  }
+
   async function deleteTask(task) {
     setMutatingTaskId(task.id);
     setApiError("");
@@ -271,11 +377,54 @@ export default function Tasks() {
     }
   }
 
+  async function addComment(event, task) {
+    event.preventDefault();
+    const content = (commentDrafts[task.id] || "").trim();
+    if (!content) return;
+
+    setMutatingTaskId(task.id);
+    setApiError("");
+
+    try {
+      const comment = await tasksApi.addComment(task.id, { content });
+      setCommentsByTask((current) => ({
+        ...current,
+        [task.id]: [...(current[task.id] || []), mapTaskComment(comment)],
+      }));
+      setCommentDrafts((current) => ({ ...current, [task.id]: "" }));
+    } catch (error) {
+      setApiError(formatApiError(error));
+    } finally {
+      setMutatingTaskId("");
+    }
+  }
+
+  async function deleteComment(task, comment) {
+    setMutatingTaskId(task.id);
+    setApiError("");
+
+    try {
+      await tasksApi.deleteComment(task.id, comment.id);
+      setCommentsByTask((current) => ({
+        ...current,
+        [task.id]: (current[task.id] || []).filter((item) => item.id !== comment.id),
+      }));
+    } catch (error) {
+      setApiError(formatApiError(error));
+    } finally {
+      setMutatingTaskId("");
+    }
+  }
+
   return (
     <div className="page-stack">
       {isMyTasksView && (
         <div className="page-actions">
-          <button className="secondary-button" type="button" onClick={() => setSearchParams({})}>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setSearchParams(selectedProjectId ? { projectId: selectedProjectId } : {})}
+          >
             {t("task.viewAll")}
           </button>
         </div>
@@ -299,6 +448,7 @@ export default function Tasks() {
                   onChange={(event) => {
                     setSelectedProjectId(event.target.value);
                     setErrors({ ...errors, project: "" });
+                    setForm((current) => ({ ...current, assigneeId: "" }));
                   }}
                   disabled={loadingProjects || projects.length === 0}
                 >
@@ -344,6 +494,16 @@ export default function Tasks() {
                 </label>
 
                 <label>
+                  Assignee
+                  <select name="assigneeId" value={form.assigneeId} onChange={updateField} disabled={loadingMembers}>
+                    <option value="">Unassigned</option>
+                    {projectMembers.map((member) => (
+                      <option key={member.userId} value={member.userId}>{member.name}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
                   {t("task.dueDate")}
                   <input name="dueDate" type="date" value={form.dueDate} onChange={updateField} />
                   <ErrorMessage>{errors.dueDate}</ErrorMessage>
@@ -357,79 +517,143 @@ export default function Tasks() {
           </article>
         )}
 
-        <section className="kanban-grid">
-          {loadingProjects && <article className="panel">{t("task.loadingProjects")}</article>}
-          {!loadingProjects && projects.length === 0 && <article className="panel">{t("task.noProjects")}</article>}
+        <section className="kanban-area">
+          <div className="toolbar task-toolbar">
+            <div className="search-box inline">
+              <Search size={18} />
+              <input
+                placeholder="Search tasks, assignees, priority..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+            <span>{filteredTasks.length} tasks</span>
+          </div>
 
-          {!loadingProjects && projects.length > 0 && groupedTasks.map((column) => (
-            <article className="panel kanban-column" key={column.status}>
-              <div className="panel-header">
-                <h3>{t(enumTaskStatusKey(column.status))}</h3>
-                <span>{column.items.length}</span>
-              </div>
-              <div className="kanban-list">
-                {loadingTasks && column.status === "To Do" && <p>{t("task.loadingTasks")}</p>}
-                {!loadingTasks && column.items.length === 0 && <p>{t("task.noTasks")}</p>}
-                {!loadingTasks && column.items.map((task) => (
-                  <div
-                    className={`task-card ${task.id === selectedTaskId ? "target-highlight" : ""}`}
-                    id={`task-${task.id}`}
-                    key={task.id}
-                  >
-                    <div className="task-card-top">
-                      <h4>{task.title}</h4>
-                      <StatusBadge variant={task.priorityLabel}>{t(enumPriorityKey(task.priorityLabel))}</StatusBadge>
-                    </div>
-                    <p>{task.description}</p>
-                    <div className="task-meta">
-                      <span>{task.project}</span>
-                      <span>{task.deadlineLabel}</span>
-                    </div>
-                    {task.assigneeId && (
+          <section className="kanban-grid">
+            {loadingProjects && <article className="panel">{t("task.loadingProjects")}</article>}
+            {!loadingProjects && projects.length === 0 && <article className="panel">{t("task.noProjects")}</article>}
+
+            {!loadingProjects && projects.length > 0 && groupedTasks.map((column) => (
+              <article className="panel kanban-column" key={column.status}>
+                <div className="panel-header">
+                  <h3>{t(enumTaskStatusKey(column.status))}</h3>
+                  <span>{column.items.length}</span>
+                </div>
+                <div className="kanban-list">
+                  {loadingTasks && column.status === "To Do" && <p>{t("task.loadingTasks")}</p>}
+                  {!loadingTasks && column.items.length === 0 && <p>{t("task.noTasks")}</p>}
+                  {!loadingTasks && column.items.map((task) => (
+                    <div
+                      className={`task-card ${task.id === selectedTaskId ? "target-highlight" : ""}`}
+                      id={`task-${task.id}`}
+                      key={task.id}
+                    >
+                      <div className="task-card-top">
+                        <h4>{task.title}</h4>
+                        <StatusBadge variant={task.priorityLabel}>{t(enumPriorityKey(task.priorityLabel))}</StatusBadge>
+                      </div>
+                      <p>{task.description}</p>
+                      <div className="task-meta">
+                        <span>{task.project}</span>
+                        <span>{task.deadlineLabel}</span>
+                      </div>
                       <div className="task-assignee">
-                        <Avatar className="mini-avatar" seed={task.assigneeId} name={task.assignee} ariaHidden />
+                        {task.assigneeId && (
+                          <Avatar className="mini-avatar" seed={task.assigneeId} name={task.assignee} ariaHidden />
+                        )}
                         <span className="person-name">{task.assignee}</span>
                       </div>
-                    )}
-                    <div className="task-actions">
-                      <label>
-                        <span>{t("task.status")}</span>
-                        <select
-                          value={String(task.status)}
-                          onChange={(event) => updateTaskStatus(task, event.target.value)}
+                      <div className="task-actions">
+                        <label>
+                          <span>{t("task.status")}</span>
+                          <select
+                            value={String(task.status)}
+                            onChange={(event) => updateTaskStatus(task, event.target.value)}
+                            disabled={mutatingTaskId === task.id}
+                          >
+                            {statusOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>{t("task.priority")}</span>
+                          <select
+                            value={String(task.priority)}
+                            onChange={(event) => updateTaskPriority(task, event.target.value)}
+                            disabled={mutatingTaskId === task.id}
+                          >
+                            {priorityOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Assignee</span>
+                          <select
+                            value={task.assigneeId || ""}
+                            onChange={(event) => updateTaskAssignee(task, event.target.value)}
+                            disabled={mutatingTaskId === task.id || loadingMembers}
+                          >
+                            <option value="">Unassigned</option>
+                            {projectMembers.map((member) => (
+                              <option key={member.userId} value={member.userId}>{member.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          onClick={() => deleteTask(task)}
                           disabled={mutatingTaskId === task.id}
                         >
-                          {statusOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{t(enumTaskStatusKey(option.label))}</option>
+                          <Trash2 size={14} /> {t("task.delete")}
+                        </button>
+                      </div>
+
+                      <div className="comment-box">
+                        <div className="comment-header">
+                          <span><MessageSquare size={14} /> Comments</span>
+                          <strong>{(commentsByTask[task.id] || []).length}</strong>
+                        </div>
+                        <div className="comment-list">
+                          {(commentsByTask[task.id] || []).map((comment) => (
+                            <div className="comment-row" key={comment.id}>
+                              <div>
+                                <strong>{comment.authorName}</strong>
+                                <p>{comment.content}</p>
+                                <span>{comment.createdAt}</span>
+                              </div>
+                              <button
+                                className="danger-button icon-only"
+                                type="button"
+                                aria-label="Delete comment"
+                                onClick={() => deleteComment(task, comment)}
+                                disabled={mutatingTaskId === task.id}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
                           ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>{t("task.priority")}</span>
-                        <select
-                          value={String(task.priority)}
-                          onChange={(event) => updateTaskPriority(task, event.target.value)}
-                          disabled={mutatingTaskId === task.id}
-                        >
-                          {priorityOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{t(enumPriorityKey(option.label))}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <button
-                        className="danger-button"
-                        type="button"
-                        onClick={() => deleteTask(task)}
-                        disabled={mutatingTaskId === task.id}
-                      >
-                        <Trash2 size={14} /> {t("task.delete")}
-                      </button>
+                        </div>
+                        <form className="comment-form" onSubmit={(event) => addComment(event, task)}>
+                          <input
+                            value={commentDrafts[task.id] || ""}
+                            onChange={(event) => setCommentDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
+                            placeholder="Add a comment"
+                          />
+                          <button type="submit" disabled={mutatingTaskId === task.id || !(commentDrafts[task.id] || "").trim()}>
+                            <Send size={14} />
+                          </button>
+                        </form>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </article>
-          ))}
+                  ))}
+                </div>
+              </article>
+            ))}
+          </section>
         </section>
       </section>
     </div>

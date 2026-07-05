@@ -9,8 +9,11 @@ import {
   Image,
   ListTodo,
   Paperclip,
+  Plus,
   Send,
   Sparkles,
+  Trash2,
+  UserPlus,
   Wifi,
   WifiOff,
   X,
@@ -28,6 +31,7 @@ import {
   asArray,
   formatDateTime,
   mapChannel,
+  mapChannelMember,
   mapMessage,
   mapWorkspace,
   selectPrimaryWorkspace,
@@ -97,9 +101,17 @@ export default function Channels() {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
   const selectedChannelId = searchParams.get("channelId") || "";
+  const [workspaceId, setWorkspaceId] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [channels, setChannels] = useState([]);
   const [activeChannelId, setActiveChannelId] = useState("");
+  const [channelFormOpen, setChannelFormOpen] = useState(false);
+  const [channelForm, setChannelForm] = useState({ name: "", description: "", isPrivate: false });
+  const [channelSaving, setChannelSaving] = useState(false);
+  const [channelMembers, setChannelMembers] = useState([]);
+  const [memberEmail, setMemberEmail] = useState("");
+  const [memberLoading, setMemberLoading] = useState(false);
+  const [memberSaving, setMemberSaving] = useState(false);
   const [messages, setMessages] = useState([]);
   const [aiMessages, setAiMessages] = useState([]);
   const [attachments, setAttachments] = useState([]);
@@ -149,6 +161,7 @@ export default function Channels() {
 
         if (!workspace) {
           if (active) {
+            setWorkspaceId("");
             setWorkspaceName("");
             setChannels([]);
             setActiveChannelId("");
@@ -159,6 +172,7 @@ export default function Channels() {
         const channelItems = asArray(await channelsApi.listByWorkspace(workspace.id)).map(mapChannel);
 
         if (active) {
+          setWorkspaceId(workspace.id);
           setWorkspaceName(workspace.name);
           setChannels(channelItems);
           setActiveChannelId(
@@ -246,6 +260,35 @@ export default function Channels() {
     }
 
     loadAttachments();
+
+    return () => {
+      active = false;
+    };
+  }, [activeChannelId]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadMembers() {
+      if (!activeChannelId) {
+        setChannelMembers([]);
+        return;
+      }
+
+      setMemberLoading(true);
+      setChatError("");
+
+      try {
+        const memberItems = asArray(await channelsApi.members(activeChannelId)).map(mapChannelMember);
+        if (active) setChannelMembers(memberItems);
+      } catch (apiError) {
+        if (active) setChatError(formatApiError(apiError));
+      } finally {
+        if (active) setMemberLoading(false);
+      }
+    }
+
+    loadMembers();
 
     return () => {
       active = false;
@@ -508,6 +551,89 @@ export default function Channels() {
     }
   }
 
+  async function reloadChannelMembers(channelId = activeChannelId) {
+    if (!channelId) return;
+
+    setMemberLoading(true);
+    setChatError("");
+
+    try {
+      const memberItems = asArray(await channelsApi.members(channelId)).map(mapChannelMember);
+      setChannelMembers(memberItems);
+    } catch (apiError) {
+      setChatError(formatApiError(apiError));
+    } finally {
+      setMemberLoading(false);
+    }
+  }
+
+  async function createChannel(event) {
+    event.preventDefault();
+    if (!workspaceId || !channelForm.name.trim()) return;
+
+    setChannelSaving(true);
+    setLoadError("");
+
+    try {
+      const createdChannel = await channelsApi.create(workspaceId, {
+        name: channelForm.name.trim(),
+        description: channelForm.description.trim() || null,
+        isPrivate: channelForm.isPrivate,
+      });
+      const mappedChannel = mapChannel(createdChannel);
+      setChannels((current) => [...current, mappedChannel].sort((left, right) => left.name.localeCompare(right.name)));
+      setActiveChannelId(mappedChannel.id);
+      setChannelForm({ name: "", description: "", isPrivate: false });
+      setChannelFormOpen(false);
+    } catch (apiError) {
+      setLoadError(formatApiError(apiError));
+    } finally {
+      setChannelSaving(false);
+    }
+  }
+
+  async function addChannelMember(event) {
+    event.preventDefault();
+    if (!activeChannelId || !memberEmail.trim()) return;
+
+    setMemberSaving(true);
+    setChatError("");
+
+    try {
+      await channelsApi.addMember(activeChannelId, { email: memberEmail.trim() });
+      setMemberEmail("");
+      await reloadChannelMembers();
+      setChannels((current) => current.map((channel) => (
+        channel.id === activeChannelId
+          ? { ...channel, memberCount: channel.memberCount + 1 }
+          : channel
+      )));
+    } catch (apiError) {
+      setChatError(formatApiError(apiError));
+    } finally {
+      setMemberSaving(false);
+    }
+  }
+
+  async function removeChannelMember(member) {
+    setMemberSaving(true);
+    setChatError("");
+
+    try {
+      await channelsApi.removeMember(activeChannelId, member.userId);
+      await reloadChannelMembers();
+      setChannels((current) => current.map((channel) => (
+        channel.id === activeChannelId
+          ? { ...channel, memberCount: Math.max(0, channel.memberCount - 1) }
+          : channel
+      )));
+    } catch (apiError) {
+      setChatError(formatApiError(apiError));
+    } finally {
+      setMemberSaving(false);
+    }
+  }
+
   const activeChannel = channels.find((channel) => channel.id === activeChannelId);
   const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId);
   const connectionLabel = t(`channel.${connectionStatus}`);
@@ -533,29 +659,112 @@ export default function Channels() {
       )}
 
       {!loading && !loadError && workspaceName && (
-        <section className="channel-workspace">
-          <aside className="panel channel-list" aria-label={t("channel.workspaceList")}>
-            <div className="channel-list-header">
-              <span>{workspaceName}</span>
-              <strong>{channels.length}</strong>
+        <section className="chat-layout">
+          <aside className="panel channel-sidebar" aria-label={t("channel.workspaceList")}>
+            <div className="member-manager-header">
+              <strong>{workspaceName}</strong>
+              <button
+                className="secondary-button compact"
+                type="button"
+                onClick={() => setChannelFormOpen((open) => !open)}
+              >
+                <Plus size={14} /> Channel
+              </button>
             </div>
-            {channels.length === 0 && (
-              <div className="chat-empty compact">
-                <strong>{t("channel.empty")}</strong>
-                <p>{t("channel.emptyHelp")}</p>
+
+            {channelFormOpen && (
+              <form className="task-form compact-form" onSubmit={createChannel}>
+                <label>
+                  Name
+                  <input
+                    value={channelForm.name}
+                    onChange={(event) => setChannelForm({ ...channelForm, name: event.target.value })}
+                    placeholder="demo-updates"
+                  />
+                </label>
+                <label>
+                  Description
+                  <input
+                    value={channelForm.description}
+                    onChange={(event) => setChannelForm({ ...channelForm, description: event.target.value })}
+                    placeholder="What is this channel for?"
+                  />
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={channelForm.isPrivate}
+                    onChange={(event) => setChannelForm({ ...channelForm, isPrivate: event.target.checked })}
+                  />
+                  Private channel
+                </label>
+                <button className="primary-button compact" type="submit" disabled={channelSaving || !channelForm.name.trim()}>
+                  <Plus size={16} /> {channelSaving ? "Creating..." : "Create"}
+                </button>
+              </form>
+            )}
+
+            <div className="channel-list">
+              {channels.length === 0 && (
+                <div className="chat-empty compact">
+                  <strong>{t("channel.empty")}</strong>
+                  <p>{t("channel.emptyHelp")}</p>
+                </div>
+              )}
+              {channels.map((channel) => (
+                <button
+                  key={channel.id}
+                  className={channel.id === activeChannelId ? "active" : ""}
+                  onClick={() => setActiveChannelId(channel.id)}
+                  type="button"
+                >
+                  <span className="channel-button-text"><Hash size={16} /> {channel.name}</span>
+                  <span className="channel-meta">{channel.memberCount}</span>
+                </button>
+              ))}
+            </div>
+
+            {activeChannel && (
+              <div className="member-manager compact-members">
+                <div className="member-manager-header">
+                  <strong>Channel members</strong>
+                  <button className="secondary-button compact" type="button" onClick={() => reloadChannelMembers()}>
+                    Refresh
+                  </button>
+                </div>
+                {memberLoading && <p>Loading members...</p>}
+                {!memberLoading && channelMembers.length === 0 && <p>No members loaded.</p>}
+                <div className="member-list">
+                  {channelMembers.map((member) => (
+                    <div className="member-row compact" key={member.userId}>
+                      <div>
+                        <strong>{member.name}</strong>
+                        <span>{member.email}</span>
+                      </div>
+                      <button
+                        className="danger-button icon-only"
+                        type="button"
+                        aria-label={`Remove ${member.name}`}
+                        onClick={() => removeChannelMember(member)}
+                        disabled={memberSaving}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <form className="member-add-row compact-add" onSubmit={addChannelMember}>
+                  <input
+                    value={memberEmail}
+                    onChange={(event) => setMemberEmail(event.target.value)}
+                    placeholder="member@email.com"
+                  />
+                  <button className="primary-button compact" type="submit" disabled={memberSaving || !memberEmail.trim()}>
+                    <UserPlus size={15} /> Add
+                  </button>
+                </form>
               </div>
             )}
-            {channels.map((channel) => (
-              <button
-                key={channel.id}
-                className={channel.id === activeChannelId ? "active" : ""}
-                onClick={() => setActiveChannelId(channel.id)}
-                type="button"
-              >
-                <span className="channel-button-text"><Hash size={16} /> {channel.name}</span>
-                <span className="channel-meta">{channel.memberCount}</span>
-              </button>
-            ))}
           </aside>
 
           <article className="panel chat-panel">

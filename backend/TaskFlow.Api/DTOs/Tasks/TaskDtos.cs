@@ -44,6 +44,12 @@ public class SetTaskDeadlineRequest
     public DateTime? DeadlineUtc { get; set; }
 }
 
+public class CreateTaskCommentRequest
+{
+    [Required, StringLength(2000)]
+    public string Content { get; set; } = string.Empty;
+}
+
 public class TaskResponse
 {
     public Guid Id { get; set; }
@@ -59,4 +65,14 @@ public class TaskResponse
     public DateTime CreatedAtUtc { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
     public DateTime? CompletedAtUtc { get; set; }
+}
+
+public class TaskCommentResponse
+{
+    public Guid Id { get; set; }
+    public Guid TaskItemId { get; set; }
+    public Guid AuthorId { get; set; }
+    public string AuthorName { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; }
 }

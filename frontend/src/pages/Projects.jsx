@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Trash2, UserPlus } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import Avatar from "../components/Avatar.jsx";
@@ -9,7 +9,7 @@ import {
   projects as projectsApi,
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
-import { asArray, mapProject, mapWorkspace } from "../api/mappers.js";
+import { asArray, mapProject, mapProjectMember, mapWorkspace } from "../api/mappers.js";
 import { enumProjectStatusKey, useI18n } from "../i18n.jsx";
 
 const blankForm = {
@@ -18,6 +18,19 @@ const blankForm = {
   description: "",
   dueDate: "",
 };
+const memberBlankForm = { email: "", roleInProject: "1" };
+const projectRoleOptions = [
+  { value: "0", label: "Project Manager" },
+  { value: "1", label: "Contributor" },
+  { value: "2", label: "Viewer" },
+];
+const statusFilterOptions = [
+  { value: "all", label: "All statuses" },
+  { value: "0", label: "Planned" },
+  { value: "1", label: "Active" },
+  { value: "2", label: "Completed" },
+  { value: "3", label: "Archived" },
+];
 
 function toDeadlineUtc(dateValue) {
   if (!dateValue) return null;
@@ -26,11 +39,18 @@ function toDeadlineUtc(dateValue) {
 
 export default function Projects() {
   const { t } = useI18n();
-  const [searchParams] = useSearchParams();
-  const selectedProjectId = searchParams.get("projectId") || "";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedProjectParam = searchParams.get("projectId") || "";
   const [workspaces, setWorkspaces] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [search, setSearch] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState(selectedProjectParam);
+  const [members, setMembers] = useState([]);
+  const [memberForm, setMemberForm] = useState(memberBlankForm);
+  const [memberLoading, setMemberLoading] = useState(false);
+  const [memberSaving, setMemberSaving] = useState(false);
+  const [memberError, setMemberError] = useState("");
+  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "all");
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(blankForm);
   const [formErrors, setFormErrors] = useState({});
@@ -38,6 +58,27 @@ export default function Projects() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [createError, setCreateError] = useState("");
+
+  const selectedProject = useMemo(() => {
+    return projects.find((project) => project.id === selectedProjectId);
+  }, [projects, selectedProjectId]);
+
+  useEffect(() => {
+    const nextSearch = searchParams.get("search") || "";
+    const nextStatus = searchParams.get("status") || "all";
+    const nextProjectId = searchParams.get("projectId") || "";
+    if (nextSearch !== search) setSearch(nextSearch);
+    if (nextStatus !== statusFilter) setStatusFilter(nextStatus);
+    if (nextProjectId && nextProjectId !== selectedProjectId) setSelectedProjectId(nextProjectId);
+  }, [searchParams, search, selectedProjectId, statusFilter]);
+
+  useEffect(() => {
+    const nextParams = {};
+    if (selectedProjectId) nextParams.projectId = selectedProjectId;
+    if (search.trim()) nextParams.search = search.trim();
+    if (statusFilter !== "all") nextParams.status = statusFilter;
+    setSearchParams(nextParams, { replace: true });
+  }, [search, selectedProjectId, statusFilter, setSearchParams]);
 
   useEffect(() => {
     let active = true;
@@ -57,6 +98,9 @@ export default function Projects() {
         if (active) {
           setWorkspaces(mappedWorkspaces);
           setProjects(mappedProjects);
+          setSelectedProjectId((current) => mappedProjects.some((project) => project.id === current)
+            ? current
+            : mappedProjects[0]?.id || "");
           setForm((current) => {
             const hasWorkspace = mappedWorkspaces.some((workspace) => workspace.id === current.workspaceId);
             return hasWorkspace ? current : { ...current, workspaceId: mappedWorkspaces[0]?.id || "" };
@@ -85,6 +129,35 @@ export default function Projects() {
     });
   }, [selectedProjectId, loading, projects]);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadMembers() {
+      if (!selectedProjectId) {
+        setMembers([]);
+        return;
+      }
+
+      setMemberLoading(true);
+      setMemberError("");
+
+      try {
+        const data = await projectsApi.members(selectedProjectId);
+        if (active) setMembers(asArray(data).map(mapProjectMember));
+      } catch (apiError) {
+        if (active) setMemberError(formatApiError(apiError));
+      } finally {
+        if (active) setMemberLoading(false);
+      }
+    }
+
+    loadMembers();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedProjectId]);
+
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
     setFormErrors({ ...formErrors, [event.target.name]: "" });
@@ -98,6 +171,22 @@ export default function Projects() {
 
     setFormErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
+  }
+
+  async function loadProjectMembers(projectId = selectedProjectId) {
+    if (!projectId) return;
+
+    setMemberLoading(true);
+    setMemberError("");
+
+    try {
+      const data = await projectsApi.members(projectId);
+      setMembers(asArray(data).map(mapProjectMember));
+    } catch (apiError) {
+      setMemberError(formatApiError(apiError));
+    } finally {
+      setMemberLoading(false);
+    }
   }
 
   async function createProject(event) {
@@ -114,9 +203,11 @@ export default function Projects() {
         deadlineUtc: toDeadlineUtc(form.dueDate),
       });
       const workspaceId = form.workspaceId;
+      const mappedProject = mapProject(createdProject);
 
-      setProjects((current) => [...current, mapProject(createdProject)]
+      setProjects((current) => [...current, mappedProject]
         .sort((left, right) => left.name.localeCompare(right.name)));
+      setSelectedProjectId(mappedProject.id);
       setForm({ ...blankForm, workspaceId });
       setFormOpen(false);
     } catch (apiError) {
@@ -126,16 +217,73 @@ export default function Projects() {
     }
   }
 
+  async function addProjectMember(event) {
+    event.preventDefault();
+    if (!selectedProjectId || !memberForm.email.trim()) {
+      setMemberError("Enter the email of a registered workspace member.");
+      return;
+    }
+
+    setMemberSaving(true);
+    setMemberError("");
+
+    try {
+      await projectsApi.addMember(selectedProjectId, {
+        email: memberForm.email.trim(),
+        roleInProject: Number(memberForm.roleInProject),
+      });
+      setMemberForm(memberBlankForm);
+      await loadProjectMembers();
+    } catch (apiError) {
+      setMemberError(formatApiError(apiError));
+    } finally {
+      setMemberSaving(false);
+    }
+  }
+
+  async function updateProjectMemberRole(member, roleInProject) {
+    setMemberSaving(true);
+    setMemberError("");
+
+    try {
+      await projectsApi.updateMember(selectedProjectId, member.userId, {
+        roleInProject: Number(roleInProject),
+      });
+      await loadProjectMembers();
+    } catch (apiError) {
+      setMemberError(formatApiError(apiError));
+    } finally {
+      setMemberSaving(false);
+    }
+  }
+
+  async function removeProjectMember(member) {
+    setMemberSaving(true);
+    setMemberError("");
+
+    try {
+      await projectsApi.removeMember(selectedProjectId, member.userId);
+      await loadProjectMembers();
+    } catch (apiError) {
+      setMemberError(formatApiError(apiError));
+    } finally {
+      setMemberSaving(false);
+    }
+  }
+
   const visibleProjects = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return projects;
 
     return projects.filter((project) => {
-      return [project.name, project.owner, project.statusLabel]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(query));
+      const matchesQuery = !query
+        || [project.name, project.owner, project.statusLabel]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(query));
+      const matchesStatus = statusFilter === "all" || String(project.status) === statusFilter;
+
+      return matchesQuery && matchesStatus;
     });
-  }, [projects, search]);
+  }, [projects, search, statusFilter]);
 
   return (
     <div className="page-stack">
@@ -237,7 +385,15 @@ export default function Projects() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-          <button className="secondary-button">{t("project.filter")}</button>
+          <select
+            className="control-select"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            {statusFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
         </div>
 
         {loading && <p>{t("project.loading")}</p>}
@@ -254,15 +410,17 @@ export default function Projects() {
                   <th>{t("project.column.status")}</th>
                   <th>{t("project.column.progress")}</th>
                   <th>{t("project.column.owner")}</th>
+                  <th>Members</th>
                   <th>{t("project.dueDate")}</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleProjects.map((project) => (
                   <tr
-                    className={project.id === selectedProjectId ? "target-highlight" : ""}
                     id={`project-${project.id}`}
                     key={project.id}
+                    className={project.id === selectedProjectId ? "selected-row target-highlight" : ""}
+                    onClick={() => setSelectedProjectId(project.id)}
                   >
                     <td>{project.name}</td>
                     <td><StatusBadge variant={project.statusLabel}>{t(enumProjectStatusKey(project.statusLabel))}</StatusBadge></td>
@@ -278,6 +436,7 @@ export default function Projects() {
                         <span className="person-name">{project.owner}</span>
                       </span>
                     </td>
+                    <td>{project.memberCount || 0}</td>
                     <td>{project.deadlineLabel}</td>
                   </tr>
                 ))}
@@ -286,6 +445,75 @@ export default function Projects() {
           </div>
         )}
       </section>
+
+      {selectedProject && (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Project members</h3>
+              <span>{selectedProject.name}</span>
+            </div>
+            <button className="secondary-button compact" type="button" onClick={() => loadProjectMembers()}>
+              Refresh
+            </button>
+          </div>
+
+          {memberError && <div className="error-text">{memberError}</div>}
+          {memberLoading && <p>Loading members...</p>}
+
+          <div className="member-list wide">
+            {!memberLoading && members.length === 0 && <p>No project members found.</p>}
+            {members.map((member) => (
+              <div className="member-row" key={member.userId}>
+                <div>
+                  <strong>{member.name}</strong>
+                  <span>{member.email}</span>
+                </div>
+                <select
+                  value={String(member.roleInProject)}
+                  onChange={(event) => updateProjectMemberRole(member, event.target.value)}
+                  disabled={memberSaving}
+                >
+                  {projectRoleOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button
+                  className="danger-button icon-only"
+                  type="button"
+                  aria-label={`Remove ${member.name}`}
+                  onClick={() => removeProjectMember(member)}
+                  disabled={memberSaving}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <form className="member-add-row wide" onSubmit={addProjectMember}>
+            <input
+              value={memberForm.email}
+              onChange={(event) => {
+                setMemberForm({ ...memberForm, email: event.target.value });
+                setMemberError("");
+              }}
+              placeholder="workspace.member@email.com"
+            />
+            <select
+              value={memberForm.roleInProject}
+              onChange={(event) => setMemberForm({ ...memberForm, roleInProject: event.target.value })}
+            >
+              {projectRoleOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <button className="primary-button compact" type="submit" disabled={memberSaving}>
+              <UserPlus size={16} /> Add to project
+            </button>
+          </form>
+        </section>
+      )}
     </div>
   );
 }

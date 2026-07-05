@@ -51,4 +51,22 @@ public class ChannelsController(
     {
         return this.ToActionResult(await aiCommandService.HandleChannelMentionAsync(channelId, request, cancellationToken));
     }
+
+    [HttpGet("channels/{channelId:guid}/members")]
+    public async Task<ActionResult> GetChannelMembers(Guid channelId)
+    {
+        return this.ToActionResult(await channelService.GetChannelMembersAsync(channelId));
+    }
+
+    [HttpPost("channels/{channelId:guid}/members")]
+    public async Task<ActionResult> AddChannelMember(Guid channelId, AddChannelMemberRequest request)
+    {
+        return this.ToActionResult(await channelService.AddChannelMemberAsync(channelId, request));
+    }
+
+    [HttpDelete("channels/{channelId:guid}/members/{userId:guid}")]
+    public async Task<ActionResult> RemoveChannelMember(Guid channelId, Guid userId)
+    {
+        return this.ToActionResult(await channelService.RemoveChannelMemberAsync(channelId, userId));
+    }
 }

@@ -40,6 +40,25 @@ const projectStatusLabels = {
   archived: "Archived",
 };
 
+const workspaceRoleLabels = {
+  0: "Owner",
+  owner: "Owner",
+  1: "Admin",
+  admin: "Admin",
+  2: "Member",
+  member: "Member",
+};
+
+const projectRoleLabels = {
+  0: "Project Manager",
+  projectmanager: "Project Manager",
+  "project manager": "Project Manager",
+  1: "Contributor",
+  contributor: "Contributor",
+  2: "Viewer",
+  viewer: "Viewer",
+};
+
 const notificationTypeLabels = {
   0: "General",
   general: "General",
@@ -68,6 +87,14 @@ export function mapPriority(value) {
 
 export function mapProjectStatus(value) {
   return projectStatusLabels[enumKey(value)] || "Planned";
+}
+
+export function mapWorkspaceRole(value) {
+  return workspaceRoleLabels[enumKey(value)] || "Member";
+}
+
+export function mapProjectRole(value) {
+  return projectRoleLabels[enumKey(value)] || "Contributor";
 }
 
 export function mapNotificationType(value) {
@@ -189,6 +216,56 @@ export function mapChannel(channel) {
     description: channel.description || "",
     memberCount: channel.memberCount ?? 0,
     createdAt: formatDateTime(channel.createdAtUtc),
+  };
+}
+
+export function mapWorkspaceMember(member) {
+  const role = typeof member.role === "undefined" ? 2 : member.role;
+
+  return {
+    ...member,
+    userId: member.userId,
+    name: member.name || member.email || shortId(member.userId),
+    email: member.email || "",
+    role,
+    roleLabel: mapWorkspaceRole(role),
+    joinedAt: formatDateTime(member.joinedAtUtc),
+  };
+}
+
+export function mapProjectMember(member) {
+  const roleInProject = typeof member.roleInProject === "undefined" ? 1 : member.roleInProject;
+
+  return {
+    ...member,
+    userId: member.userId,
+    name: member.name || member.email || shortId(member.userId),
+    email: member.email || "",
+    roleInProject,
+    roleLabel: mapProjectRole(roleInProject),
+    joinedAt: formatDateTime(member.joinedAtUtc),
+  };
+}
+
+export function mapChannelMember(member) {
+  return {
+    ...member,
+    userId: member.userId,
+    name: member.name || member.email || shortId(member.userId),
+    email: member.email || "",
+    joinedAt: formatDateTime(member.joinedAtUtc),
+  };
+}
+
+export function mapTaskComment(comment) {
+  return {
+    ...comment,
+    id: comment.id,
+    taskItemId: comment.taskItemId,
+    authorId: comment.authorId,
+    authorName: comment.authorName || shortId(comment.authorId),
+    content: comment.content || "",
+    createdAt: formatDateTime(comment.createdAtUtc),
   };
 }
 

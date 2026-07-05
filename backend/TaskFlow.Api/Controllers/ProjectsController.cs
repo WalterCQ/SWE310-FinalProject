@@ -40,4 +40,28 @@ public class ProjectsController(IProjectService projectService) : ControllerBase
     {
         return this.ToActionResult(await projectService.DeleteProjectAsync(projectId));
     }
+
+    [HttpGet("projects/{projectId:guid}/members")]
+    public async Task<ActionResult> GetProjectMembers(Guid projectId)
+    {
+        return this.ToActionResult(await projectService.GetProjectMembersAsync(projectId));
+    }
+
+    [HttpPost("projects/{projectId:guid}/members")]
+    public async Task<ActionResult> AddProjectMember(Guid projectId, AddProjectMemberRequest request)
+    {
+        return this.ToActionResult(await projectService.AddProjectMemberAsync(projectId, request));
+    }
+
+    [HttpPut("projects/{projectId:guid}/members/{userId:guid}")]
+    public async Task<ActionResult> UpdateProjectMemberRole(Guid projectId, Guid userId, UpdateProjectMemberRoleRequest request)
+    {
+        return this.ToActionResult(await projectService.UpdateProjectMemberRoleAsync(projectId, userId, request));
+    }
+
+    [HttpDelete("projects/{projectId:guid}/members/{userId:guid}")]
+    public async Task<ActionResult> RemoveProjectMember(Guid projectId, Guid userId)
+    {
+        return this.ToActionResult(await projectService.RemoveProjectMemberAsync(projectId, userId));
+    }
 }

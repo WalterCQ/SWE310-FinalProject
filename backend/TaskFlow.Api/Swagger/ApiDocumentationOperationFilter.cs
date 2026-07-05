@@ -130,6 +130,26 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Updates workspace name and description after backend validation. Only workspace owners, workspace admins, or global admins can update it.",
                 StatusCodes.Status200OK,
                 typeof(WorkspaceResponse)),
+            ["Workspaces.GetWorkspaceMembers"] = new(
+                "List workspace members",
+                "Returns the users who belong to a workspace, including each user's workspace role and join timestamp. Requires workspace access.",
+                StatusCodes.Status200OK,
+                typeof(IEnumerable<WorkspaceMemberResponse>)),
+            ["Workspaces.AddWorkspaceMember"] = new(
+                "Add a workspace member",
+                "Adds an existing registered user to a workspace by email and assigns Owner, Admin, or Member role. Requires workspace management permission.",
+                StatusCodes.Status201Created,
+                typeof(WorkspaceMemberResponse)),
+            ["Workspaces.UpdateWorkspaceMemberRole"] = new(
+                "Update workspace member role",
+                "Changes a workspace member's role. Requires workspace management permission and prevents demoting the last workspace owner.",
+                StatusCodes.Status200OK,
+                typeof(WorkspaceMemberResponse)),
+            ["Workspaces.RemoveWorkspaceMember"] = new(
+                "Remove a workspace member",
+                "Removes a user from the workspace, removes their project and channel memberships in that workspace, and clears matching task assignments. Requires workspace management permission and prevents removing the last workspace owner or the only project manager for any project.",
+                StatusCodes.Status200OK,
+                typeof(bool)),
 
             ["Channels.GetWorkspaceChannels"] = new(
                 "List workspace channels",
@@ -146,6 +166,21 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Returns up to 200 messages from a channel in chronological order. Private-channel access is enforced before messages are returned.",
                 StatusCodes.Status200OK,
                 typeof(IEnumerable<MessageResponse>)),
+            ["Channels.GetChannelMembers"] = new(
+                "List channel members",
+                "Returns the users who belong to a channel. Requires channel access; private channel access is enforced before members are returned.",
+                StatusCodes.Status200OK,
+                typeof(IEnumerable<ChannelMemberResponse>)),
+            ["Channels.AddChannelMember"] = new(
+                "Add a channel member",
+                "Adds an existing registered workspace member to a channel by email. Requires workspace management permission.",
+                StatusCodes.Status201Created,
+                typeof(ChannelMemberResponse)),
+            ["Channels.RemoveChannelMember"] = new(
+                "Remove a channel member",
+                "Removes a user from a channel. Requires workspace management permission for the channel's workspace.",
+                StatusCodes.Status200OK,
+                typeof(bool)),
 
             ["Messages.CreateMessage"] = new(
                 "Send a channel message",
@@ -186,6 +221,26 @@ public class ApiDocumentationOperationFilter : IOperationFilter
             ["Projects.DeleteProject"] = new(
                 "Delete a project",
                 "Deletes a project and its related data through EF Core relationships. Requires project or workspace management permission.",
+                StatusCodes.Status200OK,
+                typeof(bool)),
+            ["Projects.GetProjectMembers"] = new(
+                "List project members",
+                "Returns project members with their project role and join timestamp. Requires project access.",
+                StatusCodes.Status200OK,
+                typeof(IEnumerable<ProjectMemberResponse>)),
+            ["Projects.AddProjectMember"] = new(
+                "Add a project member",
+                "Adds an existing registered workspace member to a project by email and assigns ProjectManager, Contributor, or Viewer role. Requires project management permission.",
+                StatusCodes.Status201Created,
+                typeof(ProjectMemberResponse)),
+            ["Projects.UpdateProjectMemberRole"] = new(
+                "Update project member role",
+                "Changes a project member's role. Requires project management permission and prevents demoting the last project manager.",
+                StatusCodes.Status200OK,
+                typeof(ProjectMemberResponse)),
+            ["Projects.RemoveProjectMember"] = new(
+                "Remove a project member",
+                "Removes a user from a project and clears their task assignments in that project. Requires project management permission and prevents removing the last project manager.",
                 StatusCodes.Status200OK,
                 typeof(bool)),
 
@@ -229,6 +284,21 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Updates DeadlineUtc or clears it when null. Requires task update permission.",
                 StatusCodes.Status200OK,
                 typeof(TaskResponse)),
+            ["Tasks.GetTaskComments"] = new(
+                "List task comments",
+                "Returns task comments in chronological order, including author name and creation timestamp. Requires access to the task's project.",
+                StatusCodes.Status200OK,
+                typeof(IEnumerable<TaskCommentResponse>)),
+            ["Tasks.AddTaskComment"] = new(
+                "Add a task comment",
+                "Adds a comment to a task and updates the task timestamp. Requires access to the task's project.",
+                StatusCodes.Status201Created,
+                typeof(TaskCommentResponse)),
+            ["Tasks.DeleteTaskComment"] = new(
+                "Delete a task comment",
+                "Deletes a task comment. The comment author can delete their own comment; project or workspace managers can delete comments in their project.",
+                StatusCodes.Status200OK,
+                typeof(bool)),
 
             ["Dashboard.GetWorkspaceDashboard"] = new(
                 "Get workspace dashboard metrics",
@@ -269,7 +339,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
         operation.Responses ??= new OpenApiResponses();
         operation.Responses.Clear();
         operation.Responses.Add(doc.SuccessStatusCode.ToString(), CreateResponse(doc.SuccessDescription, doc.DataType, context));
-        operation.Responses.Add("400", CreateResponse("Validation failed. Check required fields, string length limits, enum values, GUID route values, and business rules such as assignee project membership.", ErrorResponseType, context));
+        operation.Responses.Add("400", CreateResponse("Validation failed. Check required fields, string length limits, enum values, email format, GUID route values, and business rules such as assignee project membership or duplicate membership.", ErrorResponseType, context));
         operation.Responses.Add("401", CreateResponse("Authentication is required. In production this should be a valid Bearer JWT; local development may use the configured fallback user.", ErrorResponseType, context));
         operation.Responses.Add("403", CreateResponse("The current user is authenticated but does not have the required workspace, project, channel, or task permission.", ErrorResponseType, context));
         operation.Responses.Add("404", CreateResponse("The resource was not found or is intentionally hidden because the current user cannot access it.", ErrorResponseType, context));

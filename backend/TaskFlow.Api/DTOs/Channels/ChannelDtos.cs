@@ -24,3 +24,17 @@ public class ChannelResponse
     public int MemberCount { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }
+
+public class AddChannelMemberRequest
+{
+    [Required, EmailAddress, StringLength(256)]
+    public string Email { get; set; } = string.Empty;
+}
+
+public class ChannelMemberResponse
+{
+    public Guid UserId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public DateTime JoinedAtUtc { get; set; }
+}

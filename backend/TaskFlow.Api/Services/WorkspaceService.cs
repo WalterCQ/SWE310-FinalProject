@@ -107,6 +107,163 @@ public class WorkspaceService(
         return ApiResponse.Ok(workspace.ToResponse(), "Workspace updated.");
     }
 
+    public async Task<ApiResponse<IEnumerable<WorkspaceMemberResponse>>> GetWorkspaceMembersAsync(Guid workspaceId)
+    {
+        var userId = currentUser.GetUserId();
+        if (!await permissionService.CanAccessWorkspace(userId, workspaceId))
+        {
+            return ApiResponse.Fail<IEnumerable<WorkspaceMemberResponse>>("Workspace not found or access denied.", StatusCodes.Status404NotFound);
+        }
+
+        var members = await dbContext.WorkspaceMembers
+            .Include(member => member.User)
+            .Where(member => member.WorkspaceId == workspaceId)
+            .OrderBy(member => member.User!.Name)
+            .ToListAsync();
+
+        return ApiResponse.Ok(members.Select(ToMemberResponse));
+    }
+
+    public async Task<ApiResponse<WorkspaceMemberResponse>> AddWorkspaceMemberAsync(Guid workspaceId, AddWorkspaceMemberRequest request)
+    {
+        var currentUserId = currentUser.GetUserId();
+        if (!await permissionService.CanManageWorkspace(currentUserId, workspaceId))
+        {
+            return ApiResponse.Fail<WorkspaceMemberResponse>("You do not have permission to add workspace members.", StatusCodes.Status403Forbidden);
+        }
+
+        if (!await dbContext.Workspaces.AnyAsync(workspace => workspace.Id == workspaceId))
+        {
+            return ApiResponse.Fail<WorkspaceMemberResponse>("Workspace not found.", StatusCodes.Status404NotFound);
+        }
+
+        var user = await FindUserByEmail(request.Email);
+        if (user is null)
+        {
+            return ApiResponse.Fail<WorkspaceMemberResponse>("Registered user not found.", StatusCodes.Status404NotFound);
+        }
+
+        var existingMember = await dbContext.WorkspaceMembers
+            .Include(member => member.User)
+            .FirstOrDefaultAsync(member => member.WorkspaceId == workspaceId && member.UserId == user.Id);
+        if (existingMember is not null)
+        {
+            return ApiResponse.Fail<WorkspaceMemberResponse>("User is already a workspace member.");
+        }
+
+        var member = new WorkspaceMember
+        {
+            Id = Guid.NewGuid(),
+            WorkspaceId = workspaceId,
+            UserId = user.Id,
+            Role = request.Role,
+            User = user
+        };
+
+        dbContext.WorkspaceMembers.Add(member);
+        await dbContext.SaveChangesAsync();
+
+        return ApiResponse.Created(ToMemberResponse(member), "Workspace member added.");
+    }
+
+    public async Task<ApiResponse<WorkspaceMemberResponse>> UpdateWorkspaceMemberRoleAsync(Guid workspaceId, Guid userId, UpdateWorkspaceMemberRoleRequest request)
+    {
+        var currentUserId = currentUser.GetUserId();
+        if (!await permissionService.CanManageWorkspace(currentUserId, workspaceId))
+        {
+            return ApiResponse.Fail<WorkspaceMemberResponse>("You do not have permission to update workspace members.", StatusCodes.Status403Forbidden);
+        }
+
+        var member = await dbContext.WorkspaceMembers
+            .Include(item => item.User)
+            .FirstOrDefaultAsync(item => item.WorkspaceId == workspaceId && item.UserId == userId);
+        if (member is null)
+        {
+            return ApiResponse.Fail<WorkspaceMemberResponse>("Workspace member not found.", StatusCodes.Status404NotFound);
+        }
+
+        if (member.Role == WorkspaceRole.Owner && request.Role != WorkspaceRole.Owner && await CountWorkspaceOwners(workspaceId) <= 1)
+        {
+            return ApiResponse.Fail<WorkspaceMemberResponse>("A workspace must keep at least one owner.");
+        }
+
+        member.Role = request.Role;
+        await dbContext.SaveChangesAsync();
+
+        return ApiResponse.Ok(ToMemberResponse(member), "Workspace member role updated.");
+    }
+
+    public async Task<ApiResponse<bool>> RemoveWorkspaceMemberAsync(Guid workspaceId, Guid userId)
+    {
+        var currentUserId = currentUser.GetUserId();
+        if (!await permissionService.CanManageWorkspace(currentUserId, workspaceId))
+        {
+            return ApiResponse.Fail<bool>("You do not have permission to remove workspace members.", StatusCodes.Status403Forbidden);
+        }
+
+        var member = await dbContext.WorkspaceMembers
+            .FirstOrDefaultAsync(item => item.WorkspaceId == workspaceId && item.UserId == userId);
+        if (member is null)
+        {
+            return ApiResponse.Fail<bool>("Workspace member not found.", StatusCodes.Status404NotFound);
+        }
+
+        if (member.Role == WorkspaceRole.Owner && await CountWorkspaceOwners(workspaceId) <= 1)
+        {
+            return ApiResponse.Fail<bool>("A workspace must keep at least one owner.");
+        }
+
+        var projectIds = await dbContext.Projects
+            .Where(project => project.WorkspaceId == workspaceId)
+            .Select(project => project.Id)
+            .ToListAsync();
+        var channelIds = await dbContext.Channels
+            .Where(channel => channel.WorkspaceId == workspaceId)
+            .Select(channel => channel.Id)
+            .ToListAsync();
+
+        var managedProjectIds = await dbContext.ProjectMembers
+            .Where(projectMember =>
+                projectIds.Contains(projectMember.ProjectId)
+                && projectMember.UserId == userId
+                && projectMember.RoleInProject == ProjectRole.ProjectManager)
+            .Select(projectMember => projectMember.ProjectId)
+            .ToListAsync();
+        foreach (var managedProjectId in managedProjectIds)
+        {
+            var managerCount = await dbContext.ProjectMembers.CountAsync(projectMember =>
+                projectMember.ProjectId == managedProjectId
+                && projectMember.RoleInProject == ProjectRole.ProjectManager);
+            if (managerCount <= 1)
+            {
+                return ApiResponse.Fail<bool>("Cannot remove this workspace member because they are the only project manager on at least one project.");
+            }
+        }
+
+        var projectMembers = await dbContext.ProjectMembers
+            .Where(projectMember => projectIds.Contains(projectMember.ProjectId) && projectMember.UserId == userId)
+            .ToListAsync();
+        var channelMembers = await dbContext.ChannelMembers
+            .Where(channelMember => channelIds.Contains(channelMember.ChannelId) && channelMember.UserId == userId)
+            .ToListAsync();
+        var assignedTasks = await dbContext.TaskItems
+            .Where(task => projectIds.Contains(task.ProjectId) && task.AssigneeId == userId)
+            .ToListAsync();
+
+        foreach (var task in assignedTasks)
+        {
+            task.AssigneeId = null;
+            task.UpdatedAtUtc = DateTime.UtcNow;
+        }
+
+        dbContext.ProjectMembers.RemoveRange(projectMembers);
+        dbContext.ChannelMembers.RemoveRange(channelMembers);
+        dbContext.WorkspaceMembers.Remove(member);
+        await dbContext.SaveChangesAsync();
+
+        return ApiResponse.NoData("Workspace member removed.");
+    }
+
     private IQueryable<Workspace> GetWorkspaceQuery()
     {
         return dbContext.Workspaces
@@ -114,6 +271,30 @@ public class WorkspaceService(
             .Include(workspace => workspace.Channels)
             .Include(workspace => workspace.Projects)
             .AsSplitQuery();
+    }
+
+    private async Task<User?> FindUserByEmail(string email)
+    {
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        return await dbContext.Users.FirstOrDefaultAsync(user => user.Email == normalizedEmail);
+    }
+
+    private async Task<int> CountWorkspaceOwners(Guid workspaceId)
+    {
+        return await dbContext.WorkspaceMembers.CountAsync(member =>
+            member.WorkspaceId == workspaceId && member.Role == WorkspaceRole.Owner);
+    }
+
+    private static WorkspaceMemberResponse ToMemberResponse(WorkspaceMember member)
+    {
+        return new WorkspaceMemberResponse
+        {
+            UserId = member.UserId,
+            Name = member.User?.Name ?? string.Empty,
+            Email = member.User?.Email ?? string.Empty,
+            Role = member.Role,
+            JoinedAtUtc = member.JoinedAtUtc
+        };
     }
 
     private async Task EnsureCurrentUserExists(Guid userId)

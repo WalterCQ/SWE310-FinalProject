@@ -1,19 +1,36 @@
 import { useEffect, useState } from "react";
-import { Plus, FolderKanban, Users } from "lucide-react";
+import { Plus, FolderKanban, Trash2, UserPlus, Users } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import { formatApiError, workspaces as workspacesApi } from "../api/taskflowApi.js";
-import { asArray, mapWorkspace } from "../api/mappers.js";
+import { asArray, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
 import { useI18n } from "../i18n.jsx";
 
 const colors = ["amber", "green", "red", "yellow"];
 const blankForm = { name: "", description: "" };
+const roleOptions = [
+  { value: "0", label: "Owner" },
+  { value: "1", label: "Admin" },
+  { value: "2", label: "Member" },
+];
+
+function blankMemberState() {
+  return {
+    items: [],
+    email: "",
+    role: "2",
+    loading: false,
+    saving: false,
+    error: "",
+  };
+}
 
 export default function Workspaces() {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
   const selectedWorkspaceId = searchParams.get("workspaceId") || "";
   const [workspaces, setWorkspaces] = useState([]);
+  const [membersByWorkspace, setMembersByWorkspace] = useState({});
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(blankForm);
   const [formErrors, setFormErrors] = useState({});
@@ -31,8 +48,21 @@ export default function Workspaces() {
 
       try {
         const data = await workspacesApi.list();
+        const mappedWorkspaces = asArray(data).map(mapWorkspace);
+        const memberEntries = await Promise.all(
+          mappedWorkspaces.map(async (workspace) => {
+            try {
+              const members = await workspacesApi.members(workspace.id);
+              return [workspace.id, { ...blankMemberState(), items: asArray(members).map(mapWorkspaceMember) }];
+            } catch (apiError) {
+              return [workspace.id, { ...blankMemberState(), error: formatApiError(apiError) }];
+            }
+          })
+        );
+
         if (active) {
-          setWorkspaces(asArray(data).map(mapWorkspace));
+          setWorkspaces(mappedWorkspaces);
+          setMembersByWorkspace(Object.fromEntries(memberEntries));
         }
       } catch (apiError) {
         if (active) setError(formatApiError(apiError));
@@ -63,6 +93,28 @@ export default function Workspaces() {
     setCreateError("");
   }
 
+  function updateMemberState(workspaceId, updates) {
+    setMembersByWorkspace((current) => ({
+      ...current,
+      [workspaceId]: {
+        ...blankMemberState(),
+        ...(current[workspaceId] || {}),
+        ...updates,
+      },
+    }));
+  }
+
+  async function reloadMembers(workspaceId) {
+    updateMemberState(workspaceId, { loading: true, error: "" });
+
+    try {
+      const members = await workspacesApi.members(workspaceId);
+      updateMemberState(workspaceId, { items: asArray(members).map(mapWorkspaceMember), loading: false });
+    } catch (apiError) {
+      updateMemberState(workspaceId, { error: formatApiError(apiError), loading: false });
+    }
+  }
+
   function validateForm() {
     const nextErrors = {};
     if (!form.name.trim()) nextErrors.name = t("workspace.nameRequired");
@@ -84,14 +136,66 @@ export default function Workspaces() {
         description: form.description.trim() || null,
       });
 
-      setWorkspaces((current) => [...current, mapWorkspace(createdWorkspace)]
+      const mappedWorkspace = mapWorkspace(createdWorkspace);
+      setWorkspaces((current) => [...current, mappedWorkspace]
         .sort((left, right) => left.name.localeCompare(right.name)));
+      setMembersByWorkspace((current) => ({ ...current, [mappedWorkspace.id]: blankMemberState() }));
       setForm(blankForm);
       setFormOpen(false);
+      await reloadMembers(mappedWorkspace.id);
     } catch (apiError) {
       setCreateError(formatApiError(apiError));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function addMember(workspaceId) {
+    const state = membersByWorkspace[workspaceId] || blankMemberState();
+    if (!state.email.trim()) {
+      updateMemberState(workspaceId, { error: "Enter the email of a registered user." });
+      return;
+    }
+
+    updateMemberState(workspaceId, { saving: true, error: "" });
+
+    try {
+      await workspacesApi.addMember(workspaceId, {
+        email: state.email.trim(),
+        role: Number(state.role),
+      });
+      updateMemberState(workspaceId, { email: "", role: "2" });
+      await reloadMembers(workspaceId);
+    } catch (apiError) {
+      updateMemberState(workspaceId, { error: formatApiError(apiError) });
+    } finally {
+      updateMemberState(workspaceId, { saving: false });
+    }
+  }
+
+  async function updateMemberRole(workspaceId, member, role) {
+    updateMemberState(workspaceId, { saving: true, error: "" });
+
+    try {
+      await workspacesApi.updateMember(workspaceId, member.userId, { role: Number(role) });
+      await reloadMembers(workspaceId);
+    } catch (apiError) {
+      updateMemberState(workspaceId, { error: formatApiError(apiError) });
+    } finally {
+      updateMemberState(workspaceId, { saving: false });
+    }
+  }
+
+  async function removeMember(workspaceId, member) {
+    updateMemberState(workspaceId, { saving: true, error: "" });
+
+    try {
+      await workspacesApi.removeMember(workspaceId, member.userId);
+      await reloadMembers(workspaceId);
+    } catch (apiError) {
+      updateMemberState(workspaceId, { error: formatApiError(apiError) });
+    } finally {
+      updateMemberState(workspaceId, { saving: false });
     }
   }
 
@@ -170,24 +274,95 @@ export default function Workspaces() {
 
       {!loading && !error && workspaces.length > 0 && (
         <section className="workspace-grid">
-          {workspaces.map((workspace, index) => (
-            <article
-              className={`panel workspace-card ${colors[index % colors.length]} ${workspace.id === selectedWorkspaceId ? "target-highlight" : ""}`}
-              id={`workspace-${workspace.id}`}
-              key={workspace.id}
-            >
-              <div className="workspace-card-top">
-                <div className="workspace-icon">{String(index + 1).padStart(2, "0")}</div>
-                <span className="workspace-tag">{t("workspace.active")}</span>
-              </div>
-              <h3>{workspace.name}</h3>
-              <p>{t("workspace.projectsMembers", { projects: workspace.projects, members: workspace.members })}</p>
-              <div className="workspace-meta-row">
-                <span><FolderKanban size={14} /> {t("workspace.projects", { count: workspace.projects })}</span>
-                <span><Users size={14} /> {t("workspace.members", { count: workspace.members })}</span>
-              </div>
-            </article>
-          ))}
+          {workspaces.map((workspace, index) => {
+            const memberState = membersByWorkspace[workspace.id] || blankMemberState();
+            const memberCount = memberState.items.length || workspace.members;
+
+            return (
+              <article
+                className={`panel workspace-card ${colors[index % colors.length]} ${workspace.id === selectedWorkspaceId ? "target-highlight" : ""}`}
+                id={`workspace-${workspace.id}`}
+                key={workspace.id}
+              >
+                <div className="workspace-card-top">
+                  <div className="workspace-icon">{String(index + 1).padStart(2, "0")}</div>
+                  <span className="workspace-tag">{t("workspace.active")}</span>
+                </div>
+                <h3>{workspace.name}</h3>
+                <p>{t("workspace.projectsMembers", { projects: workspace.projects, members: memberCount })}</p>
+                <div className="workspace-meta-row">
+                  <span><FolderKanban size={14} /> {t("workspace.projects", { count: workspace.projects })}</span>
+                  <span><Users size={14} /> {t("workspace.members", { count: memberCount })}</span>
+                </div>
+
+                <div className="member-manager">
+                  <div className="member-manager-header">
+                    <strong>Workspace members</strong>
+                    <button className="secondary-button compact" type="button" onClick={() => reloadMembers(workspace.id)}>
+                      Refresh
+                    </button>
+                  </div>
+
+                  {memberState.error && <div className="error-text">{memberState.error}</div>}
+                  {memberState.loading && <p>Loading members...</p>}
+                  {!memberState.loading && memberState.items.length === 0 && <p>No members loaded.</p>}
+
+                  <div className="member-list">
+                    {memberState.items.map((member) => (
+                      <div className="member-row" key={member.userId}>
+                        <div>
+                          <strong>{member.name}</strong>
+                          <span>{member.email}</span>
+                        </div>
+                        <select
+                          value={String(member.role)}
+                          onChange={(event) => updateMemberRole(workspace.id, member, event.target.value)}
+                          disabled={memberState.saving}
+                        >
+                          {roleOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="danger-button icon-only"
+                          type="button"
+                          aria-label={`Remove ${member.name}`}
+                          onClick={() => removeMember(workspace.id, member)}
+                          disabled={memberState.saving}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="member-add-row">
+                    <input
+                      value={memberState.email}
+                      onChange={(event) => updateMemberState(workspace.id, { email: event.target.value, error: "" })}
+                      placeholder="member@email.com"
+                    />
+                    <select
+                      value={memberState.role}
+                      onChange={(event) => updateMemberState(workspace.id, { role: event.target.value })}
+                    >
+                      {roleOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="primary-button compact"
+                      type="button"
+                      onClick={() => addMember(workspace.id)}
+                      disabled={memberState.saving}
+                    >
+                      <UserPlus size={16} /> Add
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </section>
       )}
     </div>

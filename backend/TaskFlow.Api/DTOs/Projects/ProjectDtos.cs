@@ -41,3 +41,25 @@ public class ProjectResponse
     public DateTime CreatedAtUtc { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
 }
+
+public class AddProjectMemberRequest
+{
+    [Required, EmailAddress, StringLength(256)]
+    public string Email { get; set; } = string.Empty;
+
+    public ProjectRole RoleInProject { get; set; } = ProjectRole.Contributor;
+}
+
+public class UpdateProjectMemberRoleRequest
+{
+    public ProjectRole RoleInProject { get; set; } = ProjectRole.Contributor;
+}
+
+public class ProjectMemberResponse
+{
+    public Guid UserId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public ProjectRole RoleInProject { get; set; }
+    public DateTime JoinedAtUtc { get; set; }
+}

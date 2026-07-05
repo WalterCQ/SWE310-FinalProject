@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -140,6 +141,35 @@ export default function Dashboard() {
     priorityLabel: t(enumPriorityKey(item.priority)),
   }));
 
+  function exportReport() {
+    const rows = [
+      ["Workspace", state.workspaceName || "None"],
+      ["Total projects", state.stats.find((stat) => stat.labelKey === "stats.totalProjects")?.value || 0],
+      ["Total tasks", state.stats.find((stat) => stat.labelKey === "stats.totalTasks")?.value || 0],
+      ["Completed", state.stats.find((stat) => stat.labelKey === "stats.completed")?.value || 0],
+      ["Overdue", state.stats.find((stat) => stat.labelKey === "stats.overdue")?.value || 0],
+      [],
+      ["Project", "Status", "Progress", "Tasks", "Completed"],
+      ...state.projects.map((project) => [
+        project.name,
+        project.statusLabel,
+        `${project.progress}%`,
+        project.taskCount,
+        project.completedTaskCount,
+      ]),
+    ];
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `taskflow-${state.workspaceName || "workspace"}-report.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="page-stack">
       <section className="dashboard-hero">
@@ -160,6 +190,9 @@ export default function Dashboard() {
             <span>{t("dashboard.route.task")}</span>
             <span>{t("dashboard.route.ai")}</span>
           </div>
+          <button className="secondary-button" type="button" onClick={exportReport} disabled={state.loading || !state.workspaceName}>
+            Export report
+          </button>
         </aside>
       </section>
 
@@ -243,7 +276,7 @@ export default function Dashboard() {
             <article className="panel">
               <div className="panel-header">
                 <h3>{t("dashboard.activeProjects")}</h3>
-                <a>{t("dashboard.viewAll")}</a>
+                <Link to="/projects">{t("dashboard.viewAll")}</Link>
               </div>
               <div className="project-list compact">
                 {state.projects.length === 0 && <p>{t("dashboard.noProjects")}</p>}
@@ -263,7 +296,7 @@ export default function Dashboard() {
             <article className="panel">
               <div className="panel-header">
                 <h3>{t("dashboard.demoChecklist")}</h3>
-                <a>{t("dashboard.viewAll")}</a>
+                <Link to="/tasks">{t("dashboard.viewAll")}</Link>
               </div>
               <div className="task-list compact">
                 {state.tasks.length === 0 && <p>{t("dashboard.noTasks")}</p>}

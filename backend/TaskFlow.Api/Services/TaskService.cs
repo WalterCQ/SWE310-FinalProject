@@ -197,6 +197,87 @@ public class TaskService(
         return ApiResponse.Ok(task.ToResponse(), "Task deadline updated.");
     }
 
+    public async Task<ApiResponse<IEnumerable<TaskCommentResponse>>> GetTaskCommentsAsync(Guid taskId)
+    {
+        var task = await dbContext.TaskItems
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == taskId);
+        if (task is null)
+        {
+            return ApiResponse.Fail<IEnumerable<TaskCommentResponse>>("Task not found.", StatusCodes.Status404NotFound);
+        }
+
+        var userId = currentUser.GetUserId();
+        if (!await permissionService.CanAccessProject(userId, task.ProjectId))
+        {
+            return ApiResponse.Fail<IEnumerable<TaskCommentResponse>>("Task not found or access denied.", StatusCodes.Status404NotFound);
+        }
+
+        var comments = await dbContext.TaskComments
+            .Include(comment => comment.Author)
+            .Where(comment => comment.TaskItemId == taskId)
+            .OrderBy(comment => comment.CreatedAtUtc)
+            .ToListAsync();
+
+        return ApiResponse.Ok(comments.Select(ToCommentResponse));
+    }
+
+    public async Task<ApiResponse<TaskCommentResponse>> AddTaskCommentAsync(Guid taskId, CreateTaskCommentRequest request)
+    {
+        var task = await dbContext.TaskItems.FirstOrDefaultAsync(item => item.Id == taskId);
+        if (task is null)
+        {
+            return ApiResponse.Fail<TaskCommentResponse>("Task not found.", StatusCodes.Status404NotFound);
+        }
+
+        var userId = currentUser.GetUserId();
+        if (!await permissionService.CanAccessProject(userId, task.ProjectId))
+        {
+            return ApiResponse.Fail<TaskCommentResponse>("Task not found or access denied.", StatusCodes.Status404NotFound);
+        }
+
+        var comment = new TaskComment
+        {
+            Id = Guid.NewGuid(),
+            TaskItemId = taskId,
+            AuthorId = userId,
+            Content = request.Content.Trim()
+        };
+
+        task.UpdatedAtUtc = DateTime.UtcNow;
+        dbContext.TaskComments.Add(comment);
+        await dbContext.SaveChangesAsync();
+
+        var savedComment = await dbContext.TaskComments
+            .Include(item => item.Author)
+            .FirstAsync(item => item.Id == comment.Id);
+
+        return ApiResponse.Created(ToCommentResponse(savedComment), "Task comment added.");
+    }
+
+    public async Task<ApiResponse<bool>> DeleteTaskCommentAsync(Guid taskId, Guid commentId)
+    {
+        var comment = await dbContext.TaskComments
+            .Include(item => item.TaskItem)
+            .FirstOrDefaultAsync(item => item.Id == commentId && item.TaskItemId == taskId);
+        if (comment?.TaskItem is null)
+        {
+            return ApiResponse.Fail<bool>("Task comment not found.", StatusCodes.Status404NotFound);
+        }
+
+        var userId = currentUser.GetUserId();
+        if (comment.AuthorId != userId && !await permissionService.CanManageProject(userId, comment.TaskItem.ProjectId))
+        {
+            return ApiResponse.Fail<bool>("You do not have permission to delete this comment.", StatusCodes.Status403Forbidden);
+        }
+
+        comment.TaskItem.UpdatedAtUtc = DateTime.UtcNow;
+        dbContext.TaskComments.Remove(comment);
+        await dbContext.SaveChangesAsync();
+
+        return ApiResponse.NoData("Task comment deleted.");
+    }
+
     private IQueryable<TaskItem> TaskQuery()
     {
         return dbContext.TaskItems
@@ -207,5 +288,18 @@ public class TaskService(
     {
         return await dbContext.ProjectMembers.AnyAsync(member =>
             member.ProjectId == projectId && member.UserId == userId);
+    }
+
+    private static TaskCommentResponse ToCommentResponse(TaskComment comment)
+    {
+        return new TaskCommentResponse
+        {
+            Id = comment.Id,
+            TaskItemId = comment.TaskItemId,
+            AuthorId = comment.AuthorId,
+            AuthorName = comment.Author?.Name ?? string.Empty,
+            Content = comment.Content,
+            CreatedAtUtc = comment.CreatedAtUtc
+        };
     }
 }

@@ -10,4 +10,8 @@ public interface IProjectService
     Task<ApiResponse<ProjectResponse>> GetProjectAsync(Guid projectId);
     Task<ApiResponse<ProjectResponse>> UpdateProjectAsync(Guid projectId, UpdateProjectRequest request);
     Task<ApiResponse<bool>> DeleteProjectAsync(Guid projectId);
+    Task<ApiResponse<IEnumerable<ProjectMemberResponse>>> GetProjectMembersAsync(Guid projectId);
+    Task<ApiResponse<ProjectMemberResponse>> AddProjectMemberAsync(Guid projectId, AddProjectMemberRequest request);
+    Task<ApiResponse<ProjectMemberResponse>> UpdateProjectMemberRoleAsync(Guid projectId, Guid userId, UpdateProjectMemberRoleRequest request);
+    Task<ApiResponse<bool>> RemoveProjectMemberAsync(Guid projectId, Guid userId);
 }
