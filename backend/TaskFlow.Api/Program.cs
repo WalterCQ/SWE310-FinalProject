@@ -144,13 +144,6 @@ builder.Services.AddHostedService<ReminderBackgroundService>();
 
 var app = builder.Build();
 
-if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
-{
-    using var scope = app.Services.CreateScope();
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await dbContext.Database.MigrateAsync();
-}
-
 app.MapOpenApi();
 app.UseSwagger();
 app.UseSwaggerUI(options =>
