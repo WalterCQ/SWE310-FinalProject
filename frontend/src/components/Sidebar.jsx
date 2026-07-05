@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   SquareCheckBig,
 } from "lucide-react";
-import { clearAuthStorage, normalizeGlobalRole } from "../api/authStorage.js";
+import { ADMINISTRATOR_ROLE, clearAuthStorage, hasGlobalRole, normalizeGlobalRole } from "../api/authStorage.js";
 import { enumWorkspaceRoleKey, useI18n } from "../i18n.jsx";
 import Avatar from "./Avatar.jsx";
 import BrandMark from "./BrandMark.jsx";
@@ -23,7 +23,7 @@ const navItems = [
   { labelKey: "nav.projects", path: "/projects", icon: KanbanSquare },
   { labelKey: "nav.tasks", path: "/tasks", icon: SquareCheckBig },
   { labelKey: "nav.notifications", path: "/notifications", icon: Bell },
-  { labelKey: "nav.admin", path: "/admin", icon: ShieldCheck, allowedRoles: ["Administrator"] },
+  { labelKey: "nav.admin", path: "/admin", icon: ShieldCheck, allowedRoles: [ADMINISTRATOR_ROLE] },
 ];
 
 export default function Sidebar({ collapsed = false, onToggleCollapsed, user, displayRole }) {
@@ -34,7 +34,7 @@ export default function Sidebar({ collapsed = false, onToggleCollapsed, user, di
   const rawDisplayRole = rawGlobalRole === "Administrator" ? rawGlobalRole : displayRole || rawGlobalRole;
   const userRole = t(enumWorkspaceRoleKey(rawDisplayRole));
   const userSeed = user?.userId || localStorage.getItem("userId") || userName;
-  const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(rawGlobalRole));
+  const visibleNavItems = navItems.filter((item) => !item.allowedRoles || hasGlobalRole(rawGlobalRole, item.allowedRoles));
   const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
   const toggleLabel = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
 

@@ -12,7 +12,14 @@ import Admin from "./pages/Admin.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Topbar from "./components/Topbar.jsx";
 import { auth } from "./api/taskflowApi.js";
-import { clearAuthStorage, getStoredUser, normalizeGlobalRole, storeAuthUser } from "./api/authStorage.js";
+import {
+  ADMINISTRATOR_ROLE,
+  clearAuthStorage,
+  getStoredUser,
+  hasGlobalRole,
+  normalizeGlobalRole,
+  storeAuthUser,
+} from "./api/authStorage.js";
 import { useI18n } from "./i18n.jsx";
 import PageRoleContext from "./pageRoleContext.jsx";
 
@@ -27,6 +34,7 @@ const routeMeta = {
 };
 
 const SIDEBAR_COLLAPSED_KEY = "taskflow.sidebarCollapsed";
+const ADMIN_ONLY_ROLES = [ADMINISTRATOR_ROLE];
 
 function normalizeMemberContextRole(value, fallbackRole) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -141,7 +149,7 @@ function ProtectedShell({ allowedRoles }) {
     ? userRole
     : normalizeMemberContextRole(contextRole, userRole);
 
-  if (allowedRoles && !allowedRoles.includes(userRole)) {
+  if (allowedRoles && !hasGlobalRole(userRole, allowedRoles)) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -180,7 +188,7 @@ export default function App() {
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/notifications" element={<Notifications />} />
       </Route>
-      <Route element={<ProtectedShell allowedRoles={["Administrator"]} />}>
+      <Route element={<ProtectedShell allowedRoles={ADMIN_ONLY_ROLES} />}>
         <Route path="/admin" element={<Admin />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

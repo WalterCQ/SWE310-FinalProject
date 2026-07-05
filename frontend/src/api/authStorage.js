@@ -1,8 +1,14 @@
 const authKeys = ["token", "userRole", "userName", "userId"];
+export const ADMINISTRATOR_ROLE = "Administrator";
 
 export function normalizeGlobalRole(value) {
   const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "administrator" || normalized === "admin" ? "Administrator" : "Member";
+  return normalized === "administrator" || normalized === "admin" ? ADMINISTRATOR_ROLE : "Member";
+}
+
+export function hasGlobalRole(value, allowedRoles = []) {
+  const role = normalizeGlobalRole(value);
+  return allowedRoles.map(normalizeGlobalRole).includes(role);
 }
 
 export function clearAuthStorage() {

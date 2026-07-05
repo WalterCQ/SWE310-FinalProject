@@ -24,9 +24,24 @@ public class ApiDocumentationOperationFilter : IOperationFilter
         {
             ["Admin.GetOverview"] = new(
                 "Get administrator-only system overview",
-                "Returns aggregate system counts and security evidence for the coursework demo. This endpoint is explicitly restricted to users whose JWT contains the Administrator global role claim.",
+                "Returns aggregate system counts and security evidence for the coursework demo. This endpoint requires an Administrator JWT role claim and re-checks the current database role.",
                 StatusCodes.Status200OK,
                 typeof(AdminOverviewResponse)),
+            ["Admin.GetUsers"] = new(
+                "List user accounts for administrators",
+                "Returns registered users, global roles, account creation date, and membership counts. This endpoint requires an Administrator JWT role claim and re-checks the current database role.",
+                StatusCodes.Status200OK,
+                typeof(IReadOnlyCollection<AdminUserResponse>)),
+            ["Admin.UpdateUser"] = new(
+                "Update a user account",
+                "Allows a global Administrator to update a user's display name and global role. The endpoint prevents changing the current administrator's own global role and prevents removing the final global Administrator.",
+                StatusCodes.Status200OK,
+                typeof(AdminUserResponse)),
+            ["Admin.ResetUserPassword"] = new(
+                "Reset a user password",
+                "Allows a global Administrator to replace a user's password hash with a new password that passes backend validation. Raw passwords are never returned.",
+                StatusCodes.Status200OK,
+                typeof(object)),
 
             ["Auth.Register"] = new(
                 "Register a new user",

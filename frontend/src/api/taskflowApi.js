@@ -261,6 +261,9 @@ export const auth = {
 
 export const admin = {
   overview: () => request({ method: "GET", url: "/api/admin/overview" }),
+  users: () => request({ method: "GET", url: "/api/admin/users" }),
+  updateUser: (userId, payload) => request({ method: "PUT", url: `/api/admin/users/${userId}`, data: payload }),
+  resetUserPassword: (userId, payload) => request({ method: "PUT", url: `/api/admin/users/${userId}/password`, data: payload }),
 };
 
 export const ai = {
