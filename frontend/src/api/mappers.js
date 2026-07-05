@@ -275,22 +275,7 @@ export function mapMessage(message) {
     id: message.id,
     sender: message.senderName || shortId(message.senderId),
     text: message.content || "",
-    attachments: asArray(message.attachments).map(mapAttachment),
     time: formatDateTime(message.createdAtUtc),
-  };
-}
-
-export function mapAttachment(attachment) {
-  return {
-    ...attachment,
-    id: attachment.id,
-    fileName: attachment.fileName || "attachment",
-    contentType: attachment.contentType || "application/octet-stream",
-    sizeBytes: Number(attachment.sizeBytes || 0),
-    summary: attachment.summary || "",
-    isAiIndexed: Boolean(attachment.isAiIndexed),
-    downloadUrl: attachment.downloadUrl || "",
-    time: formatDateTime(attachment.createdAtUtc),
   };
 }
 

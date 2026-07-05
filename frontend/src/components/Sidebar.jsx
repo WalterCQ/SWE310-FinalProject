@@ -6,6 +6,8 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   ShieldCheck,
   SquareCheckBig,
 } from "lucide-react";
@@ -24,13 +26,15 @@ const navItems = [
   { labelKey: "nav.admin", path: "/admin", icon: ShieldCheck, allowedRoles: ["Admin"] },
 ];
 
-export default function Sidebar({ user }) {
+export default function Sidebar({ collapsed = false, onToggleCollapsed, user }) {
   const navigate = useNavigate();
   const { t } = useI18n();
   const userName = user?.name || localStorage.getItem("userName") || t("app.user.default");
   const userRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || t("app.role.default");
   const userSeed = user?.userId || localStorage.getItem("userId") || userName;
   const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(userRole));
+  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
+  const toggleLabel = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
 
   function logout() {
     clearAuthStorage();
@@ -38,13 +42,22 @@ export default function Sidebar({ user }) {
   }
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" data-collapsed={collapsed}>
       <div className="brand">
         <BrandMark />
-        <div>
+        <div className="sidebar-label">
           <h1>TaskFlow</h1>
           <span>{t("app.brand.projectBoard")}</span>
         </div>
+        <button
+          aria-label={toggleLabel}
+          className="sidebar-toggle"
+          onClick={onToggleCollapsed}
+          title={toggleLabel}
+          type="button"
+        >
+          <ToggleIcon size={17} />
+        </button>
       </div>
 
       <nav className="nav-list" aria-label={t("nav.label")}>
@@ -57,24 +70,32 @@ export default function Sidebar({ user }) {
               className={({ isActive }) =>
                 `nav-item ${isActive ? "active" : ""}`
               }
+              title={t(item.labelKey)}
+              aria-label={t(item.labelKey)}
             >
               <Icon size={18} />
-              <span>{t(item.labelKey)}</span>
+              <span className="sidebar-label">{t(item.labelKey)}</span>
             </NavLink>
           );
         })}
       </nav>
 
       <div className="sidebar-footer">
-        <div className="profile-card">
+        <div className="profile-card" title={`${userName} · ${userRole}`}>
           <Avatar className="avatar" seed={userSeed} name={userName} ariaHidden />
-          <div>
+          <div className="sidebar-label">
             <strong>{userName}</strong>
             <p>{userRole}</p>
           </div>
         </div>
-        <button onClick={logout} className="logout-btn">
-          <LogOut size={16} /> {t("nav.logout")}
+        <button
+          onClick={logout}
+          className="logout-btn"
+          aria-label={t("nav.logout")}
+          title={t("nav.logout")}
+          type="button"
+        >
+          <LogOut size={16} /> <span className="sidebar-label">{t("nav.logout")}</span>
         </button>
       </div>
     </aside>

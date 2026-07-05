@@ -111,8 +111,6 @@ export const channels = {
 export const messages = {
   listByChannel: (channelId) => channels.messages(channelId),
   create: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/messages`, data: payload }),
-  createAttachment: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/messages/attachments`, data: payload }),
-  downloadAttachment: (downloadUrl) => axiosClient.request({ method: "GET", url: downloadUrl, responseType: "blob" }),
   update: (messageId, payload) => request({ method: "PUT", url: `/api/messages/${messageId}`, data: payload }),
   remove: (messageId) => request({ method: "DELETE", url: `/api/messages/${messageId}` }),
 };

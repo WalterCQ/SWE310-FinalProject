@@ -25,6 +25,8 @@ const routeMeta = {
   "/admin": { eyebrowKey: "admin.eyebrow", titleKey: "admin.title" },
 };
 
+const SIDEBAR_COLLAPSED_KEY = "taskflow.sidebarCollapsed";
+
 function getPageMeta(pathname, search, t) {
   const path = `/${pathname.split("/").filter(Boolean)[0] || "dashboard"}`;
   const query = new URLSearchParams(search);
@@ -48,12 +50,24 @@ function ProtectedShell({ allowedRoles }) {
   const { t } = useI18n();
   const location = useLocation();
   const pageMeta = getPageMeta(location.pathname, location.search, t);
+  const isChannelRoute = location.pathname.startsWith("/channels");
   const [authVersion, setAuthVersion] = useState(0);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  });
   const [session, setSession] = useState({
     checking: true,
     user: getStoredUser(),
   });
   const token = localStorage.getItem("token");
+
+  function toggleSidebarCollapsed() {
+    setIsSidebarCollapsed((current) => {
+      const next = !current;
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+      return next;
+    });
+  }
 
   useEffect(() => {
     function handleAuthExpired() {
@@ -115,11 +129,15 @@ function ProtectedShell({ allowedRoles }) {
   }
 
   return (
-    <div className="app-shell">
-      <Sidebar user={session.user} />
-      <main className="main-area">
+    <div className={`app-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <Sidebar
+        collapsed={isSidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
+        user={session.user}
+      />
+      <main className={`main-area ${isChannelRoute ? "channel-main-area" : ""}`}>
         <Topbar pageMeta={pageMeta} />
-        <section className="page-content">
+        <section className={`page-content ${isChannelRoute ? "channel-page-content" : ""}`}>
           <Outlet />
         </section>
       </main>
