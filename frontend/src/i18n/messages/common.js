@@ -43,7 +43,7 @@ export const commonMessages = {
   "zh-CN": {
     "app.loading.session": "正在检查登录状态...",
     "app.user.default": "用户",
-    "app.role.default": "成员",
+    "app.role.default": "用户",
     "app.brand.projectBoard": "项目看板",
     "app.brand.projectBoardSwe310": "SWE310 项目看板",
     "topbar.eyebrow": "TaskFlow / SWE310",

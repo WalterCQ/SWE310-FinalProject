@@ -29,6 +29,7 @@ public class AiCommandService(
     IChannelService channelService,
     IDashboardService dashboardService,
     IAiProviderService aiProviderService,
+    IAiContextService aiContextService,
     CollaborationAiPlugin collaborationAiPlugin,
     IPineconeVectorStore pineconeVectorStore,
     IHttpClientFactory httpClientFactory) : IAiCommandService
@@ -272,45 +273,30 @@ public class AiCommandService(
 
         try
         {
-            var recentMessages = await dbContext.Messages
-                .AsNoTracking()
-                .Include(message => message.Sender)
-                .Where(message => message.ChannelId == channelId && !message.IsDeleted)
-                .OrderByDescending(message => message.CreatedAtUtc)
-                .Take(80)
-                .ToListAsync(cancellationToken);
-            recentMessages.Reverse();
-
-            var messageContext = recentMessages.Count == 0
-                ? "No messages in this channel yet."
-                : string.Join(Environment.NewLine, recentMessages.Select(message =>
-                    $"- [{FormatDate(message.CreatedAtUtc)} UTC] {message.Sender!.Name}: {message.Content}"));
-
-            var workspaceMessageSnippets = await RetrieveWorkspaceMessageKnowledgeAsync(
-                channel.WorkspaceId,
-                userId,
-                command,
-                cancellationToken);
-            var attachmentSnippets = await RetrieveChannelKnowledgeAsync(
-                channel.WorkspaceId,
-                channelId,
-                command,
-                request.AttachmentId,
-                provider,
-                cancellationToken);
-            var ragSnippets = workspaceMessageSnippets
-                .Concat(attachmentSnippets)
-                .GroupBy(snippet => $"{snippet.Source}\n{snippet.Text}", StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
-                .Take(12)
-                .ToArray();
-            var ragContext = ragSnippets.Length == 0
-                ? "No accessible workspace messages or indexed attachment chunks matched this request."
-                : string.Join(Environment.NewLine + Environment.NewLine, ragSnippets.Select((snippet, index) =>
-                    $"{index + 1}. Source: {snippet.Source}{Environment.NewLine}{snippet.Text}"));
-
             var artifactType = ResolveArtifactType(command);
-            var prompt = BuildChannelAiPrompt(channel.Name, artifactType, command, messageContext, ragContext);
+            var contextResult = await aiContextService.BuildChannelContextAsync(channelId, command, request.AttachmentId, cancellationToken);
+            if (!contextResult.Success || contextResult.Data is null)
+            {
+                return ApiResponse.Fail<AiChannelCommandResponse>(contextResult.Message, contextResult.StatusCode, contextResult.Errors);
+            }
+
+            var context = contextResult.Data;
+            if (ShouldRouteChannelCommandToAgent(artifactType))
+            {
+                var agentJob = await CreateChannelAgentJobAsync(channel, command, artifactType, request.AttachmentId, cancellationToken);
+                return ApiResponse.Ok(new AiChannelCommandResponse
+                {
+                    Result = $"TaskFlow Agent job created for {artifactType}. Approve the generated plan before it performs any write actions.",
+                    ArtifactType = artifactType,
+                    UsedLlm = false,
+                    AgentJobId = agentJob.Id,
+                    RequiresApproval = true,
+                    Sources = context.Sources,
+                    CreatedAtUtc = agentJob.CreatedAtUtc
+                });
+            }
+
+            var prompt = BuildChannelAiPrompt(channel.Name, artifactType, command, context.RecentMessages, context.RetrievedContext);
             var model = ShouldUseProModel(command) ? ResolveProModel(provider) : ResolveMainModel(provider);
             var result = await InvokeChatCompletionAsync(
                 model,
@@ -319,25 +305,17 @@ public class AiCommandService(
                 provider,
                 cancellationToken);
 
-            var sources = ragSnippets
-                .Select(snippet => snippet.Source)
-                .Concat(recentMessages.Count == 0 ? [] : [$"#{channel.Name} recent messages"])
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
             var suggestedTasks = IsTaskCommand(command)
                 ? ExtractSuggestedTasks(result)
                 : [];
-            TaskItem? createdTask = null;
 
             return ApiResponse.Ok(new AiChannelCommandResponse
             {
                 Result = result,
                 ArtifactType = artifactType,
                 UsedLlm = true,
-                Sources = sources,
+                Sources = context.Sources,
                 SuggestedTasks = suggestedTasks,
-                CreatedTaskId = createdTask?.Id,
-                CreatedTaskTitle = createdTask?.Title
             });
         }
         catch (AttachmentProcessingException ex)
@@ -352,6 +330,83 @@ public class AiCommandService(
         {
             return ApiResponse.Fail<AiChannelCommandResponse>(ex.Message, StatusCodes.Status502BadGateway);
         }
+    }
+
+    private async Task<AgentJob> CreateChannelAgentJobAsync(
+        Channel channel,
+        string command,
+        string artifactType,
+        Guid? attachmentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = currentUser.GetUserId();
+        var repository = await ResolveDefaultRepositoryAsync(channel.WorkspaceId, artifactType, cancellationToken);
+        var artifactTarget = ResolveAgentArtifactTarget(artifactType, repository is not null);
+        var job = new AgentJob
+        {
+            Id = Guid.NewGuid(),
+            WorkspaceId = channel.WorkspaceId,
+            UserId = userId,
+            ChannelId = channel.Id,
+            AttachmentId = attachmentId,
+            GitHubRepositoryConnectionId = repository?.Id,
+            ArtifactTarget = artifactTarget,
+            Goal = command,
+            Status = AgentJobStatus.Planning
+        };
+
+        dbContext.AgentJobs.Add(job);
+        dbContext.AgentEvents.Add(new AgentEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentJobId = job.Id,
+            ActorUserId = userId,
+            EventType = AgentEventType.Created,
+            Message = $"Agent job created from channel #{channel.Name}.",
+            DataJson = JsonSerializer.Serialize(new
+            {
+                artifactType,
+                artifactTarget,
+                channelId = channel.Id,
+                attachmentId,
+                repositoryId = repository?.Id
+            }, JsonOptions)
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return job;
+    }
+
+    private async Task<GitHubRepositoryConnection?> ResolveDefaultRepositoryAsync(
+        Guid workspaceId,
+        string artifactType,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(artifactType, "code-advice", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return await dbContext.GitHubRepositoryConnections
+            .AsNoTracking()
+            .Where(repository => repository.WorkspaceId == workspaceId && repository.IsEnabled)
+            .OrderByDescending(repository => repository.UpdatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private static bool ShouldRouteChannelCommandToAgent(string artifactType)
+    {
+        return artifactType is "task-suggestions" or "report-outline" or "ppt-outline" or "code-advice";
+    }
+
+    private static string? ResolveAgentArtifactTarget(string artifactType, bool hasRepository)
+    {
+        return artifactType switch
+        {
+            "report-outline" => "docx",
+            "ppt-outline" => "pptx",
+            "code-advice" => hasRepository ? "pull-request" : "patch",
+            _ => null
+        };
     }
 
     public async Task<ApiResponse<ChannelAttachmentResponse>> IndexChannelAttachmentAsync(Guid channelId, IFormFile file, CancellationToken cancellationToken = default)
@@ -404,18 +459,7 @@ public class AiCommandService(
         try
         {
             var provider = providerResult.Data;
-            var processed = await ProcessAttachmentAsync(fileBytes, fileName, contentType, provider, cancellationToken);
-            var chunks = BuildIndexChunks(processed.Sections).ToArray();
-            if (chunks.Length == 0)
-            {
-                return ApiResponse.Fail<ChannelAttachmentResponse>(
-                    "Attachment parsing returned no searchable content.",
-                    StatusCodes.Status422UnprocessableEntity);
-            }
-
-            attachment.Summary = TrimTo(processed.Summary, 4000);
-            attachment.ExtractedText = TrimTo(string.Join(Environment.NewLine, chunks.Select(chunk => chunk.Content)), MaxExtractedTextLength);
-            attachment.IsAiIndexed = true;
+            var indexed = await BuildAttachmentIndexAsync(attachment, fileBytes, provider, cancellationToken);
 
             dbContext.ChannelAttachments.Add(attachment);
             dbContext.ChannelAttachmentBlobs.Add(new ChannelAttachmentBlob
@@ -424,43 +468,14 @@ public class AiCommandService(
                 Content = fileBytes
             });
 
-            var chunkEntities = new List<ChannelKnowledgeChunk>();
-            var pineconeChunks = new List<PineconeKnowledgeChunk>();
-            for (var index = 0; index < chunks.Length; index++)
-            {
-                var chunk = chunks[index];
-                var chunkId = Guid.NewGuid();
-                var trimmedChunk = TrimTo(chunk.Content, 2500);
-                var embedding = await GenerateEmbeddingAsync(trimmedChunk, provider, cancellationToken);
-
-                chunkEntities.Add(new ChannelKnowledgeChunk
-                {
-                    Id = chunkId,
-                    WorkspaceId = channel.WorkspaceId,
-                    ChannelId = channelId,
-                    AttachmentId = attachment.Id,
-                    SourceType = chunk.SourceType,
-                    SourceLabel = chunk.SourceLabel,
-                    Content = trimmedChunk
-                });
-                pineconeChunks.Add(new PineconeKnowledgeChunk(
-                    chunkId,
-                    chunk.SourceType,
-                    chunk.SourceLabel,
-                    channel.Name,
-                    trimmedChunk,
-                    index + 1,
-                    embedding));
-            }
-
             await pineconeVectorStore.UpsertChunksAsync(
                 channel.WorkspaceId,
                 channelId,
                 attachment.Id,
-                pineconeChunks,
+                indexed.PineconeChunks,
                 cancellationToken);
 
-            dbContext.ChannelKnowledgeChunks.AddRange(chunkEntities);
+            dbContext.ChannelKnowledgeChunks.AddRange(indexed.ChunkEntities);
             await dbContext.SaveChangesAsync(cancellationToken);
             return ApiResponse.Created(attachment.ToResponse(), "Attachment indexed for channel AI.");
         }
@@ -476,6 +491,123 @@ public class AiCommandService(
         {
             return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
         }
+    }
+
+    public async Task<ApiResponse<ChannelAttachmentResponse>> IndexExistingChannelAttachmentAsync(Guid attachmentId, CancellationToken cancellationToken = default)
+    {
+        var userId = currentUser.GetUserId();
+        var attachment = await dbContext.ChannelAttachments
+            .Include(item => item.Blob)
+            .FirstOrDefaultAsync(item => item.Id == attachmentId, cancellationToken);
+        if (attachment?.Blob is null)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>("Attachment not found.", StatusCodes.Status404NotFound);
+        }
+
+        if (!await permissionService.CanAccessChannel(userId, attachment.ChannelId))
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>("Attachment not found or access denied.", StatusCodes.Status404NotFound);
+        }
+
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(attachment.WorkspaceId, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<ChannelAttachmentResponse>(providerResult);
+        }
+
+        try
+        {
+            if (attachment.IsAiIndexed)
+            {
+                await pineconeVectorStore.DeleteByAttachmentAsync(attachment.WorkspaceId, attachment.Id, cancellationToken);
+            }
+
+            var existingChunks = await dbContext.ChannelKnowledgeChunks
+                .Where(chunk => chunk.AttachmentId == attachment.Id)
+                .ToListAsync(cancellationToken);
+            dbContext.ChannelKnowledgeChunks.RemoveRange(existingChunks);
+
+            var indexed = await BuildAttachmentIndexAsync(attachment, attachment.Blob.Content, providerResult.Data, cancellationToken);
+            await pineconeVectorStore.UpsertChunksAsync(
+                attachment.WorkspaceId,
+                attachment.ChannelId,
+                attachment.Id,
+                indexed.PineconeChunks,
+                cancellationToken);
+
+            dbContext.ChannelKnowledgeChunks.AddRange(indexed.ChunkEntities);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return ApiResponse.Ok(attachment.ToResponse(), "Attachment indexed for channel AI.");
+        }
+        catch (AttachmentProcessingException ex)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, ex.StatusCode);
+        }
+        catch (AiProviderException ex)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
+        }
+        catch (PineconeVectorStoreException ex)
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
+        }
+    }
+
+    private async Task<AttachmentIndexBuildResult> BuildAttachmentIndexAsync(
+        ChannelAttachment attachment,
+        byte[] fileBytes,
+        AiProviderRuntime provider,
+        CancellationToken cancellationToken)
+    {
+        var processed = await ProcessAttachmentAsync(fileBytes, attachment.FileName, attachment.ContentType, provider, cancellationToken);
+        var chunks = BuildIndexChunks(processed.Sections).ToArray();
+        if (chunks.Length == 0)
+        {
+            throw new AttachmentProcessingException(
+                "Attachment parsing returned no searchable content.",
+                StatusCodes.Status422UnprocessableEntity);
+        }
+
+        attachment.Summary = TrimTo(processed.Summary, 4000);
+        attachment.ExtractedText = TrimTo(string.Join(Environment.NewLine, chunks.Select(chunk => chunk.Content)), MaxExtractedTextLength);
+        attachment.IsAiIndexed = true;
+
+        var channelName = attachment.Channel?.Name
+            ?? await dbContext.Channels
+                .AsNoTracking()
+                .Where(channel => channel.Id == attachment.ChannelId)
+                .Select(channel => channel.Name)
+                .FirstAsync(cancellationToken);
+        var chunkEntities = new List<ChannelKnowledgeChunk>();
+        var pineconeChunks = new List<PineconeKnowledgeChunk>();
+        for (var index = 0; index < chunks.Length; index++)
+        {
+            var chunk = chunks[index];
+            var chunkId = Guid.NewGuid();
+            var trimmedChunk = TrimTo(chunk.Content, 2500);
+            var embedding = await GenerateEmbeddingAsync(trimmedChunk, provider, cancellationToken);
+
+            chunkEntities.Add(new ChannelKnowledgeChunk
+            {
+                Id = chunkId,
+                WorkspaceId = attachment.WorkspaceId,
+                ChannelId = attachment.ChannelId,
+                AttachmentId = attachment.Id,
+                SourceType = chunk.SourceType,
+                SourceLabel = chunk.SourceLabel,
+                Content = trimmedChunk
+            });
+            pineconeChunks.Add(new PineconeKnowledgeChunk(
+                chunkId,
+                chunk.SourceType,
+                chunk.SourceLabel,
+                channelName,
+                trimmedChunk,
+                index + 1,
+                embedding));
+        }
+
+        return new AttachmentIndexBuildResult(chunkEntities, pineconeChunks);
     }
 
     public async Task<ApiResponse<IReadOnlyCollection<ChannelAttachmentResponse>>> ListChannelAttachmentsAsync(Guid channelId, CancellationToken cancellationToken = default)
@@ -1419,6 +1551,10 @@ public class AiCommandService(
     private sealed record AttachmentProcessingResult(string Summary, IReadOnlyCollection<AttachmentIndexSection> Sections);
 
     private sealed record AttachmentIndexSection(string SourceType, string SourceLabel, string Content);
+
+    private sealed record AttachmentIndexBuildResult(
+        IReadOnlyCollection<ChannelKnowledgeChunk> ChunkEntities,
+        IReadOnlyCollection<PineconeKnowledgeChunk> PineconeChunks);
 
     private sealed record PdfImagePayload(string ContentType, byte[] Bytes);
 

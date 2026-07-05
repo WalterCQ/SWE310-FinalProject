@@ -29,6 +29,7 @@ import {
   canShowTaskMutationControls,
 } from "../api/permissions.js";
 import { enumPriorityKey, enumTaskStatusKey, useI18n } from "../i18n.jsx";
+import { usePageRoleContext } from "../pageRoleContext.jsx";
 
 const blankForm = {
   title: "",
@@ -77,6 +78,7 @@ function compareTasksByDeadline(left, right) {
 
 export default function Tasks() {
   const { t } = useI18n();
+  const { setContextRole } = usePageRoleContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedProjectParam = searchParams.get("projectId") || "";
   const selectedTaskId = searchParams.get("taskId") || "";
@@ -115,6 +117,7 @@ export default function Tasks() {
   const selectedWorkspaceRole = selectedProject ? workspaceRolesById[selectedProject.workspaceId] : "";
   const selectedProjectRole = projectRolesById[selectedProjectId]
     ?? projectMembers.find((member) => isCurrentUser(member.userId))?.roleInProject;
+  const currentContextRole = isMyTasksView ? "" : selectedProjectRole || selectedWorkspaceRole;
   const canCreateSelectedProjectTask = canCreateProjectTask(selectedWorkspaceRole, selectedProjectRole);
   const showCreateTaskAction = !isMyTasksView && canCreateSelectedProjectTask;
 
@@ -144,6 +147,11 @@ export default function Tasks() {
       items: filteredTasks.filter((task) => task.statusLabel === status),
     }));
   }, [filteredTasks]);
+
+  useEffect(() => {
+    setContextRole(currentContextRole || "");
+    return () => setContextRole("");
+  }, [currentContextRole, setContextRole]);
 
   useEffect(() => {
     const nextSearch = searchParams.get("search") || "";

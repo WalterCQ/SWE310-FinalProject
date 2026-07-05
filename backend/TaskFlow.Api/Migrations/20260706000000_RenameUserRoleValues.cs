@@ -1,9 +1,14 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using TaskFlow.Api.Data;
 
 #nullable disable
 
 namespace TaskFlow.Api.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260706000000_RenameUserRoleValues")]
     public partial class RenameUserRoleValues : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

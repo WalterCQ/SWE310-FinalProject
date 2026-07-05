@@ -13,6 +13,20 @@ const technicalErrorPatterns = [
   /microsoft\./i,
   /sqlexception/i,
   /exception\b/i,
+  /stack trace/i,
+  /object reference not set/i,
+  /\bat\s+[A-Za-z0-9_.]+\(.*\)/,
+];
+
+const displayableBackendErrorPrefixes = [
+  "ai provider request failed:",
+  "pdf parsing failed:",
+  "pinecone ",
+];
+
+const forcedTechnicalErrorPatterns = [
+  /stack trace/i,
+  /object reference not set/i,
   /\bat\s+[A-Za-z0-9_.]+\(.*\)/,
 ];
 
@@ -25,14 +39,29 @@ function getStatusCode(error, payload) {
   return Number(statusCode) || 0;
 }
 
+function getRequestLabel(error) {
+  const method = String(error?.config?.method || "").trim().toUpperCase();
+  const url = String(error?.config?.url || "").trim();
+
+  if (!url) return "";
+  return [method, url].filter(Boolean).join(" ");
+}
+
 function isTechnicalErrorMessage(message) {
   const value = String(message || "").trim();
   if (!value) return false;
 
+  if (
+    displayableBackendErrorPrefixes.some((prefix) => value.toLowerCase().startsWith(prefix))
+    && !forcedTechnicalErrorPatterns.some((pattern) => pattern.test(value))
+  ) {
+    return false;
+  }
+
   return technicalErrorPatterns.some((pattern) => pattern.test(value));
 }
 
-function getStatusMessage(statusCode) {
+function getStatusMessage(statusCode, requestLabel = "") {
   if (statusCode === 0) return translateKey("api.unreachable");
   if (statusCode === 400 || statusCode === 422) return translateKey("api.badRequest");
   if (statusCode === 401) return translateKey("api.unauthorized");
@@ -41,21 +70,29 @@ function getStatusMessage(statusCode) {
   if (statusCode === 409) return translateKey("api.conflict");
   if (statusCode === 413) return translateKey("api.tooLarge");
   if (statusCode === 429) return translateKey("api.tooManyRequests");
+  if ((statusCode === 502 || statusCode === 503 || statusCode === 504) && requestLabel) {
+    return translateKey("api.serverErrorWithEndpoint", { statusCode, endpoint: requestLabel });
+  }
   if (statusCode === 502 || statusCode === 503 || statusCode === 504) return translateKey("api.serviceUnavailable");
+  if (statusCode >= 500 && requestLabel) {
+    return translateKey("api.serverErrorWithEndpoint", { statusCode, endpoint: requestLabel });
+  }
   if (statusCode >= 500) return translateKey("api.serverError");
 
   return translateKey("api.requestFailed");
 }
 
-function getDisplayMessage(message, statusCode) {
-  if (!message || isTechnicalErrorMessage(message) || statusCode >= 500) {
-    return getStatusMessage(statusCode);
+function getDisplayMessage(message, statusCode, requestLabel = "") {
+  const value = String(message || "").trim();
+
+  if (!value || isTechnicalErrorMessage(value)) {
+    return getStatusMessage(statusCode, requestLabel);
   }
 
-  return message;
+  return value;
 }
 
-function getDisplayErrors(errors, fallbackMessage, statusCode) {
+function getDisplayErrors(errors, fallbackMessage) {
   if (!Array.isArray(errors) || errors.length === 0) {
     return [fallbackMessage];
   }
@@ -64,11 +101,12 @@ function getDisplayErrors(errors, fallbackMessage, statusCode) {
     .map((error) => String(error || "").trim())
     .filter(Boolean);
 
-  if (messages.length === 0 || messages.some(isTechnicalErrorMessage) || statusCode >= 500) {
+  if (messages.length === 0) {
     return [fallbackMessage];
   }
 
-  return messages;
+  const safeMessages = messages.filter((message) => !isTechnicalErrorMessage(message));
+  return safeMessages.length > 0 ? safeMessages : [fallbackMessage];
 }
 
 export function normalizeApiError(error) {
@@ -82,11 +120,13 @@ export function normalizeApiError(error) {
   const responsePayload = error?.response?.data;
   const payload = responsePayload && typeof responsePayload === "object" ? responsePayload : error;
   const statusCode = getStatusCode(error, payload);
+  const requestLabel = getRequestLabel(error);
   const rawMessage = payload?.message || error?.message || "";
-  const message = getDisplayMessage(rawMessage, statusCode);
+  const message = getDisplayMessage(rawMessage, statusCode, requestLabel);
   const normalized = new Error(message);
 
-  normalized.errors = getDisplayErrors(payload?.errors, message, statusCode);
+  normalized.errors = getDisplayErrors(payload?.errors, message);
+  normalized.requestLabel = requestLabel;
   normalized.statusCode = statusCode;
 
   return normalized;
@@ -100,7 +140,7 @@ export function formatApiError(error) {
     return normalized.errors.join(" ");
   }
 
-  return normalized.message || getStatusMessage(normalized.statusCode || 0);
+  return normalized.message || getStatusMessage(normalized.statusCode || 0, normalized.requestLabel || "");
 }
 
 function unwrap(response) {

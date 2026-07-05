@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Lock, Mail } from "lucide-react";
+import { Eye, EyeOff, Folders, ListChecks, Lock, Mail, Sparkles } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
 import BrandMark from "../components/BrandMark.jsx";
 import { auth, formatApiError } from "../api/taskflowApi.js";
@@ -16,6 +16,14 @@ export default function Login() {
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const marqueeItems = [
+    t("auth.login.marquee.workspaces"),
+    t("auth.login.marquee.taskHandoffs"),
+    t("auth.login.marquee.aiContext"),
+    t("auth.login.marquee.liveData"),
+  ];
+  const marqueeLoopItems = Array.from({ length: 4 }, () => marqueeItems).flat();
 
   useEffect(() => {
     document.title = `${t("auth.login.title")} | TaskFlow`;
@@ -66,6 +74,16 @@ export default function Login() {
   return (
     <main className="login-page">
       <section className="login-hero">
+        <div className="login-marquee" aria-hidden="true">
+          <div className="login-marquee-track">
+            {marqueeLoopItems.map((item, index) => (
+              <span className="login-marquee-item" key={`${item}-${index}`}>
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+
         <div className="brand large">
           <BrandMark />
           <div>
@@ -74,22 +92,31 @@ export default function Login() {
           </div>
         </div>
 
-        <div>
+        <div className="login-hero-content">
           <span className="hero-kicker">{t("auth.login.heroKicker")}</span>
           <h2>{t("auth.login.heroTitle")}</h2>
           <p>{t("auth.login.heroBody")}</p>
           <div className="hero-orb">
             <div className="mini-board">
-              <strong>07</strong>
-              <span>{t("auth.login.overdueTasks")}</span>
+              <span className="mini-board-icon" aria-hidden="true">
+                <Folders size={18} />
+              </span>
+              <strong>{t("auth.login.workspaceSignalTitle")}</strong>
+              <span className="mini-board-copy">{t("auth.login.workspaceSignalBody")}</span>
             </div>
             <div className="mini-board">
-              <strong>15</strong>
-              <span>{t("auth.login.validationChecks")}</span>
+              <span className="mini-board-icon" aria-hidden="true">
+                <ListChecks size={18} />
+              </span>
+              <strong>{t("auth.login.taskSignalTitle")}</strong>
+              <span className="mini-board-copy">{t("auth.login.taskSignalBody")}</span>
             </div>
             <div className="mini-board">
-              <strong>04</strong>
-              <span>{t("auth.login.demoScreens")}</span>
+              <span className="mini-board-icon" aria-hidden="true">
+                <Sparkles size={18} />
+              </span>
+              <strong>{t("auth.login.aiSignalTitle")}</strong>
+              <span className="mini-board-copy">{t("auth.login.aiSignalBody")}</span>
             </div>
           </div>
         </div>
@@ -105,7 +132,14 @@ export default function Login() {
             {t("auth.email")}
             <div className="input-shell">
               <Mail size={16} />
-              <input name="email" value={form.email} onChange={updateField} placeholder={t("auth.placeholder.email")} />
+              <input
+                name="email"
+                type="email"
+                autoComplete="username"
+                value={form.email}
+                onChange={updateField}
+                placeholder={t("auth.placeholder.email")}
+              />
             </div>
             <ErrorMessage>{errors.email}</ErrorMessage>
           </label>
@@ -116,11 +150,21 @@ export default function Login() {
               <Lock size={16} />
               <input
                 name="password"
-                type="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
                 value={form.password}
                 onChange={updateField}
                 placeholder="••••••"
               />
+              <button
+                className="password-visibility-button"
+                type="button"
+                aria-label={showPassword ? t("auth.hidePassword") : t("auth.showPassword")}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((value) => !value)}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
             </div>
             <ErrorMessage>{errors.password}</ErrorMessage>
           </label>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, FolderKanban, GitPullRequest, KeyRound, Plus, Save, Trash2, UserPlus, Users } from "lucide-react";
 import { motion } from "motion/react";
 import { useSearchParams } from "react-router-dom";
@@ -10,6 +10,7 @@ import { auth, formatApiError, workspaces as workspacesApi } from "../api/taskfl
 import { asArray, mapWorkspace, mapWorkspaceMember } from "../api/mappers.js";
 import { canDeleteWorkspace, canManageWorkspaceMembers, isWorkspaceAdmin } from "../api/permissions.js";
 import { enumWorkspaceRoleKey, useI18n } from "../i18n.jsx";
+import { usePageRoleContext } from "../pageRoleContext.jsx";
 
 const colors = ["amber", "green", "red", "yellow"];
 const blankForm = { name: "", description: "" };
@@ -67,6 +68,7 @@ function blankGitHubState() {
 
 export default function Workspaces() {
   const { t } = useI18n();
+  const { setContextRole } = usePageRoleContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedWorkspaceId = searchParams.get("workspaceId") || "";
   const [currentUserId, setCurrentUserId] = useState(localStorage.getItem("userId") || "");
@@ -82,6 +84,14 @@ export default function Workspaces() {
   const [createError, setCreateError] = useState("");
   const workspaceNameRef = useRef(null);
   const githubSetupHandledRef = useRef("");
+
+  const currentWorkspaceRole = useMemo(() => {
+    const workspaceId = selectedWorkspaceId || workspaces[0]?.id || "";
+    const state = membersByWorkspace[workspaceId] || blankMemberState();
+    return state.items.find((member) =>
+      member.userId && currentUserId && String(member.userId).toLowerCase() === currentUserId.toLowerCase()
+    )?.role || "";
+  }, [currentUserId, membersByWorkspace, selectedWorkspaceId, workspaces]);
 
   useEffect(() => {
     let active = true;
@@ -127,6 +137,11 @@ export default function Workspaces() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    setContextRole(currentWorkspaceRole || "");
+    return () => setContextRole("");
+  }, [currentWorkspaceRole, setContextRole]);
 
   useEffect(() => {
     if (!selectedWorkspaceId || loading) return;
