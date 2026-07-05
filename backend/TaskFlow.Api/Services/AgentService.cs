@@ -25,11 +25,7 @@ public class AgentService(
             return ApiResponse.Fail<AgentJobResponse>("Agent access denied for this workspace.", StatusCodes.Status403Forbidden);
         }
 
-        var providerCredentialId = request.ProviderCredentialId
-            ?? await dbContext.AiProviderCredentials
-                .Where(credential => credential.UserId == userId && credential.IsDefault)
-                .Select(credential => (Guid?)credential.Id)
-                .FirstOrDefaultAsync(cancellationToken);
+        var providerCredentialId = request.ProviderCredentialId;
 
         if (providerCredentialId.HasValue)
         {

@@ -82,12 +82,12 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 "Get workspace AI provider metadata",
                 "Returns provider metadata for a workspace. Only workspace owners, workspace admins, and global admins can call this endpoint. Secret API key values are never returned.",
                 StatusCodes.Status200OK,
-                typeof(object)),
+                typeof(WorkspaceAiProviderResponse)),
             ["AiProviders.SaveWorkspaceProvider"] = new(
                 "Save a workspace AI provider",
                 "Creates or updates the workspace-level AI provider after validating the allowed HTTPS base URL. The API key is encrypted server-side and never returned.",
                 StatusCodes.Status200OK,
-                typeof(object)),
+                typeof(WorkspaceAiProviderResponse)),
             ["AiProviders.DeleteWorkspaceProvider"] = new(
                 "Delete a workspace AI provider",
                 "Deletes the workspace-level AI provider credential. Only workspace owners, workspace admins, and global admins can remove it.",

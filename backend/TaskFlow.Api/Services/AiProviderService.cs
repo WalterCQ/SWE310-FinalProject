@@ -11,9 +11,18 @@ namespace TaskFlow.Api.Services;
 public class AiProviderService(
     AppDbContext dbContext,
     ICurrentUserService currentUser,
-    IDataProtectionProvider dataProtectionProvider) : IAiProviderService
+    IPermissionService permissionService,
+    IDataProtectionProvider dataProtectionProvider,
+    IConfiguration configuration,
+    IHostEnvironment environment) : IAiProviderService
 {
     private const string ProtectorPurpose = "TaskFlow.AiProviderCredential.v1";
+    private const string WorkspaceProtectorPurpose = "TaskFlow.WorkspaceAiProviderCredential.v1";
+    private static readonly string[] DefaultAllowedBaseUrls =
+    [
+        "https://api.openai.com/v1",
+        "https://api.siliconflow.cn/v1"
+    ];
 
     public async Task<ApiResponse<AiProviderResponse>> SaveProviderAsync(SaveAiProviderRequest request, CancellationToken cancellationToken = default)
     {
@@ -48,7 +57,7 @@ public class AiProviderService(
             BaseUrl = string.IsNullOrWhiteSpace(request.BaseUrl) ? null : request.BaseUrl.Trim().TrimEnd('/'),
             Model = request.Model.Trim(),
             EncryptedApiKey = Protect(request.ApiKey.Trim()),
-            SupportsToolCalls = ResolveToolCallSupport(request),
+            SupportsToolCalls = ResolveToolCallSupport(request.ProviderName, request.BaseUrl, request.SupportsToolCalls),
             IsDefault = request.IsDefault
         };
 
@@ -77,9 +86,147 @@ public class AiProviderService(
         return ApiResponse.Ok(response);
     }
 
+    public async Task<ApiResponse<WorkspaceAiProviderResponse>> GetWorkspaceProviderAsync(Guid workspaceId, CancellationToken cancellationToken = default)
+    {
+        var access = await EnsureCanManageWorkspace(workspaceId, cancellationToken);
+        if (!access.Success)
+        {
+            return ApiResponse.Fail<WorkspaceAiProviderResponse>(access.Message, access.StatusCode, access.Errors);
+        }
+
+        var credential = await dbContext.WorkspaceAiProviderCredentials
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.WorkspaceId == workspaceId, cancellationToken);
+        if (credential is null)
+        {
+            return ApiResponse.Fail<WorkspaceAiProviderResponse>("Workspace AI provider is not configured.", StatusCodes.Status404NotFound);
+        }
+
+        return ApiResponse.Ok(ToWorkspaceResponse(credential));
+    }
+
+    public async Task<ApiResponse<WorkspaceAiProviderResponse>> SaveWorkspaceProviderAsync(
+        Guid workspaceId,
+        SaveWorkspaceAiProviderRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var access = await EnsureCanManageWorkspace(workspaceId, cancellationToken);
+        if (!access.Success)
+        {
+            return ApiResponse.Fail<WorkspaceAiProviderResponse>(access.Message, access.StatusCode, access.Errors);
+        }
+
+        var baseUrlResult = ResolveWorkspaceBaseUrl(request.ProviderName, request.BaseUrl);
+        if (!baseUrlResult.Success || baseUrlResult.Data is null)
+        {
+            return ApiResponse.Fail<WorkspaceAiProviderResponse>(baseUrlResult.Message, baseUrlResult.StatusCode, baseUrlResult.Errors);
+        }
+
+        var userId = currentUser.GetUserId();
+        var now = DateTime.UtcNow;
+        var credential = await dbContext.WorkspaceAiProviderCredentials
+            .FirstOrDefaultAsync(item => item.WorkspaceId == workspaceId, cancellationToken);
+        var isCreate = credential is null;
+        if (credential is null)
+        {
+            if (string.IsNullOrWhiteSpace(request.ApiKey))
+            {
+                return ApiResponse.Fail<WorkspaceAiProviderResponse>("API key is required when creating a workspace AI provider.");
+            }
+
+            credential = new WorkspaceAiProviderCredential
+            {
+                Id = Guid.NewGuid(),
+                WorkspaceId = workspaceId,
+                CreatedByUserId = userId,
+                CreatedAtUtc = now
+            };
+            dbContext.WorkspaceAiProviderCredentials.Add(credential);
+        }
+
+        credential.ProviderName = request.ProviderName.Trim();
+        credential.BaseUrl = baseUrlResult.Data;
+        credential.Model = request.Model.Trim();
+        credential.SupportsToolCalls = ResolveToolCallSupport(request.ProviderName, baseUrlResult.Data, request.SupportsToolCalls);
+        credential.UpdatedByUserId = userId;
+        credential.UpdatedAtUtc = now;
+
+        if (!string.IsNullOrWhiteSpace(request.ApiKey))
+        {
+            credential.EncryptedApiKey = ProtectWorkspace(request.ApiKey.Trim());
+            credential.KeyLastUpdatedAtUtc = now;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return isCreate
+            ? ApiResponse.Created(ToWorkspaceResponse(credential), "Workspace AI provider saved.")
+            : ApiResponse.Ok(ToWorkspaceResponse(credential), "Workspace AI provider updated.");
+    }
+
+    public async Task<ApiResponse<bool>> DeleteWorkspaceProviderAsync(Guid workspaceId, CancellationToken cancellationToken = default)
+    {
+        var access = await EnsureCanManageWorkspace(workspaceId, cancellationToken);
+        if (!access.Success)
+        {
+            return ApiResponse.Fail<bool>(access.Message, access.StatusCode, access.Errors);
+        }
+
+        var credential = await dbContext.WorkspaceAiProviderCredentials
+            .FirstOrDefaultAsync(item => item.WorkspaceId == workspaceId, cancellationToken);
+        if (credential is null)
+        {
+            return ApiResponse.Fail<bool>("Workspace AI provider is not configured.", StatusCodes.Status404NotFound);
+        }
+
+        dbContext.WorkspaceAiProviderCredentials.Remove(credential);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return ApiResponse.NoData("Workspace AI provider deleted.");
+    }
+
+    public async Task<ApiResponse<AiProviderRuntime>> ResolveWorkspaceProviderAsync(Guid workspaceId, CancellationToken cancellationToken = default)
+    {
+        var credential = await dbContext.WorkspaceAiProviderCredentials
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.WorkspaceId == workspaceId, cancellationToken);
+        if (credential is null)
+        {
+            return ApiResponse.Fail<AiProviderRuntime>("Workspace AI provider is not configured.", StatusCodes.Status400BadRequest);
+        }
+
+        if (string.IsNullOrWhiteSpace(credential.EncryptedApiKey))
+        {
+            return ApiResponse.Fail<AiProviderRuntime>("Workspace AI provider API key is not configured.", StatusCodes.Status400BadRequest);
+        }
+
+        try
+        {
+            var apiKey = UnprotectWorkspace(dataProtectionProvider, credential.EncryptedApiKey);
+            return ApiResponse.Ok(new AiProviderRuntime
+            {
+                ProviderName = credential.ProviderName,
+                BaseUrl = credential.BaseUrl ?? "https://api.openai.com/v1",
+                Model = credential.Model,
+                ApiKey = apiKey,
+                SupportsToolCalls = credential.SupportsToolCalls
+            });
+        }
+        catch
+        {
+            return ApiResponse.Fail<AiProviderRuntime>(
+                "Workspace AI provider secret could not be decrypted. Re-save the workspace AI provider API key.",
+                StatusCodes.Status500InternalServerError);
+        }
+    }
+
     private string Protect(string apiKey)
     {
         return dataProtectionProvider.CreateProtector(ProtectorPurpose).Protect(apiKey);
+    }
+
+    private string ProtectWorkspace(string apiKey)
+    {
+        return dataProtectionProvider.CreateProtector(WorkspaceProtectorPurpose).Protect(apiKey);
     }
 
     public static string Unprotect(IDataProtectionProvider dataProtectionProvider, string encryptedApiKey)
@@ -87,15 +234,104 @@ public class AiProviderService(
         return dataProtectionProvider.CreateProtector(ProtectorPurpose).Unprotect(encryptedApiKey);
     }
 
-    private static bool ResolveToolCallSupport(SaveAiProviderRequest request)
+    private static string UnprotectWorkspace(IDataProtectionProvider dataProtectionProvider, string encryptedApiKey)
     {
-        if (request.SupportsToolCalls.HasValue)
+        return dataProtectionProvider.CreateProtector(WorkspaceProtectorPurpose).Unprotect(encryptedApiKey);
+    }
+
+    private async Task<ApiResponse<bool>> EnsureCanManageWorkspace(Guid workspaceId, CancellationToken cancellationToken)
+    {
+        if (!currentUser.IsAuthenticated())
         {
-            return request.SupportsToolCalls.Value;
+            return ApiResponse.Fail<bool>("Authentication is required.", StatusCodes.Status401Unauthorized);
         }
 
-        var providerName = request.ProviderName.Trim();
-        var baseUrl = request.BaseUrl?.Trim();
+        var userId = currentUser.GetUserId();
+        if (userId == Guid.Empty)
+        {
+            return ApiResponse.Fail<bool>("Authenticated user id is missing.", StatusCodes.Status401Unauthorized);
+        }
+
+        var workspaceExists = await dbContext.Workspaces
+            .AsNoTracking()
+            .AnyAsync(workspace => workspace.Id == workspaceId, cancellationToken);
+        if (!workspaceExists)
+        {
+            return ApiResponse.Fail<bool>("Workspace not found.", StatusCodes.Status404NotFound);
+        }
+
+        if (!await permissionService.CanManageWorkspace(userId, workspaceId))
+        {
+            return ApiResponse.Fail<bool>("Only workspace owners, workspace admins, or global admins can manage the workspace AI provider.", StatusCodes.Status403Forbidden);
+        }
+
+        return ApiResponse.Ok(true);
+    }
+
+    private ApiResponse<string> ResolveWorkspaceBaseUrl(string providerName, string? requestedBaseUrl)
+    {
+        var baseUrl = string.IsNullOrWhiteSpace(requestedBaseUrl)
+            ? ResolveDefaultBaseUrl(providerName)
+            : requestedBaseUrl.Trim();
+        baseUrl = baseUrl.TrimEnd('/');
+
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+        {
+            return ApiResponse.Fail<string>("AI provider BaseUrl must be an absolute URL.");
+        }
+
+        var isDevelopmentLoopback = environment.IsDevelopment()
+            && (uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
+        if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) && !isDevelopmentLoopback)
+        {
+            return ApiResponse.Fail<string>("AI provider BaseUrl must use HTTPS outside Development.");
+        }
+
+        if (!isDevelopmentLoopback && !AllowedBaseUrls().Contains(baseUrl, StringComparer.OrdinalIgnoreCase))
+        {
+            return ApiResponse.Fail<string>("AI provider BaseUrl is not allowed for this backend.", StatusCodes.Status400BadRequest);
+        }
+
+        return ApiResponse.Ok(baseUrl);
+    }
+
+    private string ResolveDefaultBaseUrl(string providerName)
+    {
+        if (providerName.Equals("OpenAI", StringComparison.OrdinalIgnoreCase))
+        {
+            return "https://api.openai.com/v1";
+        }
+
+        if (providerName.Contains("Silicon", StringComparison.OrdinalIgnoreCase))
+        {
+            return "https://api.siliconflow.cn/v1";
+        }
+
+        return configuration["AI:BaseUrl"]
+            ?? configuration["AI:Endpoint"]
+            ?? "https://api.openai.com/v1";
+    }
+
+    private IReadOnlyCollection<string> AllowedBaseUrls()
+    {
+        var configured = configuration.GetSection("AI:AllowedBaseUrls").Get<string[]>() ?? [];
+        return configured
+            .Concat(DefaultAllowedBaseUrls)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim().TrimEnd('/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool ResolveToolCallSupport(string providerName, string? baseUrl, bool? supportsToolCalls)
+    {
+        if (supportsToolCalls.HasValue)
+        {
+            return supportsToolCalls.Value;
+        }
+
+        providerName = providerName.Trim();
+        baseUrl = baseUrl?.Trim();
         return providerName.Equals("OpenAI", StringComparison.OrdinalIgnoreCase)
             && (string.IsNullOrWhiteSpace(baseUrl)
                 || baseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase));
@@ -114,6 +350,22 @@ public class AiProviderService(
             HasApiKey = !string.IsNullOrWhiteSpace(credential.EncryptedApiKey),
             CreatedAtUtc = credential.CreatedAtUtc,
             UpdatedAtUtc = credential.UpdatedAtUtc
+        };
+    }
+
+    private static WorkspaceAiProviderResponse ToWorkspaceResponse(WorkspaceAiProviderCredential credential)
+    {
+        return new WorkspaceAiProviderResponse
+        {
+            WorkspaceId = credential.WorkspaceId,
+            ProviderName = credential.ProviderName,
+            BaseUrl = credential.BaseUrl,
+            Model = credential.Model,
+            SupportsToolCalls = credential.SupportsToolCalls,
+            HasApiKey = !string.IsNullOrWhiteSpace(credential.EncryptedApiKey),
+            CreatedAtUtc = credential.CreatedAtUtc,
+            UpdatedAtUtc = credential.UpdatedAtUtc,
+            KeyLastUpdatedAtUtc = credential.KeyLastUpdatedAtUtc
         };
     }
 }

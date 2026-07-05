@@ -18,6 +18,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
     public DbSet<AiProviderCredential> AiProviderCredentials => Set<AiProviderCredential>();
+    public DbSet<WorkspaceAiProviderCredential> WorkspaceAiProviderCredentials => Set<WorkspaceAiProviderCredential>();
     public DbSet<ChannelAttachment> ChannelAttachments => Set<ChannelAttachment>();
     public DbSet<ChannelKnowledgeChunk> ChannelKnowledgeChunks => Set<ChannelKnowledgeChunk>();
     public DbSet<AgentJob> AgentJobs => Set<AgentJob>();
@@ -208,6 +209,27 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(credential => credential.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<WorkspaceAiProviderCredential>(entity =>
+        {
+            entity.HasIndex(credential => credential.WorkspaceId).IsUnique();
+            entity.Property(credential => credential.ProviderName).HasMaxLength(80);
+            entity.Property(credential => credential.BaseUrl).HasMaxLength(500);
+            entity.Property(credential => credential.Model).HasMaxLength(120);
+            entity.Property(credential => credential.EncryptedApiKey).HasMaxLength(4000);
+            entity.HasOne(credential => credential.Workspace)
+                .WithMany()
+                .HasForeignKey(credential => credential.WorkspaceId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(credential => credential.CreatedByUser)
+                .WithMany()
+                .HasForeignKey(credential => credential.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(credential => credential.UpdatedByUser)
+                .WithMany()
+                .HasForeignKey(credential => credential.UpdatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ChannelAttachment>(entity =>

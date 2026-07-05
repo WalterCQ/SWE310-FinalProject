@@ -20,6 +20,7 @@ public class AgentJobProcessor(
     ITaskService taskService,
     INotificationService notificationService,
     IDashboardService dashboardService,
+    IAiProviderService aiProviderService,
     IDataProtectionProvider dataProtectionProvider,
     IHttpClientFactory httpClientFactory,
     ILogger<AgentJobProcessor> logger)
@@ -383,7 +384,13 @@ public class AgentJobProcessor(
     {
         if (!job.ProviderCredentialId.HasValue)
         {
-            return "No user provider configured; using deterministic local planning.";
+            var workspaceProviderResult = await aiProviderService.ResolveWorkspaceProviderAsync(job.WorkspaceId, cancellationToken);
+            if (!workspaceProviderResult.Success || workspaceProviderResult.Data is null)
+            {
+                throw new InvalidOperationException(workspaceProviderResult.Message);
+            }
+
+            return await RequestPlanNotesAsync(workspaceProviderResult.Data, job, subAgents, cancellationToken);
         }
 
         var credential = await dbContext.AiProviderCredentials
@@ -391,47 +398,60 @@ public class AgentJobProcessor(
             .FirstOrDefaultAsync(item => item.Id == job.ProviderCredentialId.Value && item.UserId == job.UserId, cancellationToken);
         if (credential is null)
         {
-            return "Configured provider was not found for this user; using deterministic local planning.";
+            throw new InvalidOperationException("Configured provider was not found for this user.");
         }
 
-        try
+        var runtime = new AiProviderRuntime
         {
-            var apiKey = AiProviderService.Unprotect(dataProtectionProvider, credential.EncryptedApiKey);
-            var baseUrl = string.IsNullOrWhiteSpace(credential.BaseUrl)
+            ProviderName = credential.ProviderName,
+            BaseUrl = string.IsNullOrWhiteSpace(credential.BaseUrl)
                 ? "https://api.openai.com/v1"
-                : credential.BaseUrl.TrimEnd('/');
-            var client = httpClientFactory.CreateClient();
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-            request.Content = new StringContent(JsonSerializer.Serialize(new
-            {
-                model = credential.Model,
-                messages = new[]
-                {
-                    new { role = "system", content = "You are planning a safe TaskFlow Agent run. Return concise implementation notes only. Do not request direct database access." },
-                    new { role = "user", content = $"Goal: {job.Goal}\nSubagents: {string.Join(", ", subAgents)}\nSupportsToolCalls: {credential.SupportsToolCalls}" }
-                }
-            }, JsonOptions), Encoding.UTF8, "application/json");
+                : credential.BaseUrl.TrimEnd('/'),
+            Model = credential.Model,
+            ApiKey = AiProviderService.Unprotect(dataProtectionProvider, credential.EncryptedApiKey),
+            SupportsToolCalls = credential.SupportsToolCalls
+        };
+        return await RequestPlanNotesAsync(runtime, job, subAgents, cancellationToken);
+    }
 
-            using var response = await client.SendAsync(request, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                return $"Provider planning call failed with {(int)response.StatusCode}: {Shorten(body, 400)}";
-            }
-
-            using var document = JsonDocument.Parse(body);
-            var content = document.RootElement
-                .GetProperty("choices")[0]
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString();
-            return string.IsNullOrWhiteSpace(content) ? "Provider returned an empty planning note." : content;
-        }
-        catch (Exception ex)
+    private async Task<string?> RequestPlanNotesAsync(
+        AiProviderRuntime provider,
+        AgentJob job,
+        IReadOnlyCollection<string> subAgents,
+        CancellationToken cancellationToken)
+    {
+        var client = httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{provider.BaseUrl.TrimEnd('/')}/chat/completions");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
+        request.Content = new StringContent(JsonSerializer.Serialize(new
         {
-            return $"Provider planning call failed: {ex.Message}";
+            model = provider.Model,
+            messages = new[]
+            {
+                new { role = "system", content = "You are planning a safe TaskFlow Agent run. Return concise implementation notes only. Do not request direct database access." },
+                new { role = "user", content = $"Goal: {job.Goal}\nSubagents: {string.Join(", ", subAgents)}\nSupportsToolCalls: {provider.SupportsToolCalls}" }
+            }
+        }, JsonOptions), Encoding.UTF8, "application/json");
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Provider planning call failed with {(int)response.StatusCode}: {Shorten(RedactSecret(body, provider.ApiKey), 400)}");
         }
+
+        using var document = JsonDocument.Parse(body);
+        var content = document.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString();
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw new InvalidOperationException("Provider returned an empty planning note.");
+        }
+
+        return content;
     }
 
     private AgentStep AddStep(Guid jobId, string name, string subAgentName, int sequence)
@@ -558,6 +578,13 @@ public class AgentJobProcessor(
     private static string Shorten(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength].TrimEnd() + "...";
+    }
+
+    private static string RedactSecret(string value, string secret)
+    {
+        return string.IsNullOrWhiteSpace(secret)
+            ? value
+            : value.Replace(secret, "[redacted]", StringComparison.Ordinal);
     }
 
     private static string BuildCodePatchArtifact(string goal)

@@ -24,6 +24,7 @@ builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
+builder.Services.AddScoped<IAiProviderService, AiProviderService>();
 builder.Services.AddScoped<AgentJobProcessor>();
 builder.Services.AddHostedService<AgentWorkerService>();
 

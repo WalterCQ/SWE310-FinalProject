@@ -16,6 +16,26 @@ public class AiProviderCredential
     public User? User { get; set; }
 }
 
+public class WorkspaceAiProviderCredential
+{
+    public Guid Id { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public string ProviderName { get; set; } = string.Empty;
+    public string? BaseUrl { get; set; }
+    public string Model { get; set; } = string.Empty;
+    public string EncryptedApiKey { get; set; } = string.Empty;
+    public bool SupportsToolCalls { get; set; }
+    public Guid CreatedByUserId { get; set; }
+    public Guid UpdatedByUserId { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime KeyLastUpdatedAtUtc { get; set; } = DateTime.UtcNow;
+
+    public Workspace? Workspace { get; set; }
+    public User? CreatedByUser { get; set; }
+    public User? UpdatedByUser { get; set; }
+}
+
 public class AgentJob
 {
     public Guid Id { get; set; }

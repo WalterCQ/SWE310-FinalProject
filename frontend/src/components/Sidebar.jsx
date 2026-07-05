@@ -11,6 +11,7 @@ import {
 import { clearAuthStorage } from "../api/authStorage.js";
 import { useI18n } from "../i18n.jsx";
 import Avatar from "./Avatar.jsx";
+import BrandMark from "./BrandMark.jsx";
 
 const navItems = [
   { labelKey: "nav.dashboard", path: "/dashboard", icon: LayoutDashboard },
@@ -37,7 +38,7 @@ export default function Sidebar({ user }) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">TF</div>
+        <BrandMark />
         <div>
           <h1>TaskFlow</h1>
           <span>{t("app.brand.projectBoard")}</span>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import ErrorMessage from "../components/ErrorMessage.jsx";
+import BrandMark from "../components/BrandMark.jsx";
 import { auth, formatApiError } from "../api/taskflowApi.js";
 import { storeAuthUser } from "../api/authStorage.js";
 import { useI18n } from "../i18n.jsx";
@@ -66,7 +67,7 @@ export default function Login() {
     <main className="login-page">
       <section className="login-hero">
         <div className="brand large">
-          <div className="brand-mark">TF</div>
+          <BrandMark />
           <div>
             <h1>TaskFlow</h1>
             <span>{t("app.brand.projectBoardSwe310")}</span>

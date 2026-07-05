@@ -41,7 +41,7 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "TaskFlow Connect API",
         Version = "v1",
-        Description = "Backend API for workspace, channel, project, task, member-management, notification, SignalR, and AI assistant workflows. Every business endpoint returns an ApiResponse<T> envelope and documents validation, authorization, not-found, membership business rules, and AI fallback behavior."
+        Description = "Backend API for workspace, channel, project, task, member-management, notification, SignalR, and AI assistant workflows. Every business endpoint returns an ApiResponse<T> envelope and documents validation, authorization, not-found, membership business rules, and workspace AI provider requirements."
     });
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {

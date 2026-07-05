@@ -25,14 +25,10 @@ public class AiCommandService(
     IPermissionService permissionService,
     IChannelService channelService,
     IDashboardService dashboardService,
+    IAiProviderService aiProviderService,
     CollaborationAiPlugin collaborationAiPlugin,
     IHttpClientFactory httpClientFactory) : IAiCommandService
 {
-    private const string DefaultBaseUrl = "https://api.siliconflow.cn/v1";
-    private const string DefaultMainModel = "deepseek-ai/DeepSeek-V4-Flash";
-    private const string DefaultProModel = "deepseek-ai/DeepSeek-V4-Pro";
-    private const string DefaultVisionModel = "Qwen/Qwen3.5-35B-A3B";
-    private const string DefaultEmbeddingModel = "Qwen/Qwen3-Embedding-4B";
     private const int MaxUploadBytes = 20_000_000;
     private const int MaxExtractedTextLength = 60_000;
     private const int MaxChunksPerAttachment = 24;
@@ -46,13 +42,19 @@ public class AiCommandService(
             return ApiResponse.Fail<AiResponse>("AI command access denied.", StatusCodes.Status403Forbidden);
         }
 
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(request.WorkspaceId, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<AiResponse>(providerResult);
+        }
+
         var prompt = $"""
             You are the TaskFlow Connect assistant. Use the available collaboration plugin functions only when the user asks to read or modify real app data.
             Workspace id: {request.WorkspaceId}
             User command: {request.Command}
             """;
 
-        return await AskLlmOrFallback(prompt, $"AI provider is not configured. Received command: {request.Command}", cancellationToken);
+        return await AskLlmOrFail(providerResult.Data, prompt, cancellationToken);
     }
 
     public async Task<ApiResponse<AiResponse>> SummarizeChannelAsync(AiChannelSummaryRequest request, CancellationToken cancellationToken = default)
@@ -63,12 +65,24 @@ public class AiCommandService(
             return ApiResponse.Fail<AiResponse>(messagesResult.Message, messagesResult.StatusCode, messagesResult.Errors);
         }
 
-        var context = string.Join(Environment.NewLine, messagesResult.Data.TakeLast(50).Select(message => $"{message.SenderName}: {message.Content}"));
-        var fallback = string.IsNullOrWhiteSpace(context)
-            ? "No messages found in this channel yet."
-            : $"Recent channel activity includes {messagesResult.Data.Count()} messages. Latest: {messagesResult.Data.Last().Content}";
+        var workspaceId = await GetChannelWorkspaceIdAsync(request.ChannelId, cancellationToken);
+        if (!workspaceId.HasValue)
+        {
+            return ApiResponse.Fail<AiResponse>("Channel not found.", StatusCodes.Status404NotFound);
+        }
 
-        return await AskLlmOrFallback($"Summarize this channel discussion clearly for a project team:\n{context}", fallback, cancellationToken);
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(workspaceId.Value, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<AiResponse>(providerResult);
+        }
+
+        var context = string.Join(Environment.NewLine, messagesResult.Data.TakeLast(50).Select(message => $"{message.SenderName}: {message.Content}"));
+        var prompt = string.IsNullOrWhiteSpace(context)
+            ? "Summarize this channel discussion clearly for a project team. The channel has no messages yet."
+            : $"Summarize this channel discussion clearly for a project team:\n{context}";
+
+        return await AskLlmOrFail(providerResult.Data, prompt, cancellationToken);
     }
 
     public async Task<ApiResponse<AiResponse>> SummarizeProjectAsync(AiProjectSummaryRequest request, CancellationToken cancellationToken = default)
@@ -79,9 +93,21 @@ public class AiCommandService(
             return ApiResponse.Fail<AiResponse>(dashboardResult.Message, dashboardResult.StatusCode, dashboardResult.Errors);
         }
 
+        var workspaceId = await GetProjectWorkspaceIdAsync(request.ProjectId, cancellationToken);
+        if (!workspaceId.HasValue)
+        {
+            return ApiResponse.Fail<AiResponse>("Project not found.", StatusCodes.Status404NotFound);
+        }
+
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(workspaceId.Value, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<AiResponse>(providerResult);
+        }
+
         var dashboard = dashboardResult.Data;
-        var fallback = $"Project has {dashboard.TaskCount} tasks, {dashboard.CompletedTaskCount} completed, {dashboard.OverdueTaskCount} overdue, and {dashboard.CompletionRate}% completion.";
-        return await AskLlmOrFallback($"Summarize this project dashboard for stakeholders:\n{fallback}", fallback, cancellationToken);
+        var context = $"Project has {dashboard.TaskCount} tasks, {dashboard.CompletedTaskCount} completed, {dashboard.OverdueTaskCount} overdue, and {dashboard.CompletionRate}% completion.";
+        return await AskLlmOrFail(providerResult.Data, $"Summarize this project dashboard for stakeholders:\n{context}", cancellationToken);
     }
 
     public async Task<ApiResponse<AiResponse>> AnalyzeProjectRiskAsync(AiRiskAnalysisRequest request, CancellationToken cancellationToken = default)
@@ -92,12 +118,24 @@ public class AiCommandService(
             return ApiResponse.Fail<AiResponse>(dashboardResult.Message, dashboardResult.StatusCode, dashboardResult.Errors);
         }
 
+        var workspaceId = await GetProjectWorkspaceIdAsync(request.ProjectId, cancellationToken);
+        if (!workspaceId.HasValue)
+        {
+            return ApiResponse.Fail<AiResponse>("Project not found.", StatusCodes.Status404NotFound);
+        }
+
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(workspaceId.Value, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<AiResponse>(providerResult);
+        }
+
         var dashboard = dashboardResult.Data;
-        var fallback = dashboard.OverdueTaskCount > 0
+        var context = dashboard.OverdueTaskCount > 0
             ? $"Risk detected: {dashboard.OverdueTaskCount} overdue tasks and {dashboard.CompletionRate}% completion."
             : $"No overdue tasks detected. Completion is {dashboard.CompletionRate}%.";
 
-        return await AskLlmOrFallback($"Analyze delivery risk from this project dashboard:\n{fallback}", fallback, cancellationToken);
+        return await AskLlmOrFail(providerResult.Data, $"Analyze delivery risk from this project dashboard:\n{context}", cancellationToken);
     }
 
     public async Task<ApiResponse<AiResponse>> GenerateTasksFromMessageAsync(AiGenerateTasksFromMessageRequest request, CancellationToken cancellationToken = default)
@@ -108,14 +146,25 @@ public class AiCommandService(
             return ApiResponse.Fail<AiResponse>("You do not have permission to generate tasks for this project.", StatusCodes.Status403Forbidden);
         }
 
+        var workspaceId = await GetProjectWorkspaceIdAsync(request.ProjectId, cancellationToken);
+        if (!workspaceId.HasValue)
+        {
+            return ApiResponse.Fail<AiResponse>("Project not found.", StatusCodes.Status404NotFound);
+        }
+
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(workspaceId.Value, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<AiResponse>(providerResult);
+        }
+
         var content = request.MessageContent;
         if (string.IsNullOrWhiteSpace(content))
         {
             content = "No message content was provided. Ask the frontend to send MessageContent or wire MessageId lookup later.";
         }
 
-        var fallback = $"Suggested task: Review and follow up on: {content}";
-        return await AskLlmOrFallback($"Turn this team message into concise task suggestions:\n{content}", fallback, cancellationToken);
+        return await AskLlmOrFail(providerResult.Data, $"Turn this team message into concise task suggestions:\n{content}", cancellationToken);
     }
 
     public async Task<ApiResponse<AiResponse>> AskWorkspaceKnowledgeAsync(AiWorkspaceQuestionRequest request, CancellationToken cancellationToken = default)
@@ -132,6 +181,12 @@ public class AiCommandService(
         if (!await permissionService.CanAccessWorkspace(userId, request.WorkspaceId))
         {
             return ApiResponse.Fail<AiResponse>("Workspace knowledge access denied.", StatusCodes.Status403Forbidden);
+        }
+
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(request.WorkspaceId, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ToProviderFailure<AiResponse>(providerResult);
         }
 
         var snippets = await RetrieveWorkspaceKnowledgeAsync(request.WorkspaceId, userId, cancellationToken);
@@ -162,9 +217,8 @@ public class AiCommandService(
             TaskFlow context:
             {context}
             """;
-        var fallback = $"AI provider is not configured. I found related TaskFlow records: {string.Join("; ", sources.Take(5))}.";
 
-        return await AskLlmOrFallback(prompt, fallback, cancellationToken, sources);
+        return await AskLlmOrFail(providerResult.Data, prompt, cancellationToken, sources);
     }
 
     public async Task<ApiResponse<AiChannelCommandResponse>> HandleChannelMentionAsync(Guid channelId, AiChannelCommandRequest request, CancellationToken cancellationToken = default)
@@ -189,10 +243,12 @@ public class AiCommandService(
             return ApiResponse.Fail<AiChannelCommandResponse>("AI command access denied.", StatusCodes.Status403Forbidden);
         }
 
-        if (!HasLlmConfiguration())
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(channel.WorkspaceId, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
         {
-            return ApiResponse.Fail<AiChannelCommandResponse>("AI provider is not configured. Set AI:ApiKey on the backend before using @TaskFlow AI.");
+            return ToProviderFailure<AiChannelCommandResponse>(providerResult);
         }
+        var provider = providerResult.Data;
 
         if (request.AttachmentId.HasValue)
         {
@@ -234,6 +290,7 @@ public class AiCommandService(
                 userId,
                 command,
                 request.AttachmentId,
+                provider,
                 cancellationToken);
             var ragSnippets = workspaceMessageSnippets
                 .Concat(attachmentSnippets)
@@ -248,11 +305,12 @@ public class AiCommandService(
 
             var artifactType = ResolveArtifactType(command);
             var prompt = BuildChannelAiPrompt(channel.Name, artifactType, command, messageContext, ragContext);
-            var model = ShouldUseProModel(command) ? ResolveProModel() : ResolveMainModel();
+            var model = ShouldUseProModel(command) ? ResolveProModel(provider) : ResolveMainModel(provider);
             var result = await InvokeChatCompletionAsync(
                 model,
                 "You are TaskFlow AI, a channel member inside a project collaboration app. Use only the provided accessible context.",
                 prompt,
+                provider,
                 cancellationToken);
 
             var sources = ragSnippets
@@ -299,10 +357,12 @@ public class AiCommandService(
             return ApiResponse.Fail<ChannelAttachmentResponse>("Channel not found or access denied.", StatusCodes.Status404NotFound);
         }
 
-        if (!HasLlmConfiguration())
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(channel.WorkspaceId, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
         {
-            return ApiResponse.Fail<ChannelAttachmentResponse>("AI provider is not configured. Set AI:ApiKey on the backend before uploading AI-indexed attachments.");
+            return ToProviderFailure<ChannelAttachmentResponse>(providerResult);
         }
+        var provider = providerResult.Data;
 
         if (file is null || file.Length == 0)
         {
@@ -316,7 +376,7 @@ public class AiCommandService(
 
         try
         {
-            var processed = await ProcessAttachmentAsync(file, cancellationToken);
+            var processed = await ProcessAttachmentAsync(file, provider, cancellationToken);
             var chunks = SplitIntoChunks(processed.IndexText)
                 .Take(MaxChunksPerAttachment)
                 .ToArray();
@@ -341,7 +401,7 @@ public class AiCommandService(
             dbContext.ChannelAttachments.Add(attachment);
             foreach (var chunk in chunks)
             {
-                var embedding = await GenerateEmbeddingAsync(chunk, cancellationToken);
+                var embedding = await GenerateEmbeddingAsync(chunk, provider, cancellationToken);
                 dbContext.ChannelKnowledgeChunks.Add(new ChannelKnowledgeChunk
                 {
                     Id = Guid.NewGuid(),
@@ -471,6 +531,7 @@ public class AiCommandService(
         Guid userId,
         string query,
         Guid? attachmentId,
+        AiProviderRuntime provider,
         CancellationToken cancellationToken)
     {
         var chunksQuery = dbContext.ChannelKnowledgeChunks
@@ -507,7 +568,7 @@ public class AiCommandService(
         float[]? queryEmbedding = null;
         if (chunks.Any(chunk => !string.IsNullOrWhiteSpace(chunk.EmbeddingJson)))
         {
-            queryEmbedding = await GenerateEmbeddingAsync(query, cancellationToken);
+            queryEmbedding = await GenerateEmbeddingAsync(query, provider, cancellationToken);
         }
 
         return chunks
@@ -567,7 +628,7 @@ public class AiCommandService(
         return RankSnippets(snippets, query, 8);
     }
 
-    private async Task<AttachmentProcessingResult> ProcessAttachmentAsync(IFormFile file, CancellationToken cancellationToken)
+    private async Task<AttachmentProcessingResult> ProcessAttachmentAsync(IFormFile file, AiProviderRuntime provider, CancellationToken cancellationToken)
     {
         var contentType = ResolveContentType(file);
         var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
@@ -577,21 +638,21 @@ public class AiCommandService(
             await using var stream = file.OpenReadStream();
             using var memoryStream = new MemoryStream();
             await stream.CopyToAsync(memoryStream, cancellationToken);
-            var summary = await SummarizeImageAsync(memoryStream.ToArray(), contentType, file.FileName, cancellationToken);
+            var summary = await SummarizeImageAsync(memoryStream.ToArray(), contentType, file.FileName, provider, cancellationToken);
             return new AttachmentProcessingResult("image", summary, summary);
         }
 
         if (IsPlainTextAttachment(contentType, extension))
         {
             var text = await ReadPlainTextAttachmentAsync(file, cancellationToken);
-            var summary = await SummarizeTextAttachmentAsync(text, file.FileName, cancellationToken);
+            var summary = await SummarizeTextAttachmentAsync(text, file.FileName, provider, cancellationToken);
             return new AttachmentProcessingResult("file", summary, text);
         }
 
         if (extension == ".docx" || contentType.Equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document", StringComparison.OrdinalIgnoreCase))
         {
             var text = await ExtractDocxTextAsync(file, cancellationToken);
-            var summary = await SummarizeTextAttachmentAsync(text, file.FileName, cancellationToken);
+            var summary = await SummarizeTextAttachmentAsync(text, file.FileName, provider, cancellationToken);
             return new AttachmentProcessingResult("file", summary, text);
         }
 
@@ -607,12 +668,12 @@ public class AiCommandService(
             StatusCodes.Status415UnsupportedMediaType);
     }
 
-    private async Task<string> SummarizeImageAsync(byte[] imageBytes, string contentType, string fileName, CancellationToken cancellationToken)
+    private async Task<string> SummarizeImageAsync(byte[] imageBytes, string contentType, string fileName, AiProviderRuntime provider, CancellationToken cancellationToken)
     {
         var imageDataUrl = $"data:{contentType};base64,{Convert.ToBase64String(imageBytes)}";
         var payload = new Dictionary<string, object?>
         {
-            ["model"] = ResolveVisionModel(),
+            ["model"] = ResolveVisionModel(provider),
             ["temperature"] = 0.1,
             ["max_tokens"] = 900,
             ["messages"] = new object[]
@@ -645,10 +706,10 @@ public class AiCommandService(
             }
         };
 
-        return await PostChatCompletionAsync(payload, cancellationToken);
+        return await PostChatCompletionAsync(payload, provider, cancellationToken);
     }
 
-    private async Task<string> SummarizeTextAttachmentAsync(string text, string fileName, CancellationToken cancellationToken)
+    private async Task<string> SummarizeTextAttachmentAsync(string text, string fileName, AiProviderRuntime provider, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -670,9 +731,10 @@ public class AiCommandService(
             """;
 
         return await InvokeChatCompletionAsync(
-            ResolveMainModel(),
+            ResolveMainModel(provider),
             "You create concise, grounded summaries of uploaded project files.",
             prompt,
+            provider,
             cancellationToken);
     }
 
@@ -710,19 +772,19 @@ public class AiCommandService(
         return TrimTo(text, MaxExtractedTextLength);
     }
 
-    private async Task<float[]> GenerateEmbeddingAsync(string input, CancellationToken cancellationToken)
+    private async Task<float[]> GenerateEmbeddingAsync(string input, AiProviderRuntime provider, CancellationToken cancellationToken)
     {
         var payload = new Dictionary<string, object?>
         {
-            ["model"] = ResolveEmbeddingModel(),
+            ["model"] = ResolveEmbeddingModel(provider),
             ["input"] = new[] { TrimTo(input, 2000) }
         };
-        var client = CreateAiHttpClient();
+        var client = CreateAiHttpClient(provider);
         using var response = await client.PostAsJsonAsync("embeddings", payload, JsonOptions, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new AiProviderException($"Embedding provider error {(int)response.StatusCode}: {TrimProviderError(body)}");
+            throw new AiProviderException($"Embedding provider error {(int)response.StatusCode}: {TrimProviderError(body, provider.ApiKey)}");
         }
 
         using var document = JsonDocument.Parse(body);
@@ -738,6 +800,7 @@ public class AiCommandService(
         string model,
         string systemPrompt,
         string userPrompt,
+        AiProviderRuntime provider,
         CancellationToken cancellationToken)
     {
         var payload = new Dictionary<string, object?>
@@ -760,17 +823,17 @@ public class AiCommandService(
             }
         };
 
-        return await PostChatCompletionAsync(payload, cancellationToken);
+        return await PostChatCompletionAsync(payload, provider, cancellationToken);
     }
 
-    private async Task<string> PostChatCompletionAsync(Dictionary<string, object?> payload, CancellationToken cancellationToken)
+    private async Task<string> PostChatCompletionAsync(Dictionary<string, object?> payload, AiProviderRuntime provider, CancellationToken cancellationToken)
     {
-        var client = CreateAiHttpClient();
+        var client = CreateAiHttpClient(provider);
         using var response = await client.PostAsJsonAsync("chat/completions", payload, JsonOptions, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new AiProviderException($"AI provider error {(int)response.StatusCode}: {TrimProviderError(body)}");
+            throw new AiProviderException($"AI provider error {(int)response.StatusCode}: {TrimProviderError(body, provider.ApiKey)}");
         }
 
         using var document = JsonDocument.Parse(body);
@@ -788,17 +851,16 @@ public class AiCommandService(
         return content.Trim();
     }
 
-    private HttpClient CreateAiHttpClient()
+    private HttpClient CreateAiHttpClient(AiProviderRuntime provider)
     {
-        var apiKey = configuration["AI:ApiKey"];
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (string.IsNullOrWhiteSpace(provider.ApiKey))
         {
-            throw new AiProviderException("AI provider is not configured. Set AI:ApiKey on the backend.");
+            throw new AiProviderException("Workspace AI provider API key is not configured.");
         }
 
         var client = httpClientFactory.CreateClient();
-        client.BaseAddress = new Uri($"{ResolveBaseUrl().TrimEnd('/')}/");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        client.BaseAddress = new Uri($"{provider.BaseUrl.TrimEnd('/')}/");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
         return client;
     }
 
@@ -997,33 +1059,24 @@ public class AiCommandService(
             : file.ContentType.Trim();
     }
 
-    private string ResolveBaseUrl()
+    private string ResolveMainModel(AiProviderRuntime provider)
     {
-        return configuration["AI:BaseUrl"]
-            ?? configuration["AI:Endpoint"]
-            ?? DefaultBaseUrl;
+        return provider.Model;
     }
 
-    private string ResolveMainModel()
+    private string ResolveProModel(AiProviderRuntime provider)
     {
-        return configuration["AI:Model"]
-            ?? configuration["AI:MainModel"]
-            ?? DefaultMainModel;
+        return provider.Model;
     }
 
-    private string ResolveProModel()
+    private string ResolveVisionModel(AiProviderRuntime provider)
     {
-        return configuration["AI:ProModel"] ?? DefaultProModel;
+        return configuration["AI:VisionModel"] ?? provider.Model;
     }
 
-    private string ResolveVisionModel()
+    private string ResolveEmbeddingModel(AiProviderRuntime provider)
     {
-        return configuration["AI:VisionModel"] ?? DefaultVisionModel;
-    }
-
-    private string ResolveEmbeddingModel()
-    {
-        return configuration["AI:EmbeddingModel"] ?? DefaultEmbeddingModel;
+        return configuration["AI:EmbeddingModel"] ?? provider.Model;
     }
 
     private static ChannelAttachmentResponse ToAttachmentResponse(ChannelAttachment attachment)
@@ -1082,14 +1135,14 @@ public class AiCommandService(
         return dot / (Math.Sqrt(leftMagnitude) * Math.Sqrt(rightMagnitude));
     }
 
-    private static string TrimProviderError(string body)
+    private static string TrimProviderError(string body, string apiKey)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
             return "empty provider error response";
         }
 
-        return TrimTo(body.Replace(Environment.NewLine, " ", StringComparison.Ordinal), 600);
+        return TrimTo(RedactSecret(body, apiKey).Replace(Environment.NewLine, " ", StringComparison.Ordinal), 600);
     }
 
     private static IReadOnlyList<KnowledgeSnippet> RankSnippets(IReadOnlyList<KnowledgeSnippet> snippets, string question, int maxResults)
@@ -1151,25 +1204,15 @@ public class AiCommandService(
         return value?.ToString("yyyy-MM-dd HH:mm") ?? "None";
     }
 
-    private async Task<ApiResponse<AiResponse>> AskLlmOrFallback(
+    private async Task<ApiResponse<AiResponse>> AskLlmOrFail(
+        AiProviderRuntime provider,
         string prompt,
-        string fallback,
         CancellationToken cancellationToken,
         IReadOnlyCollection<string>? sources = null)
     {
-        if (!HasLlmConfiguration())
-        {
-            return ApiResponse.Ok(new AiResponse
-            {
-                Result = fallback,
-                UsedLlm = false,
-                Sources = sources ?? []
-            });
-        }
-
         try
         {
-            var kernel = BuildKernel();
+            var kernel = BuildKernel(provider);
             var result = await kernel.InvokePromptAsync(prompt, cancellationToken: cancellationToken);
             return ApiResponse.Ok(new AiResponse
             {
@@ -1180,36 +1223,55 @@ public class AiCommandService(
         }
         catch (Exception ex)
         {
-            return ApiResponse.Ok(new AiResponse
-            {
-                Result = $"{fallback} LLM call failed: {ex.Message}",
-                UsedLlm = false,
-                Sources = sources ?? []
-            });
+            return ApiResponse.Fail<AiResponse>(
+                $"AI provider request failed: {RedactSecret(ex.Message, provider.ApiKey)}",
+                StatusCodes.Status502BadGateway);
         }
     }
 
-    private Kernel BuildKernel()
+    private Kernel BuildKernel(AiProviderRuntime provider)
     {
         var builder = Kernel.CreateBuilder();
-        var apiKey = configuration["AI:ApiKey"];
-        var model = ResolveMainModel();
-        var endpoint = ResolveBaseUrl();
 
         var client = new OpenAIClient(
-            new ApiKeyCredential(apiKey!),
-            new OpenAIClientOptions { Endpoint = new Uri(endpoint) });
+            new ApiKeyCredential(provider.ApiKey),
+            new OpenAIClientOptions { Endpoint = new Uri(provider.BaseUrl) });
 
-        builder.AddOpenAIChatCompletion(modelId: model, openAIClient: client);
+        builder.AddOpenAIChatCompletion(modelId: ResolveMainModel(provider), openAIClient: client);
 
         var kernel = builder.Build();
         kernel.Plugins.AddFromObject(collaborationAiPlugin, "Collaboration");
         return kernel;
     }
 
-    private bool HasLlmConfiguration()
+    private static ApiResponse<T> ToProviderFailure<T>(ApiResponse<AiProviderRuntime> providerResult)
     {
-        return !string.IsNullOrWhiteSpace(configuration["AI:ApiKey"]);
+        return ApiResponse.Fail<T>(providerResult.Message, providerResult.StatusCode, providerResult.Errors);
+    }
+
+    private async Task<Guid?> GetChannelWorkspaceIdAsync(Guid channelId, CancellationToken cancellationToken)
+    {
+        return await dbContext.Channels
+            .AsNoTracking()
+            .Where(channel => channel.Id == channelId)
+            .Select(channel => (Guid?)channel.WorkspaceId)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<Guid?> GetProjectWorkspaceIdAsync(Guid projectId, CancellationToken cancellationToken)
+    {
+        return await dbContext.Projects
+            .AsNoTracking()
+            .Where(project => project.Id == projectId)
+            .Select(project => (Guid?)project.WorkspaceId)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private static string RedactSecret(string value, string secret)
+    {
+        return string.IsNullOrWhiteSpace(secret)
+            ? value
+            : value.Replace(secret, "[redacted]", StringComparison.Ordinal);
     }
 
     private sealed record KnowledgeSnippet(string Source, string Text);

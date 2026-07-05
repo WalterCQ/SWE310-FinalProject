@@ -129,3 +129,33 @@ public class AiProviderResponse
     public DateTime CreatedAtUtc { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
 }
+
+public class SaveWorkspaceAiProviderRequest
+{
+    [Required, StringLength(80)]
+    public string ProviderName { get; set; } = string.Empty;
+
+    [StringLength(500)]
+    public string? BaseUrl { get; set; }
+
+    [Required, StringLength(120)]
+    public string Model { get; set; } = string.Empty;
+
+    [StringLength(4000)]
+    public string? ApiKey { get; set; }
+
+    public bool? SupportsToolCalls { get; set; }
+}
+
+public class WorkspaceAiProviderResponse
+{
+    public Guid WorkspaceId { get; set; }
+    public string ProviderName { get; set; } = string.Empty;
+    public string? BaseUrl { get; set; }
+    public string Model { get; set; } = string.Empty;
+    public bool SupportsToolCalls { get; set; }
+    public bool HasApiKey { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+    public DateTime KeyLastUpdatedAtUtc { get; set; }
+}
