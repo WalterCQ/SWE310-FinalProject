@@ -18,6 +18,6 @@ export function getStoredUser() {
   return {
     userId: localStorage.getItem("userId") || "",
     name: localStorage.getItem("userName") || "User",
-    globalRole: localStorage.getItem("userRole") || "User",
+    globalRole: localStorage.getItem("userRole") || "Member",
   };
 }

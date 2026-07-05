@@ -122,7 +122,7 @@ function ProtectedShell({ allowedRoles }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  const userRole = session.user.globalRole || session.user.role || "User";
+  const userRole = session.user.globalRole || session.user.role || "Member";
 
   if (allowedRoles && !allowedRoles.includes(userRole)) {
     return <Navigate to="/dashboard" replace />;
@@ -160,7 +160,7 @@ export default function App() {
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/notifications" element={<Notifications />} />
       </Route>
-      <Route element={<ProtectedShell allowedRoles={["Admin"]} />}>
+      <Route element={<ProtectedShell allowedRoles={["Administrator"]} />}>
         <Route path="/admin" element={<Admin />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

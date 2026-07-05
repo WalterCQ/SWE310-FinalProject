@@ -80,22 +80,26 @@ export function enumProjectStatusKey(value) {
 
 export function enumWorkspaceRoleKey(value) {
   const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "owner" || normalized === "0") return "enum.workspaceRole.owner";
-  if (normalized === "admin" || normalized === "1") return "enum.workspaceRole.admin";
+  if (normalized === "administrator" || normalized === "0") {
+    return "enum.workspaceRole.administrator";
+  }
+  if (normalized === "manager" || normalized === "1") return "enum.workspaceRole.manager";
   return "enum.workspaceRole.member";
 }
 
 export function enumProjectRoleKey(value) {
   const normalized = String(value || "").trim().toLowerCase().replaceAll(" ", "");
-  if (normalized === "projectmanager" || normalized === "0") return "enum.projectRole.projectManager";
-  if (normalized === "viewer" || normalized === "2") return "enum.projectRole.viewer";
-  return "enum.projectRole.contributor";
+  if (normalized === "administrator" || normalized === "0") {
+    return "enum.projectRole.administrator";
+  }
+  if (normalized === "member" || normalized === "2") return "enum.projectRole.member";
+  return "enum.projectRole.manager";
 }
 
 export function enumGlobalRoleKey(value) {
   const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "admin") return "enum.globalRole.admin";
-  return "enum.globalRole.user";
+  if (normalized === "administrator") return "enum.globalRole.administrator";
+  return "enum.globalRole.member";
 }
 
 export function enumNotificationKey(value) {

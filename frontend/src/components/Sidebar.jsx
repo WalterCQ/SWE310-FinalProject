@@ -23,14 +23,14 @@ const navItems = [
   { labelKey: "nav.projects", path: "/projects", icon: KanbanSquare },
   { labelKey: "nav.tasks", path: "/tasks", icon: SquareCheckBig },
   { labelKey: "nav.notifications", path: "/notifications", icon: Bell },
-  { labelKey: "nav.admin", path: "/admin", icon: ShieldCheck, allowedRoles: ["Admin"] },
+  { labelKey: "nav.admin", path: "/admin", icon: ShieldCheck, allowedRoles: ["Administrator"] },
 ];
 
 export default function Sidebar({ collapsed = false, onToggleCollapsed, user }) {
   const navigate = useNavigate();
   const { t } = useI18n();
   const userName = user?.name || localStorage.getItem("userName") || t("app.user.default");
-  const rawUserRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || "User";
+  const rawUserRole = user?.globalRole || user?.role || localStorage.getItem("userRole") || "Member";
   const userRole = t(enumGlobalRoleKey(rawUserRole));
   const userSeed = user?.userId || localStorage.getItem("userId") || userName;
   const visibleNavItems = navItems.filter((item) => !item.allowedRoles || item.allowedRoles.includes(rawUserRole));

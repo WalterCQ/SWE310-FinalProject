@@ -24,9 +24,9 @@ const blankForm = {
 };
 const memberBlankForm = { email: "", roleInProject: "1" };
 const projectRoleOptions = [
-  { value: "0", labelKey: "enum.projectRole.projectManager" },
-  { value: "1", labelKey: "enum.projectRole.contributor" },
-  { value: "2", labelKey: "enum.projectRole.viewer" },
+  { value: "0", labelKey: "enum.projectRole.administrator" },
+  { value: "1", labelKey: "enum.projectRole.manager" },
+  { value: "2", labelKey: "enum.projectRole.member" },
 ];
 const statusFilterOptions = [
   { value: "all", labelKey: "project.status.all" },

@@ -29,7 +29,7 @@ public class AdminController(AppDbContext dbContext) : ControllerBase
         {
             Metrics =
             [
-                new AdminMetricResponse { Label = "Users", Value = userCount, HelpText = $"{adminCount} global admins" },
+                new AdminMetricResponse { Label = "Users", Value = userCount, HelpText = $"{adminCount} global administrators" },
                 new AdminMetricResponse { Label = "Workspaces", Value = workspaceCount, HelpText = "Relational workspace records" },
                 new AdminMetricResponse { Label = "Projects", Value = projectCount, HelpText = "Workspace-linked projects" },
                 new AdminMetricResponse { Label = "Tasks", Value = taskCount, HelpText = "Project task records" },
@@ -41,12 +41,12 @@ public class AdminController(AppDbContext dbContext) : ControllerBase
                 new AdminSecurityEvidenceResponse
                 {
                     Area = "API role restriction",
-                    Evidence = "This endpoint requires a Bearer JWT with the Admin role claim."
+                    Evidence = "This endpoint requires a Bearer JWT with the Administrator role claim."
                 },
                 new AdminSecurityEvidenceResponse
                 {
                     Area = "Frontend route restriction",
-                    Evidence = "The /admin route is hidden from standard users and blocked by ProtectedShell."
+                    Evidence = "The /admin route is hidden from standard members and blocked by ProtectedShell."
                 },
                 new AdminSecurityEvidenceResponse
                 {

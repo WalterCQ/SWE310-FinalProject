@@ -7,13 +7,13 @@ Repository: https://github.com/WalterCQ/SWE310-FinalProject
 ## Scope
 
 - Implemented: backend structure, EF Core models, DbContext, service layer, REST controllers, SignalR hubs, notification reminders, Semantic Kernel plugin/service placeholders, Docker Compose, `AuthController` with register/login API, JWT issuing, password hashing, user registration flow, member permission checks via `PermissionService`, `[Authorize]` on all business controllers, and frontend route protection via `ProtectedShell`.
-- Auth integration uses `CurrentUserService`, `PermissionService`, JWT Bearer configuration, global Admin/User roles, workspace Owner/Admin/Member roles, project ProjectManager/Contributor/Viewer roles, and an Admin-only `/api/admin/overview` endpoint plus `/admin` frontend route. A development-only fallback user is available via `appsettings.Development.json` but is disabled by default.
+- Auth integration uses `CurrentUserService`, `PermissionService`, JWT Bearer configuration, global Administrator/Member roles, workspace Administrator/Manager/Member roles, project Administrator/Manager/Member roles, and an Administrator-only `/api/admin/overview` endpoint plus `/admin` frontend route. A development-only fallback user is available via `appsettings.Development.json` but is disabled by default.
 - Validation uses ASP.NET Core DataAnnotations plus custom checks for whitespace-only required strings, empty GUIDs, and unsupported enum values. Invalid model state returns the shared `ApiResponse<T>` error envelope.
 
 ## Coursework Rubric Evidence
 
-- User and access management: `/api/auth/register`, `/api/auth/login`, `/api/auth/me`, JWT Bearer validation, role claims, `[Authorize]` controllers, relationship-based permission checks, and Admin-only API/frontend route evidence.
-- Demo data: `tools/TaskFlow.DemoDataSeeder` seeds the shared demo account as a global Admin so the Admin-only route can be shown during marking, while the other demo users remain standard users.
+- User and access management: `/api/auth/register`, `/api/auth/login`, `/api/auth/me`, JWT Bearer validation, role claims, `[Authorize]` controllers, relationship-based permission checks, and Administrator-only API/frontend route evidence.
+- Demo data: `tools/TaskFlow.DemoDataSeeder` seeds the shared demo account as a global Administrator so the Administrator-only route can be shown during marking, while the other demo users remain standard members.
 - Core domain functionality: workspaces, members, channels, messages, projects, tasks, comments, notifications, AI provider credentials, agent jobs, and attachment knowledge chunks are persisted through EF Core and SQL Server relationships.
 - AI assistant: Semantic Kernel plugin functions in `CollaborationAiPlugin` read or modify real TaskFlow data through services, while AI endpoints enforce authentication and workspace/project permissions before LLM calls.
 - Dashboard and insights: the React dashboard calls real backend metrics and renders task status and priority charts with Recharts.

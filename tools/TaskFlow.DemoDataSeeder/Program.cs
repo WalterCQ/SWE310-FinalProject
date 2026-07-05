@@ -66,10 +66,10 @@ static async Task<Dictionary<string, Guid>> SeedUsersAsync(AppDbContext dbContex
 {
     var users = new[]
     {
-        new SeedUser("TaskFlow Demo", "demo@taskflow.com", "Demo123!", GlobalRole.Admin),
-        new SeedUser("Oday Frontend", "oday@taskflow.com", "Demo123!", GlobalRole.User),
-        new SeedUser("John Backend", "john@taskflow.com", "Demo123!", GlobalRole.User),
-        new SeedUser("Sarah AI", "sarah@taskflow.com", "Demo123!", GlobalRole.User)
+        new SeedUser("TaskFlow Demo", "demo@taskflow.com", "Demo123!", GlobalRole.Administrator),
+        new SeedUser("Oday Frontend", "oday@taskflow.com", "Demo123!", GlobalRole.Member),
+        new SeedUser("John Backend", "john@taskflow.com", "Demo123!", GlobalRole.Member),
+        new SeedUser("Sarah AI", "sarah@taskflow.com", "Demo123!", GlobalRole.Member)
     };
     var passwordHasher = new PasswordHasher<User>();
     var result = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
@@ -381,8 +381,8 @@ static async Task GrantAccessToAllUsersAsync(AppDbContext dbContext, Guid ownerU
     var userIds = await dbContext.Users.Select(user => user.Id).ToListAsync();
     foreach (var userId in userIds)
     {
-        var workspaceRole = userId == ownerUserId ? WorkspaceRole.Owner : WorkspaceRole.Member;
-        var projectRole = userId == ownerUserId ? ProjectRole.ProjectManager : ProjectRole.Contributor;
+        var workspaceRole = userId == ownerUserId ? WorkspaceRole.Administrator : WorkspaceRole.Member;
+        var projectRole = userId == ownerUserId ? ProjectRole.Administrator : ProjectRole.Manager;
         var granted = await DemoDataAccess.GrantUserDemoDataAccessAsync(dbContext, userId, workspaceRole, projectRole);
         if (!granted)
         {

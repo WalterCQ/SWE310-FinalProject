@@ -24,14 +24,14 @@ export const enumMessages = {
     "mapper.untitledTask": "Untitled task",
     "mapper.noDescription": "No description provided.",
     "mapper.notification": "Notification",
-    "enum.workspaceRole.owner": "Owner",
-    "enum.workspaceRole.admin": "Admin",
+    "enum.workspaceRole.administrator": "Administrator",
+    "enum.workspaceRole.manager": "Manager",
     "enum.workspaceRole.member": "Member",
-    "enum.projectRole.projectManager": "Project Manager",
-    "enum.projectRole.contributor": "Contributor",
-    "enum.projectRole.viewer": "Viewer",
-    "enum.globalRole.admin": "Admin",
-    "enum.globalRole.user": "User"
+    "enum.projectRole.administrator": "Administrator",
+    "enum.projectRole.manager": "Manager",
+    "enum.projectRole.member": "Member",
+    "enum.globalRole.administrator": "Administrator",
+    "enum.globalRole.member": "Member"
   },
   "zh-CN": {
     "enum.taskStatus.toDo": "待办",
@@ -58,14 +58,14 @@ export const enumMessages = {
     "mapper.untitledTask": "未命名任务",
     "mapper.noDescription": "暂无描述。",
     "mapper.notification": "通知",
-    "enum.workspaceRole.owner": "所有者",
-    "enum.workspaceRole.admin": "管理员",
+    "enum.workspaceRole.administrator": "管理员",
+    "enum.workspaceRole.manager": "经理",
     "enum.workspaceRole.member": "成员",
-    "enum.projectRole.projectManager": "项目经理",
-    "enum.projectRole.contributor": "贡献者",
-    "enum.projectRole.viewer": "查看者",
-    "enum.globalRole.admin": "管理员",
-    "enum.globalRole.user": "用户"
+    "enum.projectRole.administrator": "管理员",
+    "enum.projectRole.manager": "经理",
+    "enum.projectRole.member": "成员",
+    "enum.globalRole.administrator": "管理员",
+    "enum.globalRole.member": "成员"
   },
   "tg-Cyrl-TJ": {
     "enum.taskStatus.toDo": "Иҷронашуда",
@@ -92,13 +92,13 @@ export const enumMessages = {
     "mapper.untitledTask": "Вазифаи беном",
     "mapper.noDescription": "Тавсиф дода нашудааст.",
     "mapper.notification": "Огоҳӣ",
-    "enum.workspaceRole.owner": "Соҳиб",
-    "enum.workspaceRole.admin": "Админ",
+    "enum.workspaceRole.administrator": "Администратор",
+    "enum.workspaceRole.manager": "Менеҷер",
     "enum.workspaceRole.member": "Аъзо",
-    "enum.projectRole.projectManager": "Менеҷери лоиҳа",
-    "enum.projectRole.contributor": "Ҳиссагузор",
-    "enum.projectRole.viewer": "Тамошобин",
-    "enum.globalRole.admin": "Админ",
-    "enum.globalRole.user": "Корбар"
+    "enum.projectRole.administrator": "Администратор",
+    "enum.projectRole.manager": "Менеҷер",
+    "enum.projectRole.member": "Аъзо",
+    "enum.globalRole.administrator": "Администратор",
+    "enum.globalRole.member": "Аъзо"
   }
 };

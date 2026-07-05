@@ -22,8 +22,8 @@ const blankAiProviderForm = {
 };
 const GITHUB_SETUP_WORKSPACE_KEY = "taskflow.githubSetupWorkspaceId";
 const roleOptions = [
-  { value: "0", labelKey: "enum.workspaceRole.owner" },
-  { value: "1", labelKey: "enum.workspaceRole.admin" },
+  { value: "0", labelKey: "enum.workspaceRole.administrator" },
+  { value: "1", labelKey: "enum.workspaceRole.manager" },
   { value: "2", labelKey: "enum.workspaceRole.member" },
 ];
 

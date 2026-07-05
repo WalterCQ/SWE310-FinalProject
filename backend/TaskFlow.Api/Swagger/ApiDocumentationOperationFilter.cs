@@ -23,8 +23,8 @@ public class ApiDocumentationOperationFilter : IOperationFilter
         new Dictionary<string, EndpointDoc>(StringComparer.OrdinalIgnoreCase)
         {
             ["Admin.GetOverview"] = new(
-                "Get admin-only system overview",
-                "Returns aggregate system counts and security evidence for the coursework demo. This endpoint is explicitly restricted to users whose JWT contains the Admin global role claim.",
+                "Get administrator-only system overview",
+                "Returns aggregate system counts and security evidence for the coursework demo. This endpoint is explicitly restricted to users whose JWT contains the Administrator global role claim.",
                 StatusCodes.Status200OK,
                 typeof(AdminOverviewResponse)),
 
@@ -46,7 +46,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
 
             ["Ai.ExecuteCommand"] = new(
                 "Execute an AI collaboration command",
-                "Runs a natural-language command inside a workspace. The Semantic Kernel plugin can read or modify real collaboration data only when the current user has workspace access. Requires a workspace AI provider configured by a workspace owner or admin.",
+                "Runs a natural-language command inside a workspace. The Semantic Kernel plugin can read or modify real collaboration data only when the current user has workspace access. Requires a workspace AI provider configured by a workspace administrator or manager.",
                 StatusCodes.Status200OK,
                 typeof(AiResponse)),
             ["Ai.SummarizeChannel"] = new(
@@ -87,7 +87,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(AiProviderResponse)),
             ["AiProviders.GetWorkspaceProvider"] = new(
                 "Get workspace AI provider metadata",
-                "Returns provider metadata for a workspace. Only workspace owners, workspace admins, and global admins can call this endpoint. Secret API key values are never returned.",
+                "Returns provider metadata for a workspace. Only workspace administrators, workspace managers, and global administrators can call this endpoint. Secret API key values are never returned.",
                 StatusCodes.Status200OK,
                 typeof(WorkspaceAiProviderResponse)),
             ["AiProviders.SaveWorkspaceProvider"] = new(
@@ -97,7 +97,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(WorkspaceAiProviderResponse)),
             ["AiProviders.DeleteWorkspaceProvider"] = new(
                 "Delete a workspace AI provider",
-                "Deletes the workspace-level AI provider credential. Only workspace owners, workspace admins, and global admins can remove it.",
+                "Deletes the workspace-level AI provider credential. Only workspace administrators, workspace managers, and global administrators can remove it.",
                 StatusCodes.Status200OK,
                 typeof(bool)),
 
@@ -134,12 +134,12 @@ public class ApiDocumentationOperationFilter : IOperationFilter
 
             ["Workspaces.GetWorkspaces"] = new(
                 "List accessible workspaces",
-                "Returns workspaces visible to the current user. Global admins can see all workspaces; standard users only see workspaces where they are members.",
+                "Returns workspaces visible to the current user. Global administrators can see all workspaces; standard members only see workspaces where they are members.",
                 StatusCodes.Status200OK,
                 typeof(IEnumerable<WorkspaceResponse>)),
             ["Workspaces.CreateWorkspace"] = new(
                 "Create a workspace",
-                "Creates a workspace after validating the required name and optional description length. Requires the current user to hold the workspace Admin role in at least one existing workspace. The current user is automatically added as the new workspace owner.",
+                "Creates a workspace after validating the required name and optional description length. Requires the current user to hold the workspace Manager role in at least one existing workspace. The current user is automatically added as the new workspace administrator.",
                 StatusCodes.Status201Created,
                 typeof(WorkspaceResponse)),
             ["Workspaces.GetWorkspace"] = new(
@@ -149,12 +149,12 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(WorkspaceResponse)),
             ["Workspaces.UpdateWorkspace"] = new(
                 "Update workspace details",
-                "Updates workspace name and description after backend validation. Only workspace owners, workspace admins, or global admins can update it.",
+                "Updates workspace name and description after backend validation. Only workspace administrators, workspace managers, or global administrators can update it.",
                 StatusCodes.Status200OK,
                 typeof(WorkspaceResponse)),
             ["Workspaces.DeleteWorkspace"] = new(
                 "Delete a workspace",
-                "Deletes a workspace and its related projects, channels, tasks, memberships, and workspace-scoped AI context. Requires the current user to hold the workspace Admin role in that workspace; workspace Owner alone and global Admin alone cannot delete it.",
+                "Deletes a workspace and its related projects, channels, tasks, memberships, and workspace-scoped AI context. Requires the current user to hold the workspace Manager role in that workspace; workspace Administrator alone and global Administrator alone cannot delete it.",
                 StatusCodes.Status200OK,
                 typeof(bool)),
             ["Workspaces.GetWorkspaceMembers"] = new(
@@ -164,17 +164,17 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(IEnumerable<WorkspaceMemberResponse>)),
             ["Workspaces.AddWorkspaceMember"] = new(
                 "Add a workspace member",
-                "Adds an existing registered user to a workspace by email and assigns Owner, Admin, or Member role. Requires workspace management permission.",
+                "Adds an existing registered user to a workspace by email and assigns Administrator, Manager, or Member role. Requires workspace management permission.",
                 StatusCodes.Status201Created,
                 typeof(WorkspaceMemberResponse)),
             ["Workspaces.UpdateWorkspaceMemberRole"] = new(
                 "Update workspace member role",
-                "Changes a workspace member's role. Requires workspace management permission and prevents demoting the last workspace owner.",
+                "Changes a workspace member's role. Requires workspace management permission and prevents demoting the last workspace administrator.",
                 StatusCodes.Status200OK,
                 typeof(WorkspaceMemberResponse)),
             ["Workspaces.RemoveWorkspaceMember"] = new(
                 "Remove a workspace member",
-                "Removes a user from the workspace, removes their project and channel memberships in that workspace, and clears matching task assignments. Requires workspace management permission and prevents removing the last workspace owner or the only project manager for any project.",
+                "Removes a user from the workspace, removes their project and channel memberships in that workspace, and clears matching task assignments. Requires workspace management permission and prevents removing the last workspace administrator or the only project administrator for any project.",
                 StatusCodes.Status200OK,
                 typeof(bool)),
 
@@ -247,7 +247,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(IEnumerable<ProjectResponse>)),
             ["Projects.CreateProject"] = new(
                 "Create a project",
-                "Creates a project under a workspace after validating the name, description, and optional deadline. The creator becomes the project manager.",
+                "Creates a project under a workspace after validating the name, description, and optional deadline. The creator becomes the project administrator.",
                 StatusCodes.Status201Created,
                 typeof(ProjectResponse)),
             ["Projects.GetProject"] = new(
@@ -272,17 +272,17 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(IEnumerable<ProjectMemberResponse>)),
             ["Projects.AddProjectMember"] = new(
                 "Add a project member",
-                "Adds an existing registered workspace member to a project by email and assigns ProjectManager, Contributor, or Viewer role. Requires project management permission.",
+                "Adds an existing registered workspace member to a project by email and assigns Administrator, Manager, or Member role. Requires project management permission.",
                 StatusCodes.Status201Created,
                 typeof(ProjectMemberResponse)),
             ["Projects.UpdateProjectMemberRole"] = new(
                 "Update project member role",
-                "Changes a project member's role. Requires project management permission and prevents demoting the last project manager.",
+                "Changes a project member's role. Requires project management permission and prevents demoting the last project administrator.",
                 StatusCodes.Status200OK,
                 typeof(ProjectMemberResponse)),
             ["Projects.RemoveProjectMember"] = new(
                 "Remove a project member",
-                "Removes a user from a project and clears their task assignments in that project. Requires project management permission and prevents removing the last project manager.",
+                "Removes a user from a project and clears their task assignments in that project. Requires project management permission and prevents removing the last project administrator.",
                 StatusCodes.Status200OK,
                 typeof(bool)),
 
@@ -293,7 +293,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(IEnumerable<TaskResponse>)),
             ["Tasks.CreateTask"] = new(
                 "Create a task",
-                "Creates a task after validating title, description, priority, optional assignee, and optional deadline. Requires project management permission through workspace Owner/Admin, global Admin, or project manager role. The assignee must already be a project member.",
+                "Creates a task after validating title, description, priority, optional assignee, and optional deadline. Requires project management permission through workspace Administrator/Manager, global Administrator, or project administrator role. The assignee must already be a project member.",
                 StatusCodes.Status201Created,
                 typeof(TaskResponse)),
             ["Tasks.GetTask"] = new(
@@ -303,7 +303,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(TaskResponse)),
             ["Tasks.UpdateTask"] = new(
                 "Update a task",
-                "Updates task title, description, priority, assignee, and deadline. Requires project management permission through workspace Owner/Admin, global Admin, or project manager role.",
+                "Updates task title, description, priority, assignee, and deadline. Requires project management permission through workspace Administrator/Manager, global Administrator, or project administrator role.",
                 StatusCodes.Status200OK,
                 typeof(TaskResponse)),
             ["Tasks.DeleteTask"] = new(

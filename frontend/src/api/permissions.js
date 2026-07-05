@@ -5,12 +5,12 @@ function roleKey(role) {
 
 export function isWorkspaceAdmin(role) {
   const key = roleKey(role);
-  return key === "1" || key === "admin";
+  return key === "1" || key === "admin" || key === "manager";
 }
 
 export function isWorkspaceOwner(role) {
   const key = roleKey(role);
-  return key === "0" || key === "owner";
+  return key === "0" || key === "owner" || key === "administrator";
 }
 
 export function canManageWorkspaceMembers(role) {
@@ -23,7 +23,7 @@ export function canDeleteWorkspace(role) {
 
 export function isProjectManager(role) {
   const key = roleKey(role);
-  return key === "0" || key === "projectmanager";
+  return key === "0" || key === "projectmanager" || key === "administrator";
 }
 
 export function canManageProjectMembers(workspaceRole, projectRole) {

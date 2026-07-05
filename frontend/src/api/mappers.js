@@ -41,22 +41,26 @@ const projectStatusLabels = {
 };
 
 const workspaceRoleLabels = {
-  0: "Owner",
-  owner: "Owner",
-  1: "Admin",
-  admin: "Admin",
+  0: "Administrator",
+  administrator: "Administrator",
+  owner: "Administrator",
+  1: "Manager",
+  manager: "Manager",
+  admin: "Manager",
   2: "Member",
   member: "Member",
 };
 
 const projectRoleLabels = {
-  0: "Project Manager",
-  projectmanager: "Project Manager",
-  "project manager": "Project Manager",
-  1: "Contributor",
-  contributor: "Contributor",
-  2: "Viewer",
-  viewer: "Viewer",
+  0: "Administrator",
+  administrator: "Administrator",
+  projectmanager: "Administrator",
+  1: "Manager",
+  manager: "Manager",
+  contributor: "Manager",
+  2: "Member",
+  member: "Member",
+  viewer: "Member",
 };
 
 const notificationTypeLabels = {
@@ -94,7 +98,7 @@ export function mapWorkspaceRole(value) {
 }
 
 export function mapProjectRole(value) {
-  return projectRoleLabels[enumKey(value)] || "Contributor";
+  return projectRoleLabels[enumKey(value)] || "Manager";
 }
 
 export function mapNotificationType(value) {
