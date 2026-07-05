@@ -118,6 +118,14 @@ public class ChannelsController(
         {
             dbContext.ChannelAttachmentBlobs.Remove(attachment.Blob);
         }
+        if (attachment.MessageId.HasValue)
+        {
+            var message = await dbContext.Messages.FirstOrDefaultAsync(m => m.Id == attachment.MessageId.Value, cancellationToken);
+            if (message is not null)
+            {
+                dbContext.Messages.Remove(message);
+            }
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(ApiResponse.NoData("Attachment deleted."));
