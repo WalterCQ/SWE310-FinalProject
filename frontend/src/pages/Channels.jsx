@@ -5,6 +5,7 @@ import {
   AtSign,
   Bot,
   Code2,
+  Download,
   FileText,
   Hash,
   Image,
@@ -34,6 +35,7 @@ import {
 import {
   asArray,
   formatDateTime,
+  mapAttachment,
   mapChannel,
   mapChannelMember,
   mapMessage,
@@ -52,6 +54,7 @@ function normalizeRealtimeMessage(message) {
     isDeleted: message?.isDeleted ?? message?.IsDeleted,
     createdAtUtc: message?.createdAtUtc ?? message?.CreatedAtUtc,
     editedAtUtc: message?.editedAtUtc ?? message?.EditedAtUtc,
+    attachments: message?.attachments ?? message?.Attachments ?? [],
   };
 }
 
@@ -75,15 +78,7 @@ function formatRealtimeError(error) {
 }
 
 function normalizeAttachment(attachment) {
-  return {
-    ...attachment,
-    id: attachment.id,
-    fileName: attachment.fileName || "attachment",
-    contentType: attachment.contentType || "application/octet-stream",
-    sizeBytes: Number(attachment.sizeBytes || 0),
-    summary: attachment.summary || "",
-    time: formatDateTime(attachment.createdAtUtc),
-  };
+  return mapAttachment(attachment);
 }
 
 function formatFileSize(bytes) {
@@ -94,6 +89,18 @@ function formatFileSize(bytes) {
 
 function isAiMention(content) {
   return content.includes("@TaskFlow AI") || content.toLowerCase().includes("@taskflow ai");
+}
+
+function isPdfAttachment(attachment) {
+  return attachment.contentType === "application/pdf" || attachment.fileName.toLowerCase().endsWith(".pdf");
+}
+
+function getAttachmentLabel(attachment) {
+  if (isPdfAttachment(attachment)) return "PDF";
+  if (attachment.contentType.startsWith("image/")) return "Image";
+
+  const extension = attachment.fileName.split(".").pop();
+  return extension && extension !== attachment.fileName ? extension.toUpperCase() : "File";
 }
 
 function getMessageTimestamp(message) {
@@ -484,6 +491,41 @@ export default function Channels() {
     }
   }
 
+  async function sendSelectedAttachmentMessage(content) {
+    if (!selectedFile || !activeChannelId) return null;
+
+    setUploadingAttachment(true);
+    setChatError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("content", content);
+      formData.append("file", selectedFile);
+      const createdMessage = await messagesApi.createAttachment(activeChannelId, formData);
+      const uploadedAttachment = normalizeAttachment(createdMessage?.attachments?.[0] || {});
+
+      setMessages((currentMessages) => mergeMessage(currentMessages, createdMessage));
+      if (uploadedAttachment.id) {
+        setAttachments((current) => [uploadedAttachment, ...current.filter((item) => item.id !== uploadedAttachment.id)]);
+        setSelectedAttachmentId(uploadedAttachment.id);
+      }
+
+      setDraft("");
+      clearSelectedFile();
+      clearTimeout(typingStopTimerRef.current);
+      if (connection?.state === chatConnectionState.connected) {
+        await connection.invoke("StopTyping", activeChannelId);
+      }
+
+      return uploadedAttachment.id ? uploadedAttachment : null;
+    } catch (apiError) {
+      setChatError(formatApiError(apiError));
+      throw apiError;
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
+
   async function runAiCommand(command, attachmentId = "") {
     if (!activeChannelId || !command.trim()) return null;
 
@@ -530,10 +572,8 @@ export default function Channels() {
     let uploadedAttachment = null;
     try {
       if (selectedFile) {
-        uploadedAttachment = await uploadSelectedAttachment();
-      }
-
-      if (content) {
+        uploadedAttachment = await sendSelectedAttachmentMessage(content);
+      } else if (content) {
         if (!connection || connection.state !== chatConnectionState.connected) {
           setChatError(t("channel.readyError"));
           return;
@@ -545,8 +585,8 @@ export default function Channels() {
         await connection.invoke("StopTyping", activeChannelId);
       }
 
-      if (isAiMention(content) || (!content && uploadedAttachment)) {
-        const command = content || t("channel.commandAttachment");
+      if (isAiMention(content)) {
+        const command = content;
         await runAiCommand(command, uploadedAttachment?.id || selectedAttachmentId);
       }
     } catch (error) {
@@ -555,6 +595,26 @@ export default function Channels() {
       } else {
         setChatError(formatRealtimeError(error));
       }
+    }
+  }
+
+  async function downloadAttachment(attachment) {
+    if (!attachment?.downloadUrl) return;
+
+    setChatError("");
+
+    try {
+      const response = await messagesApi.downloadAttachment(attachment.downloadUrl);
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = attachment.fileName || "attachment";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (apiError) {
+      setChatError(formatApiError(apiError));
     }
   }
 
@@ -664,7 +724,7 @@ export default function Channels() {
       && (draft.trim() || selectedFile)
       && !uploadingAttachment
       && !aiLoading
-      && (isConnected || !draft.trim())
+      && (selectedFile || isConnected)
   );
 
   return (
@@ -853,7 +913,37 @@ export default function Channels() {
                   )}
                   <div className="message-body">
                     <strong>{message.sender} <span className="message-time">{message.time}</span></strong>
-                    {message.isAi ? <MarkdownContent>{message.text}</MarkdownContent> : <p>{message.text}</p>}
+                    {message.isAi ? (
+                      <MarkdownContent>{message.text}</MarkdownContent>
+                    ) : (
+                      message.text && <p>{message.text}</p>
+                    )}
+                    {message.attachments?.length > 0 && (
+                      <div className="message-attachments">
+                        {message.attachments.map((attachment) => {
+                          const isPdf = isPdfAttachment(attachment);
+                          const isImage = attachment.contentType.startsWith("image/");
+                          return (
+                            <button
+                              key={attachment.id}
+                              type="button"
+                              className={`message-attachment-card ${isPdf ? "pdf-card" : ""}`}
+                              onClick={() => downloadAttachment(attachment)}
+                              aria-label={`Download ${attachment.fileName}`}
+                            >
+                              <span className="message-attachment-icon" aria-hidden="true">
+                                {isImage ? <Image size={22} /> : <FileText size={22} />}
+                              </span>
+                              <span className="message-attachment-copy">
+                                <strong>{attachment.fileName}</strong>
+                                <small>{getAttachmentLabel(attachment)}</small>
+                              </span>
+                              <Download className="message-attachment-download" size={16} aria-hidden="true" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {message.isAi && message.sources.length > 0 && (
                       <div className="message-sources">
                         <span>{t("channel.sources")}</span>
@@ -910,7 +1000,7 @@ export default function Channels() {
               {selectedFile && (
                 <div className="selected-file-chip">
                   <FileText size={16} />
-                  <span>{selectedFile.name} · {formatFileSize(selectedFile.size)}</span>
+                  <span>{selectedFile.name} - {formatFileSize(selectedFile.size)}</span>
                   <button type="button" onClick={clearSelectedFile} aria-label={t("channel.clearAttachment")}><X size={14} /></button>
                 </div>
               )}
@@ -978,7 +1068,7 @@ export default function Channels() {
                       {isImage ? <Image size={16} /> : <FileText size={16} />}
                       <span>
                         <strong>{attachment.fileName}</strong>
-                        <small>{formatFileSize(attachment.sizeBytes)} · {attachment.time}</small>
+                        <small>{formatFileSize(attachment.sizeBytes)} - {attachment.time}</small>
                       </span>
                     </button>
                   );
@@ -994,6 +1084,15 @@ export default function Channels() {
                 <div className="attachment-summary-card">
                   <strong>{selectedAttachment.fileName}</strong>
                   <p>{selectedAttachment.summary || t("channel.noAttachmentSummary")}</p>
+                  {selectedAttachment.downloadUrl && (
+                    <button
+                      className="secondary-button compact"
+                      type="button"
+                      onClick={() => downloadAttachment(selectedAttachment)}
+                    >
+                      <Download size={14} /> Download
+                    </button>
+                  )}
                 </div>
               ) : (
                 <p className="muted-small">{t("channel.noSelectedContext")}</p>

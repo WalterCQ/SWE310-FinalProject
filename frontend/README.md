@@ -1,7 +1,7 @@
 # TaskFlow Connect - Frontend UI Prototype
 
 This is a React/Vite frontend prototype for the SWE310 group project.
-It connects the dashboard, projects, tasks, workspaces, notifications, and AI assistant screens to the deployed backend Swagger APIs.
+It connects the dashboard, projects, tasks, workspaces, notifications, and AI assistant screens to the backend Swagger APIs.
 
 ## Run it
 
@@ -32,12 +32,24 @@ Register a demo account, then sign in with that account to load the protected AP
 
 ## Backend connection
 
-API base URL is configured in:
+Local development proxies `/api` and `/hubs` to:
 
-`src/api/axiosClient.js`
+`http://localhost:5134`
 
-Current backend base URL:
+Start the backend first:
 
-`https://taskflow-connect-06221341-feb9.azurewebsites.net`
+```bash
+cd ../backend/TaskFlow.Api
+dotnet ef database update
+dotnet run --launch-profile http
+```
+
+To point the dev server at another backend, set:
+
+```bash
+VITE_DEV_PROXY_TARGET=https://taskflow-connect-06221341-feb9.azurewebsites.net npm run dev
+```
+
+For production/static builds, set `VITE_API_BASE_URL` if the API is hosted on another origin.
 
 Mock data has been removed from the frontend. Demo notifications and other sample records are seeded by the backend and loaded through `axiosClient`.

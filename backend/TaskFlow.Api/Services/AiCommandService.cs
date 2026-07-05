@@ -362,13 +362,6 @@ public class AiCommandService(
             return ApiResponse.Fail<ChannelAttachmentResponse>("Channel not found or access denied.", StatusCodes.Status404NotFound);
         }
 
-        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(channel.WorkspaceId, cancellationToken);
-        if (!providerResult.Success || providerResult.Data is null)
-        {
-            return ToProviderFailure<ChannelAttachmentResponse>(providerResult);
-        }
-        var provider = providerResult.Data;
-
         if (file is null || file.Length == 0)
         {
             return ApiResponse.Fail<ChannelAttachmentResponse>("Attachment file is required.");
@@ -379,81 +372,110 @@ public class AiCommandService(
             return ApiResponse.Fail<ChannelAttachmentResponse>("Attachment exceeds the 20 MB upload limit.", StatusCodes.Status413PayloadTooLarge);
         }
 
-        try
+        await using var stream = file.OpenReadStream();
+        using var memoryStream = new MemoryStream();
+        await stream.CopyToAsync(memoryStream, cancellationToken);
+
+        var attachment = new ChannelAttachment
         {
-            var processed = await ProcessAttachmentAsync(file, provider, cancellationToken);
-            var chunks = SplitIntoChunks(processed.IndexText)
-                .Take(MaxChunksPerAttachment)
-                .ToArray();
-            if (chunks.Length == 0)
-            {
-                return ApiResponse.Fail<ChannelAttachmentResponse>("Attachment did not contain indexable content.");
-            }
+            Id = Guid.NewGuid(),
+            WorkspaceId = channel.WorkspaceId,
+            ChannelId = channelId,
+            UploadedByUserId = userId,
+            FileName = Path.GetFileName(file.FileName),
+            ContentType = ResolveContentType(file),
+            SizeBytes = file.Length,
+            Summary = string.Empty,
+            ExtractedText = string.Empty,
+            IsAiIndexed = false
+        };
 
-            var attachment = new ChannelAttachment
-            {
-                Id = Guid.NewGuid(),
-                WorkspaceId = channel.WorkspaceId,
-                ChannelId = channelId,
-                UploadedByUserId = userId,
-                FileName = Path.GetFileName(file.FileName),
-                ContentType = ResolveContentType(file),
-                SizeBytes = file.Length,
-                Summary = TrimTo(processed.Summary, 4000),
-                ExtractedText = TrimTo(processed.IndexText, MaxExtractedTextLength)
-            };
+        dbContext.ChannelAttachments.Add(attachment);
+        dbContext.ChannelAttachmentBlobs.Add(new ChannelAttachmentBlob
+        {
+            AttachmentId = attachment.Id,
+            Content = memoryStream.ToArray()
+        });
 
-            var chunkEntities = new List<ChannelKnowledgeChunk>();
-            var pineconeChunks = new List<PineconeKnowledgeChunk>();
-            for (var index = 0; index < chunks.Length; index++)
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(channel.WorkspaceId, cancellationToken);
+        if (providerResult.Success && providerResult.Data is not null)
+        {
+            var provider = providerResult.Data;
+            try
             {
-                var chunk = chunks[index];
-                var chunkId = Guid.NewGuid();
-                var embedding = await GenerateEmbeddingAsync(chunk, provider, cancellationToken);
-                chunkEntities.Add(new ChannelKnowledgeChunk
+                var processed = await ProcessAttachmentAsync(file, provider, cancellationToken);
+                var chunks = SplitIntoChunks(processed.IndexText)
+                    .Take(MaxChunksPerAttachment)
+                    .ToArray();
+
+                if (chunks.Length > 0)
                 {
-                    Id = chunkId,
-                    WorkspaceId = channel.WorkspaceId,
-                    ChannelId = channelId,
-                    AttachmentId = attachment.Id,
-                    SourceType = processed.SourceType,
-                    SourceLabel = attachment.FileName,
-                    Content = TrimTo(chunk, 2500)
-                });
-                pineconeChunks.Add(new PineconeKnowledgeChunk(
-                    chunkId,
-                    processed.SourceType,
-                    attachment.FileName,
-                    channel.Name,
-                    TrimTo(chunk, 2500),
-                    index + 1,
-                    embedding));
+                    attachment.Summary = TrimTo(processed.Summary, 4000);
+                    attachment.ExtractedText = TrimTo(processed.IndexText, MaxExtractedTextLength);
+                    attachment.IsAiIndexed = true;
+
+                    var chunkEntities = new List<ChannelKnowledgeChunk>();
+                    var pineconeChunks = new List<PineconeKnowledgeChunk>();
+                    for (var index = 0; index < chunks.Length; index++)
+                    {
+                        var chunk = chunks[index];
+                        var chunkId = Guid.NewGuid();
+                        var embedding = await GenerateEmbeddingAsync(chunk, provider, cancellationToken);
+                        var trimmedChunk = TrimTo(chunk, 2500);
+
+                        chunkEntities.Add(new ChannelKnowledgeChunk
+                        {
+                            Id = chunkId,
+                            WorkspaceId = channel.WorkspaceId,
+                            ChannelId = channelId,
+                            AttachmentId = attachment.Id,
+                            SourceType = processed.SourceType,
+                            SourceLabel = attachment.FileName,
+                            Content = trimmedChunk
+                        });
+                        pineconeChunks.Add(new PineconeKnowledgeChunk(
+                            chunkId,
+                            processed.SourceType,
+                            attachment.FileName,
+                            channel.Name,
+                            trimmedChunk,
+                            index + 1,
+                            embedding));
+                    }
+
+                    await pineconeVectorStore.UpsertChunksAsync(
+                        channel.WorkspaceId,
+                        channelId,
+                        attachment.Id,
+                        pineconeChunks,
+                        cancellationToken);
+
+                    dbContext.ChannelKnowledgeChunks.AddRange(chunkEntities);
+                }
             }
+            catch (AttachmentProcessingException)
+            {
+                attachment.Summary = string.Empty;
+                attachment.ExtractedText = string.Empty;
+                attachment.IsAiIndexed = false;
+            }
+            catch (AiProviderException)
+            {
+                attachment.Summary = string.Empty;
+                attachment.ExtractedText = string.Empty;
+                attachment.IsAiIndexed = false;
+            }
+            catch (PineconeVectorStoreException)
+            {
+                attachment.Summary = string.Empty;
+                attachment.ExtractedText = string.Empty;
+                attachment.IsAiIndexed = false;
+            }
+        }
 
-            await pineconeVectorStore.UpsertChunksAsync(
-                channel.WorkspaceId,
-                channelId,
-                attachment.Id,
-                pineconeChunks,
-                cancellationToken);
-
-            dbContext.ChannelAttachments.Add(attachment);
-            dbContext.ChannelKnowledgeChunks.AddRange(chunkEntities);
-            await dbContext.SaveChangesAsync(cancellationToken);
-            return ApiResponse.Created(ToAttachmentResponse(attachment), "Attachment indexed for channel AI.");
-        }
-        catch (AttachmentProcessingException ex)
-        {
-            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, ex.StatusCode);
-        }
-        catch (PineconeVectorStoreException ex)
-        {
-            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
-        }
-        catch (AiProviderException ex)
-        {
-            return ApiResponse.Fail<ChannelAttachmentResponse>(ex.Message, StatusCodes.Status502BadGateway);
-        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+        var message = attachment.IsAiIndexed ? "Attachment indexed for channel AI." : "Attachment uploaded.";
+        return ApiResponse.Created(attachment.ToResponse(), message);
     }
 
     public async Task<ApiResponse<IReadOnlyCollection<ChannelAttachmentResponse>>> ListChannelAttachmentsAsync(Guid channelId, CancellationToken cancellationToken = default)
@@ -472,7 +494,7 @@ public class AiCommandService(
             .ToListAsync(cancellationToken);
 
         IReadOnlyCollection<ChannelAttachmentResponse> response = attachments
-            .Select(ToAttachmentResponse)
+            .Select(attachment => attachment.ToResponse())
             .ToArray();
         return ApiResponse.Ok(response);
     }
@@ -1072,20 +1094,6 @@ public class AiCommandService(
     private string ResolveEmbeddingModel(AiProviderRuntime provider)
     {
         return configuration["AI:EmbeddingModel"] ?? configuration["AI:Model"] ?? provider.Model;
-    }
-
-    private static ChannelAttachmentResponse ToAttachmentResponse(ChannelAttachment attachment)
-    {
-        return new ChannelAttachmentResponse
-        {
-            Id = attachment.Id,
-            ChannelId = attachment.ChannelId,
-            FileName = attachment.FileName,
-            ContentType = attachment.ContentType,
-            SizeBytes = attachment.SizeBytes,
-            Summary = attachment.Summary,
-            CreatedAtUtc = attachment.CreatedAtUtc
-        };
     }
 
     private static string TrimProviderError(string body, string apiKey)

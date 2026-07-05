@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.DTOs.AI;
 using TaskFlow.Api.Helpers;
 
 namespace TaskFlow.Api.DTOs.Messages;
@@ -7,6 +8,15 @@ public class CreateMessageRequest
 {
     [Required, StringLength(4000), NonWhiteSpace]
     public string Content { get; set; } = string.Empty;
+}
+
+public class CreateMessageAttachmentRequest
+{
+    [StringLength(4000)]
+    public string? Content { get; set; }
+
+    [Required]
+    public IFormFile? File { get; set; }
 }
 
 public class UpdateMessageRequest
@@ -25,4 +35,5 @@ public class MessageResponse
     public bool IsDeleted { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? EditedAtUtc { get; set; }
+    public IReadOnlyCollection<ChannelAttachmentResponse> Attachments { get; set; } = [];
 }

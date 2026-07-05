@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs.AI;
 using TaskFlow.Api.DTOs.Channels;
 using TaskFlow.Api.Helpers;
@@ -12,7 +14,10 @@ namespace TaskFlow.Api.Controllers;
 [Authorize]
 public class ChannelsController(
     IChannelService channelService,
-    IAiCommandService aiCommandService) : ControllerBase
+    IAiCommandService aiCommandService,
+    AppDbContext dbContext,
+    IPermissionService permissionService,
+    ICurrentUserService currentUser) : ControllerBase
 {
     [HttpGet("workspaces/{workspaceId:guid}/channels")]
     public async Task<ActionResult> GetWorkspaceChannels(Guid workspaceId)
@@ -44,6 +49,27 @@ public class ChannelsController(
     public async Task<ActionResult> UploadChannelAttachment(Guid channelId, IFormFile file, CancellationToken cancellationToken)
     {
         return this.ToActionResult(await aiCommandService.IndexChannelAttachmentAsync(channelId, file, cancellationToken));
+    }
+
+    [HttpGet("channels/{channelId:guid}/attachments/{attachmentId:guid}/download")]
+    public async Task<ActionResult> DownloadChannelAttachment(Guid channelId, Guid attachmentId, CancellationToken cancellationToken)
+    {
+        var userId = currentUser.GetUserId();
+        if (!await permissionService.CanAccessChannel(userId, channelId))
+        {
+            return NotFound();
+        }
+
+        var attachment = await dbContext.ChannelAttachments
+            .AsNoTracking()
+            .Include(item => item.Blob)
+            .FirstOrDefaultAsync(item => item.Id == attachmentId && item.ChannelId == channelId, cancellationToken);
+        if (attachment?.Blob is null)
+        {
+            return NotFound();
+        }
+
+        return File(attachment.Blob.Content, attachment.ContentType, attachment.FileName);
     }
 
     [HttpPost("channels/{channelId:guid}/ai")]

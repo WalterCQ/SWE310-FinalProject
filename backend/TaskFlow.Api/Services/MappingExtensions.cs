@@ -1,3 +1,4 @@
+using TaskFlow.Api.DTOs.AI;
 using TaskFlow.Api.DTOs.Channels;
 using TaskFlow.Api.DTOs.Messages;
 using TaskFlow.Api.DTOs.Notifications;
@@ -52,7 +53,27 @@ internal static class MappingExtensions
             Content = message.Content,
             IsDeleted = message.IsDeleted,
             CreatedAtUtc = message.CreatedAtUtc,
-            EditedAtUtc = message.EditedAtUtc
+            EditedAtUtc = message.EditedAtUtc,
+            Attachments = message.Attachments
+                .OrderBy(attachment => attachment.CreatedAtUtc)
+                .Select(attachment => attachment.ToResponse())
+                .ToArray()
+        };
+    }
+
+    public static ChannelAttachmentResponse ToResponse(this ChannelAttachment attachment)
+    {
+        return new ChannelAttachmentResponse
+        {
+            Id = attachment.Id,
+            ChannelId = attachment.ChannelId,
+            FileName = attachment.FileName,
+            ContentType = attachment.ContentType,
+            SizeBytes = attachment.SizeBytes,
+            Summary = attachment.Summary,
+            IsAiIndexed = attachment.IsAiIndexed,
+            DownloadUrl = $"/api/channels/{attachment.ChannelId}/attachments/{attachment.Id}/download",
+            CreatedAtUtc = attachment.CreatedAtUtc
         };
     }
 

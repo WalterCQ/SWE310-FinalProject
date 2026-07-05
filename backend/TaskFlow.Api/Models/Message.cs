@@ -12,4 +12,5 @@ public class Message
 
     public Channel? Channel { get; set; }
     public User? Sender { get; set; }
+    public ICollection<ChannelAttachment> Attachments { get; set; } = [];
 }

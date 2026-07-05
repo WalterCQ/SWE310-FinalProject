@@ -72,6 +72,7 @@ public class ChannelService(
 
         var messages = await dbContext.Messages
             .Include(message => message.Sender)
+            .Include(message => message.Attachments)
             .Where(message => message.ChannelId == channelId)
             .OrderBy(message => message.CreatedAtUtc)
             .Take(200)

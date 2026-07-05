@@ -20,6 +20,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AiProviderCredential> AiProviderCredentials => Set<AiProviderCredential>();
     public DbSet<WorkspaceAiProviderCredential> WorkspaceAiProviderCredentials => Set<WorkspaceAiProviderCredential>();
     public DbSet<ChannelAttachment> ChannelAttachments => Set<ChannelAttachment>();
+    public DbSet<ChannelAttachmentBlob> ChannelAttachmentBlobs => Set<ChannelAttachmentBlob>();
     public DbSet<ChannelKnowledgeChunk> ChannelKnowledgeChunks => Set<ChannelKnowledgeChunk>();
     public DbSet<AgentJob> AgentJobs => Set<AgentJob>();
     public DbSet<AgentStep> AgentSteps => Set<AgentStep>();
@@ -235,6 +236,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<ChannelAttachment>(entity =>
         {
             entity.HasIndex(attachment => new { attachment.ChannelId, attachment.CreatedAtUtc });
+            entity.HasIndex(attachment => attachment.MessageId);
             entity.Property(attachment => attachment.FileName).HasMaxLength(260);
             entity.Property(attachment => attachment.ContentType).HasMaxLength(160);
             entity.Property(attachment => attachment.Summary).HasMaxLength(4000);
@@ -246,10 +248,23 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(attachment => attachment.ChannelId)
                 .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(attachment => attachment.Message)
+                .WithMany(message => message.Attachments)
+                .HasForeignKey(attachment => attachment.MessageId)
+                .OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(attachment => attachment.UploadedByUser)
                 .WithMany()
                 .HasForeignKey(attachment => attachment.UploadedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(attachment => attachment.Blob)
+                .WithOne(blob => blob.Attachment)
+                .HasForeignKey<ChannelAttachmentBlob>(blob => blob.AttachmentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ChannelAttachmentBlob>(entity =>
+        {
+            entity.HasKey(blob => blob.AttachmentId);
         });
 
         modelBuilder.Entity<ChannelKnowledgeChunk>(entity =>

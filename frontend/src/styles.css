@@ -744,6 +744,38 @@ tr.target-highlight td { background: #e8f7f5; }
   background: transparent;
 }
 .message-time { margin-left: 5px; }
+.message-attachments { display: grid; gap: 8px; margin-top: 6px; justify-items: start; }
+.message-attachment-card {
+  width: min(435px, 100%);
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 1px 0 rgba(10, 15, 14, .03);
+  transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.message-attachment-card:hover { border-color: #c8c2bc; transform: translateY(-1px); box-shadow: 0 8px 18px rgba(18, 24, 22, .07); }
+.message-attachment-icon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: #eef2f1;
+  color: var(--teal-dark);
+}
+.message-attachment-card.pdf-card .message-attachment-icon { background: #ef3f78; color: #fff; }
+.message-attachment-copy { min-width: 0; display: grid; gap: 4px; }
+.message-attachment-copy strong { overflow-wrap: anywhere; font-size: 17px; line-height: 1.2; }
+.message-attachment-copy small { color: var(--muted); font-size: 14px; font-weight: 800; }
+.message-attachment-download { color: var(--muted); justify-self: end; }
 .message-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
 .message-sources span { color: var(--muted); font-size: 12px; font-weight: 850; }
 .message-sources small, .created-task-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--muted); font-size: 11px; font-weight: 800; }

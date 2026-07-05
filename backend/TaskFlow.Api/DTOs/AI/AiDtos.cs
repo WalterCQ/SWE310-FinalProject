@@ -84,5 +84,7 @@ public class ChannelAttachmentResponse
     public string ContentType { get; set; } = string.Empty;
     public long SizeBytes { get; set; }
     public string Summary { get; set; } = string.Empty;
+    public bool IsAiIndexed { get; set; }
+    public string DownloadUrl { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
 }
