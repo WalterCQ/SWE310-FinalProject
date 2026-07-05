@@ -20,6 +20,7 @@ import {
   mapWorkspaceMember,
 } from "../api/mappers.js";
 import {
+  canAddTaskComment,
   canCreateProjectTask,
   canDeleteTaskComment,
   canShowTaskMutationControls,
@@ -638,6 +639,7 @@ export default function Tasks() {
                       task,
                       currentUserId,
                     });
+                    const canCommentOnTask = canAddTaskComment(taskWorkspaceRole, taskProjectRole);
 
                     return (
                     <div
@@ -742,16 +744,18 @@ export default function Tasks() {
                             </div>
                           ))}
                         </div>
-                        <form className="comment-form" onSubmit={(event) => addComment(event, task)}>
-                          <input
-                            value={commentDrafts[task.id] || ""}
-                            onChange={(event) => setCommentDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
-                            placeholder="Add a comment"
-                          />
-                          <button type="submit" disabled={mutatingTaskId === task.id || !(commentDrafts[task.id] || "").trim()}>
-                            <Send size={14} />
-                          </button>
-                        </form>
+                        {canCommentOnTask && (
+                          <form className="comment-form" onSubmit={(event) => addComment(event, task)}>
+                            <input
+                              value={commentDrafts[task.id] || ""}
+                              onChange={(event) => setCommentDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
+                              placeholder="Add a comment"
+                            />
+                            <button type="submit" disabled={mutatingTaskId === task.id || !(commentDrafts[task.id] || "").trim()}>
+                              <Send size={14} />
+                            </button>
+                          </form>
+                        )}
                       </div>
                     </div>
                     );

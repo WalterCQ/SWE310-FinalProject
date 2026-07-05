@@ -231,9 +231,9 @@ public class TaskService(
         }
 
         var userId = currentUser.GetUserId();
-        if (!await permissionService.CanAccessProject(userId, task.ProjectId))
+        if (!await permissionService.CanManageProject(userId, task.ProjectId))
         {
-            return ApiResponse.Fail<TaskCommentResponse>("Task not found or access denied.", StatusCodes.Status404NotFound);
+            return ApiResponse.Fail<TaskCommentResponse>("You do not have permission to add comments to this task.", StatusCodes.Status403Forbidden);
         }
 
         var comment = new TaskComment
@@ -266,7 +266,7 @@ public class TaskService(
         }
 
         var userId = currentUser.GetUserId();
-        if (comment.AuthorId != userId && !await permissionService.CanManageProject(userId, comment.TaskItem.ProjectId))
+        if (!await permissionService.CanManageProject(userId, comment.TaskItem.ProjectId))
         {
             return ApiResponse.Fail<bool>("You do not have permission to delete this comment.", StatusCodes.Status403Forbidden);
         }

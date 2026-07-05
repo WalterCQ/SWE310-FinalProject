@@ -256,7 +256,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(IEnumerable<TaskResponse>)),
             ["Tasks.CreateTask"] = new(
                 "Create a task",
-                "Creates a task after validating title, description, priority, optional assignee, and optional deadline. The assignee must already be a project member.",
+                "Creates a task after validating title, description, priority, optional assignee, and optional deadline. Requires project management permission through workspace Owner/Admin, global Admin, or project manager role. The assignee must already be a project member.",
                 StatusCodes.Status201Created,
                 typeof(TaskResponse)),
             ["Tasks.GetTask"] = new(
@@ -266,12 +266,12 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(TaskResponse)),
             ["Tasks.UpdateTask"] = new(
                 "Update a task",
-                "Updates task title, description, priority, assignee, and deadline. The task creator, current assignee, project manager, workspace manager, or global admin can update it.",
+                "Updates task title, description, priority, assignee, and deadline. Requires project management permission through workspace Owner/Admin, global Admin, or project manager role.",
                 StatusCodes.Status200OK,
                 typeof(TaskResponse)),
             ["Tasks.DeleteTask"] = new(
                 "Delete a task",
-                "Deletes a task when the current user has task update permission.",
+                "Deletes a task when the current user has project management permission.",
                 StatusCodes.Status200OK,
                 typeof(bool)),
             ["Tasks.UpdateTaskStatus"] = new(
@@ -286,7 +286,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(TaskResponse)),
             ["Tasks.SetTaskDeadline"] = new(
                 "Set or clear task deadline",
-                "Updates DeadlineUtc or clears it when null. Requires task update permission.",
+                "Updates DeadlineUtc or clears it when null. Requires project management permission.",
                 StatusCodes.Status200OK,
                 typeof(TaskResponse)),
             ["Tasks.GetTaskComments"] = new(
@@ -296,12 +296,12 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(IEnumerable<TaskCommentResponse>)),
             ["Tasks.AddTaskComment"] = new(
                 "Add a task comment",
-                "Adds a comment to a task and updates the task timestamp. Requires access to the task's project.",
+                "Adds a comment to a task and updates the task timestamp. Requires project management permission.",
                 StatusCodes.Status201Created,
                 typeof(TaskCommentResponse)),
             ["Tasks.DeleteTaskComment"] = new(
                 "Delete a task comment",
-                "Deletes a task comment. The comment author can delete their own comment; project or workspace managers can delete comments in their project.",
+                "Deletes a task comment. Requires project management permission.",
                 StatusCodes.Status200OK,
                 typeof(bool)),
 

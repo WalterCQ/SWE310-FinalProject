@@ -3,10 +3,6 @@ function roleKey(role) {
   return String(role).trim().toLowerCase().replace(/[\s_-]/g, "");
 }
 
-function sameId(left, right) {
-  return Boolean(left && right && String(left).toLowerCase() === String(right).toLowerCase());
-}
-
 export function isWorkspaceAdmin(role) {
   const key = roleKey(role);
   return key === "1" || key === "admin";
@@ -30,26 +26,22 @@ export function isProjectManager(role) {
   return key === "0" || key === "projectmanager";
 }
 
-export function isProjectContributor(role) {
-  const key = roleKey(role);
-  return key === "1" || key === "contributor";
-}
-
 export function canManageProjectMembers(workspaceRole, projectRole) {
   return canManageWorkspaceMembers(workspaceRole) || isProjectManager(projectRole);
 }
 
 export function canCreateProjectTask(workspaceRole, projectRole) {
-  return canManageProjectMembers(workspaceRole, projectRole) || isProjectContributor(projectRole);
+  return canManageProjectMembers(workspaceRole, projectRole);
 }
 
 export function canShowTaskMutationControls({ workspaceRole, projectRole, task, currentUserId }) {
-  return canManageProjectMembers(workspaceRole, projectRole)
-    || sameId(task?.assigneeId, currentUserId)
-    || sameId(task?.createdByUserId, currentUserId);
+  return canManageProjectMembers(workspaceRole, projectRole);
+}
+
+export function canAddTaskComment(workspaceRole, projectRole) {
+  return canManageProjectMembers(workspaceRole, projectRole);
 }
 
 export function canDeleteTaskComment({ workspaceRole, projectRole, comment, currentUserId }) {
-  return canManageProjectMembers(workspaceRole, projectRole)
-    || sameId(comment?.authorId, currentUserId);
+  return canManageProjectMembers(workspaceRole, projectRole);
 }

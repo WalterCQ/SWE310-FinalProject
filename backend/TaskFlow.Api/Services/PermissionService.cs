@@ -93,11 +93,7 @@ public class PermissionService(AppDbContext dbContext) : IPermissionService
 
     public async Task<bool> CanCreateTask(Guid userId, Guid projectId)
     {
-        return await CanManageProject(userId, projectId)
-            || await dbContext.ProjectMembers.AnyAsync(member =>
-                member.UserId == userId
-                && member.ProjectId == projectId
-                && member.RoleInProject != ProjectRole.Viewer);
+        return await CanManageProject(userId, projectId);
     }
 
     public async Task<bool> CanUpdateTask(Guid userId, Guid taskId)
@@ -111,9 +107,7 @@ public class PermissionService(AppDbContext dbContext) : IPermissionService
             return false;
         }
 
-        return await CanManageProject(userId, task.ProjectId)
-            || task.AssigneeId == userId
-            || task.CreatedByUserId == userId;
+        return await CanManageProject(userId, task.ProjectId);
     }
 
     public Task<bool> CanUseAiCommand(Guid userId, Guid workspaceId)
