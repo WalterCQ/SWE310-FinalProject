@@ -315,7 +315,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasOne(job => job.GitHubRepositoryConnection)
                 .WithMany()
                 .HasForeignKey(job => job.GitHubRepositoryConnectionId)
-                .OnDelete(DeleteBehavior.SetNull);
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<AgentStep>(entity =>

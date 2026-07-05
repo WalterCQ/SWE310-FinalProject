@@ -1199,7 +1199,7 @@ namespace TaskFlow.Api.Migrations
                     b.HasOne("TaskFlow.Api.Models.GitHubRepositoryConnection", "GitHubRepositoryConnection")
                         .WithMany()
                         .HasForeignKey("GitHubRepositoryConnectionId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("TaskFlow.Api.Models.AiProviderCredential", "ProviderCredential")
                         .WithMany()

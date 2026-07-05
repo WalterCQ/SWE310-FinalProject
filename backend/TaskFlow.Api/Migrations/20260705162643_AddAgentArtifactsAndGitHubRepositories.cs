@@ -125,7 +125,7 @@ namespace TaskFlow.Api.Migrations
                 column: "GitHubRepositoryConnectionId",
                 principalTable: "GitHubRepositoryConnections",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
+                onDelete: ReferentialAction.NoAction);
         }
 
         /// <inheritdoc />
