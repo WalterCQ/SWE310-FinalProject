@@ -25,10 +25,16 @@ function blankMemberState() {
   };
 }
 
+function isWorkspaceAdminRole(role) {
+  const normalized = String(role ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "admin";
+}
+
 export default function Workspaces() {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
   const selectedWorkspaceId = searchParams.get("workspaceId") || "";
+  const currentUserId = localStorage.getItem("userId") || "";
   const [workspaces, setWorkspaces] = useState([]);
   const [membersByWorkspace, setMembersByWorkspace] = useState({});
   const [formOpen, setFormOpen] = useState(false);
@@ -86,6 +92,16 @@ export default function Workspaces() {
       behavior: "smooth",
     });
   }, [selectedWorkspaceId, loading, workspaces]);
+
+  const canCreateWorkspace = Object.values(membersByWorkspace).some((state) =>
+    state.items.some((member) => member.userId === currentUserId && isWorkspaceAdminRole(member.role))
+  );
+
+  useEffect(() => {
+    if (!loading && !canCreateWorkspace && formOpen) {
+      setFormOpen(false);
+    }
+  }, [canCreateWorkspace, formOpen, loading]);
 
   function updateField(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -201,20 +217,22 @@ export default function Workspaces() {
 
   return (
     <div className="page-stack">
-      <div className="page-actions">
-        <button
-          className="primary-button small"
-          type="button"
-          onClick={() => {
-            setFormOpen((open) => !open);
-            setCreateError("");
-          }}
-        >
-          <Plus size={18} /> {t("workspace.new")}
-        </button>
-      </div>
+      {canCreateWorkspace && (
+        <div className="page-actions">
+          <button
+            className="primary-button small"
+            type="button"
+            onClick={() => {
+              setFormOpen((open) => !open);
+              setCreateError("");
+            }}
+          >
+            <Plus size={18} /> {t("workspace.new")}
+          </button>
+        </div>
+      )}
 
-      {formOpen && (
+      {canCreateWorkspace && formOpen && (
         <section className="panel create-panel">
           <div className="panel-header">
             <h3>{t("workspace.createTitle")}</h3>

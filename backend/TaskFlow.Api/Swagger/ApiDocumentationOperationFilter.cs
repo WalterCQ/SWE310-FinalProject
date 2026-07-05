@@ -117,7 +117,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(IEnumerable<WorkspaceResponse>)),
             ["Workspaces.CreateWorkspace"] = new(
                 "Create a workspace",
-                "Creates a workspace after validating the required name and optional description length. The current user is automatically added as the workspace owner.",
+                "Creates a workspace after validating the required name and optional description length. Requires the current user to hold the workspace Admin role in at least one existing workspace. The current user is automatically added as the new workspace owner.",
                 StatusCodes.Status201Created,
                 typeof(WorkspaceResponse)),
             ["Workspaces.GetWorkspace"] = new(

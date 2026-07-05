@@ -47,6 +47,11 @@ public class WorkspaceService(
         }
 
         var userId = currentUser.GetUserId();
+        if (!await CanCurrentUserCreateWorkspace(userId))
+        {
+            return ApiResponse.Fail<WorkspaceResponse>("Only workspace admins can create new workspaces.", StatusCodes.Status403Forbidden);
+        }
+
         await EnsureCurrentUserExists(userId);
 
         var workspace = new Workspace
@@ -283,6 +288,12 @@ public class WorkspaceService(
     {
         return await dbContext.WorkspaceMembers.CountAsync(member =>
             member.WorkspaceId == workspaceId && member.Role == WorkspaceRole.Owner);
+    }
+
+    private async Task<bool> CanCurrentUserCreateWorkspace(Guid userId)
+    {
+        return await dbContext.WorkspaceMembers.AnyAsync(member =>
+            member.UserId == userId && member.Role == WorkspaceRole.Admin);
     }
 
     private static WorkspaceMemberResponse ToMemberResponse(WorkspaceMember member)

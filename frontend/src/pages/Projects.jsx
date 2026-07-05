@@ -69,8 +69,8 @@ export default function Projects() {
     const nextProjectId = searchParams.get("projectId") || "";
     if (nextSearch !== search) setSearch(nextSearch);
     if (nextStatus !== statusFilter) setStatusFilter(nextStatus);
-    if (nextProjectId && nextProjectId !== selectedProjectId) setSelectedProjectId(nextProjectId);
-  }, [searchParams, search, selectedProjectId, statusFilter]);
+    if (nextProjectId) setSelectedProjectId(nextProjectId);
+  }, [searchParams]);
 
   useEffect(() => {
     const nextParams = {};
@@ -164,6 +164,16 @@ export default function Projects() {
     setCreateError("");
   }
 
+  function selectProject(projectId) {
+    setSelectedProjectId(projectId);
+
+    const nextParams = {};
+    if (projectId) nextParams.projectId = projectId;
+    if (search.trim()) nextParams.search = search.trim();
+    if (statusFilter !== "all") nextParams.status = statusFilter;
+    setSearchParams(nextParams, { replace: true });
+  }
+
   function validateForm() {
     const nextErrors = {};
     if (!form.workspaceId) nextErrors.workspaceId = t("project.workspaceRequired");
@@ -219,7 +229,9 @@ export default function Projects() {
 
   async function addProjectMember(event) {
     event.preventDefault();
-    if (!selectedProjectId || !memberForm.email.trim()) {
+    const projectId = selectedProject?.id || selectedProjectId;
+
+    if (!projectId || !memberForm.email.trim()) {
       setMemberError("Enter the email of a registered workspace member.");
       return;
     }
@@ -228,12 +240,12 @@ export default function Projects() {
     setMemberError("");
 
     try {
-      await projectsApi.addMember(selectedProjectId, {
+      await projectsApi.addMember(projectId, {
         email: memberForm.email.trim(),
         roleInProject: Number(memberForm.roleInProject),
       });
       setMemberForm(memberBlankForm);
-      await loadProjectMembers();
+      await loadProjectMembers(projectId);
     } catch (apiError) {
       setMemberError(formatApiError(apiError));
     } finally {
@@ -242,14 +254,17 @@ export default function Projects() {
   }
 
   async function updateProjectMemberRole(member, roleInProject) {
+    const projectId = selectedProject?.id || selectedProjectId;
+    if (!projectId) return;
+
     setMemberSaving(true);
     setMemberError("");
 
     try {
-      await projectsApi.updateMember(selectedProjectId, member.userId, {
+      await projectsApi.updateMember(projectId, member.userId, {
         roleInProject: Number(roleInProject),
       });
-      await loadProjectMembers();
+      await loadProjectMembers(projectId);
     } catch (apiError) {
       setMemberError(formatApiError(apiError));
     } finally {
@@ -258,12 +273,15 @@ export default function Projects() {
   }
 
   async function removeProjectMember(member) {
+    const projectId = selectedProject?.id || selectedProjectId;
+    if (!projectId) return;
+
     setMemberSaving(true);
     setMemberError("");
 
     try {
-      await projectsApi.removeMember(selectedProjectId, member.userId);
-      await loadProjectMembers();
+      await projectsApi.removeMember(projectId, member.userId);
+      await loadProjectMembers(projectId);
     } catch (apiError) {
       setMemberError(formatApiError(apiError));
     } finally {
@@ -420,7 +438,7 @@ export default function Projects() {
                     id={`project-${project.id}`}
                     key={project.id}
                     className={project.id === selectedProjectId ? "selected-row target-highlight" : ""}
-                    onClick={() => setSelectedProjectId(project.id)}
+                    onClick={() => selectProject(project.id)}
                   >
                     <td>{project.name}</td>
                     <td><StatusBadge variant={project.statusLabel}>{t(enumProjectStatusKey(project.statusLabel))}</StatusBadge></td>
