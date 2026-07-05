@@ -31,7 +31,7 @@ public class AgentJobProcessor(
     AgentSkillRegistry skillRegistry,
     ILogger<AgentJobProcessor> logger)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(AgentJsonUtilities.DefaultOptions)
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter() }
@@ -112,7 +112,7 @@ public class AgentJobProcessor(
         var plan = new AgentPlan(
             "Microsoft Agent Framework manager workflow will plan typed tool intents, then TaskFlow services execute them with approval gates.",
             "ManagerAgent",
-            "Microsoft.Agents.AI",
+            typeof(AIAgent).Assembly.GetName().Name ?? "Microsoft.Agents.AI",
             subAgents,
             toolIntents,
             skillRegistry.RegisteredSkillIds,
@@ -285,7 +285,7 @@ public class AgentJobProcessor(
                     job.UserId,
                     AgentEventType.ArtifactCreated,
                     $"Runtime skill completed: {deck.SkillId}",
-                    JsonSerializer.Serialize(new { deck.SkillId, deck.FileName, output = deck.OutputLog }, JsonOptions));
+                    JsonSerializer.Serialize(new { deck.SkillId, deck.FileName, output = deck.ExecutionLog }, JsonOptions));
             }
             catch (Exception ex)
             {
@@ -306,7 +306,7 @@ public class AgentJobProcessor(
                     job.UserId,
                     AgentEventType.ArtifactCreated,
                     $"Runtime skill completed: {report.SkillId}",
-                    JsonSerializer.Serialize(new { report.SkillId, report.FileName, output = report.OutputLog }, JsonOptions));
+                    JsonSerializer.Serialize(new { report.SkillId, report.FileName, output = report.ExecutionLog }, JsonOptions));
             }
             catch (Exception ex)
             {
@@ -506,10 +506,7 @@ public class AgentJobProcessor(
         }
         finally
         {
-            if (Directory.Exists(tempRoot))
-            {
-                Directory.Delete(tempRoot, recursive: true);
-            }
+            TryDeleteDirectory(tempRoot);
         }
 
         AddArtifact(
@@ -708,7 +705,236 @@ public class AgentJobProcessor(
             .ToListAsync(cancellationToken);
     }
 
+    private async Task<CodePatchBuildResult> BuildCodePatchAsync(
+        AgentJob job,
+        Guid stepId,
+        IReadOnlyCollection<string> contextLines,
+        CancellationToken cancellationToken)
+    {
+        if (!job.GitHubRepositoryConnectionId.HasValue)
+        {
+            AddEvent(job.Id, job.UserId, AgentEventType.StepStarted, "No GitHub repository is connected; generated a reviewable patch artifact only.");
+            return new CodePatchBuildResult(
+                BuildCodePatchArtifact(job, contextLines),
+                "Validation skipped: no GitHub repository connection is attached to this job.",
+                "No repository diff was produced.");
+        }
+
+        var repository = await dbContext.GitHubRepositoryConnections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item =>
+                item.Id == job.GitHubRepositoryConnectionId.Value
+                && item.WorkspaceId == job.WorkspaceId
+                && item.IsEnabled,
+                cancellationToken)
+            ?? throw new InvalidOperationException("GitHub repository connection was not found or is disabled.");
+
+        var provider = await ResolveJobProviderRuntimeAsync(job, cancellationToken);
+        var tempRoot = Path.Combine(Path.GetTempPath(), "taskflow-agent-code", job.Id.ToString("N"), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var patchPath = Path.Combine(tempRoot, "agent.patch");
+
+        try
+        {
+            var token = await gitHubRepositoryService.CreateInstallationAccessTokenAsync(repository.InstallationId, cancellationToken);
+            var gitEnvironment = CreateGitAuthEnvironment(tempRoot, token.Token);
+            var remoteUrl = $"https://github.com/{repository.FullName}.git";
+            await RunProcessAsync("git", ["clone", "--depth", "1", "--branch", repository.DefaultBranch, remoteUrl, repoPath], tempRoot, token.Token, cancellationToken, gitEnvironment);
+
+            var repositoryContext = await BuildRepositoryContextAsync(repoPath, token.Token, gitEnvironment, contextLines, cancellationToken);
+            var rawPatch = await RequestRepositoryPatchAsync(provider, job, repository, repositoryContext, contextLines, cancellationToken);
+            var patch = NormalizeUnifiedDiff(rawPatch);
+            await File.WriteAllTextAsync(patchPath, patch, Encoding.UTF8, cancellationToken);
+            await RunProcessAsync("git", ["apply", "--check", patchPath], repoPath, token.Token, cancellationToken, gitEnvironment);
+            await RunProcessAsync("git", ["apply", patchPath], repoPath, token.Token, cancellationToken, gitEnvironment);
+
+            var diffSummary = await RunProcessAsync("git", ["diff", "--stat", "HEAD"], repoPath, token.Token, cancellationToken, gitEnvironment);
+            if (string.IsNullOrWhiteSpace(diffSummary))
+            {
+                throw new InvalidOperationException("Generated patch applied but produced no repository diff.");
+            }
+
+            var validationResult = string.IsNullOrWhiteSpace(repository.ValidationCommand)
+                ? "Validation skipped: no validation command configured for this repository."
+                : await RunProcessAsync("/bin/bash", ["-lc", repository.ValidationCommand], repoPath, token.Token, cancellationToken, gitEnvironment);
+
+            AddEvent(
+                job.Id,
+                job.UserId,
+                AgentEventType.StepCompleted,
+                "CodeSubAgent generated and validated a repository patch.",
+                JsonSerializer.Serialize(new
+                {
+                    repository = repository.FullName,
+                    validation = validationResult,
+                    diffSummary
+                }, JsonOptions));
+            return new CodePatchBuildResult(patch, validationResult, diffSummary);
+        }
+        catch (Exception ex)
+        {
+            AddArtifact(
+                job.Id,
+                stepId,
+                AgentArtifactKind.CodePatch,
+                "code-patch-validation-error.md",
+                $"""
+                # Code Patch Failed
+
+                Repository: {repository.FullName}
+                Goal: {job.Goal}
+
+                The generated patch was not accepted, so no GitHub PR approval was created.
+
+                ## Error
+
+                {ex.Message}
+                """);
+            AddEvent(job.Id, job.UserId, AgentEventType.Error, "CodeSubAgent failed to generate a valid repository patch.", JsonSerializer.Serialize(new { error = ex.Message }, JsonOptions));
+            throw;
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    private async Task<string> BuildRepositoryContextAsync(
+        string repoPath,
+        string gitSecret,
+        IReadOnlyDictionary<string, string> gitEnvironment,
+        IReadOnlyCollection<string> contextLines,
+        CancellationToken cancellationToken)
+    {
+        var fileListOutput = await RunProcessAsync("git", ["ls-files"], repoPath, gitSecret, cancellationToken, gitEnvironment);
+        var tokens = Tokenize(string.Join(' ', contextLines)).ToArray();
+        var candidateFiles = fileListOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(IsRelevantRepositoryFile)
+            .Select(path => new { Path = path, Score = ScoreRepositoryPath(path, tokens) })
+            .OrderByDescending(item => item.Score)
+            .ThenBy(item => item.Path)
+            .Take(18)
+            .Select(item => item.Path)
+            .ToArray();
+
+        var sections = new List<string>
+        {
+            "# Repository Context",
+            "",
+            "## Selected files",
+            string.Join(Environment.NewLine, candidateFiles.Select(path => $"- {path}")),
+            ""
+        };
+
+        foreach (var relativePath in candidateFiles)
+        {
+            var fullPath = Path.GetFullPath(Path.Combine(repoPath, relativePath));
+            if (!fullPath.StartsWith(Path.GetFullPath(repoPath), StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                var fileInfo = new FileInfo(fullPath);
+                if (!fileInfo.Exists || fileInfo.Length > 160_000)
+                {
+                    continue;
+                }
+
+                var content = await File.ReadAllTextAsync(fullPath, cancellationToken);
+                sections.Add($"## File: {relativePath}");
+                sections.Add("```");
+                sections.Add(Shorten(content, 5000));
+                sections.Add("```");
+                sections.Add("");
+            }
+            catch (Exception ex)
+            {
+                sections.Add($"## File: {relativePath}");
+                sections.Add($"Skipped: {ex.Message}");
+                sections.Add("");
+            }
+        }
+
+        return string.Join(Environment.NewLine, sections);
+    }
+
+    private async Task<string> RequestRepositoryPatchAsync(
+        AiProviderRuntime provider,
+        AgentJob job,
+        GitHubRepositoryConnection repository,
+        string repositoryContext,
+        IReadOnlyCollection<string> contextLines,
+        CancellationToken cancellationToken)
+    {
+        var client = httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{provider.BaseUrl.TrimEnd('/')}/chat/completions");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
+        request.Content = new StringContent(JsonSerializer.Serialize(new
+        {
+            model = provider.Model,
+            temperature = 0,
+            messages = new[]
+            {
+                new
+                {
+                    role = "system",
+                    content = """
+                    You are TaskFlow CodeSubAgent. Return only a valid unified diff that can be applied at the repository root with git apply --check.
+                    Do not wrap the diff in Markdown fences. Do not invent files unless the change truly requires them.
+                    If the repository context is insufficient for a safe patch, return exactly: NO_PATCH: <short reason>
+                    """
+                },
+                new
+                {
+                    role = "user",
+                    content = $"""
+                    Repository: {repository.FullName}
+                    Default branch: {repository.DefaultBranch}
+                    Goal:
+                    {job.Goal}
+
+                    TaskFlow context:
+                    {string.Join(Environment.NewLine, contextLines.Take(16))}
+
+                    Repository context:
+                    {repositoryContext}
+                    """
+                }
+            }
+        }, JsonOptions), Encoding.UTF8, "application/json");
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Provider code patch call failed with {(int)response.StatusCode}: {Shorten(RedactSecret(body, provider.ApiKey), 400)}");
+        }
+
+        using var document = JsonDocument.Parse(body);
+        var content = document.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString();
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw new InvalidOperationException("Provider returned an empty code patch.");
+        }
+
+        return content;
+    }
+
     private async Task<string?> TryAskProviderForPlanNotesAsync(AgentJob job, IReadOnlyCollection<string> subAgents, CancellationToken cancellationToken)
+    {
+        var runtime = await ResolveJobProviderRuntimeAsync(job, cancellationToken);
+        return await RequestPlanNotesAsync(runtime, job, subAgents, cancellationToken);
+    }
+
+    private async Task<AiProviderRuntime> ResolveJobProviderRuntimeAsync(AgentJob job, CancellationToken cancellationToken)
     {
         if (!job.ProviderCredentialId.HasValue)
         {
@@ -718,7 +944,7 @@ public class AgentJobProcessor(
                 throw new InvalidOperationException(workspaceProviderResult.Message);
             }
 
-            return await RequestPlanNotesAsync(workspaceProviderResult.Data, job, subAgents, cancellationToken);
+            return workspaceProviderResult.Data;
         }
 
         var credential = await dbContext.AiProviderCredentials
@@ -729,7 +955,7 @@ public class AgentJobProcessor(
             throw new InvalidOperationException("Configured provider was not found for this user.");
         }
 
-        var runtime = new AiProviderRuntime
+        return new AiProviderRuntime
         {
             ProviderName = credential.ProviderName,
             BaseUrl = string.IsNullOrWhiteSpace(credential.BaseUrl)
@@ -739,7 +965,6 @@ public class AgentJobProcessor(
             ApiKey = AiProviderService.Unprotect(dataProtectionProvider, credential.EncryptedApiKey),
             SupportsToolCalls = credential.SupportsToolCalls
         };
-        return await RequestPlanNotesAsync(runtime, job, subAgents, cancellationToken);
     }
 
     private async Task<string?> RequestPlanNotesAsync(
@@ -913,6 +1138,31 @@ public class AgentJobProcessor(
         });
     }
 
+    private void AddSkillFailure(AgentJob job, Guid stepId, AgentArtifactKind kind, string skillId, Exception exception)
+    {
+        AddArtifact(
+            job.Id,
+            stepId,
+            kind,
+            $"{skillId}-error.md",
+            $"""
+            # Runtime Skill Failed
+
+            Skill: {skillId}
+            Job: {job.Id}
+
+            ## Error
+
+            {exception.Message}
+            """);
+        AddEvent(
+            job.Id,
+            job.UserId,
+            AgentEventType.Error,
+            $"Runtime skill failed: {skillId}",
+            JsonSerializer.Serialize(new { skillId, error = exception.Message }, JsonOptions));
+    }
+
     private static IReadOnlyCollection<string> InferSubAgents(string goal, string? artifactTarget)
     {
         var subAgents = new List<string> { "SummarySubAgent" };
@@ -943,6 +1193,40 @@ public class AgentJobProcessor(
         return subAgents.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    private static IReadOnlyCollection<ToolIntent> BuildToolIntents(AgentJob job, IReadOnlyCollection<string> subAgents)
+    {
+        var intents = new List<ToolIntent>
+        {
+            new("SummarySubAgent", "collect_context", "AiContextService", false)
+        };
+
+        if (subAgents.Contains("CodeSubAgent"))
+        {
+            intents.Add(new("CodeSubAgent", "generate_unified_diff", "GitHub repository clone or patch artifact", false));
+            if (job.GitHubRepositoryConnectionId.HasValue)
+            {
+                intents.Add(new("CodeSubAgent", "create_pull_request", "GitHubRepositoryConnection", true));
+            }
+        }
+
+        if (subAgents.Contains("DeckSubAgent"))
+        {
+            intents.Add(new("DeckSubAgent", "build_pptx", "ppt-master runtime skill", false));
+        }
+
+        if (subAgents.Contains("ReportSubAgent"))
+        {
+            intents.Add(new("ReportSubAgent", "build_docx", "md-to-docx/openxml-docx runtime skill", false));
+        }
+
+        if (subAgents.Contains("TaskFlowActionSubAgent"))
+        {
+            intents.Add(new("TaskFlowActionSubAgent", "preview_taskflow_write", "TaskItem/Notification", true));
+        }
+
+        return intents;
+    }
+
     private void CompleteJob(AgentJob job)
     {
         job.Status = AgentJobStatus.Completed;
@@ -967,6 +1251,85 @@ public class AgentJobProcessor(
         return string.IsNullOrWhiteSpace(secret)
             ? value
             : value.Replace(secret, "[redacted]", StringComparison.Ordinal);
+    }
+
+    private static IEnumerable<string> Tokenize(string text)
+    {
+        return text
+            .Split([' ', '\t', '\r', '\n', '.', ',', ':', ';', '/', '\\', '-', '_', '(', ')', '[', ']', '{', '}', '"', '\''], StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length >= 3)
+            .Distinct()
+            .Take(32);
+    }
+
+    private static bool IsRelevantRepositoryFile(string path)
+    {
+        if (path.Contains("/bin/", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/obj/", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("node_modules/", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/dist/", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/build/", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("Migrations/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        return extension is ".cs" or ".csproj" or ".sln" or ".jsx" or ".js" or ".ts" or ".tsx" or ".css" or ".json" or ".md" or ".yml" or ".yaml";
+    }
+
+    private static int ScoreRepositoryPath(string path, IReadOnlyCollection<string> tokens)
+    {
+        var normalized = path.ToLowerInvariant();
+        var score = tokens.Count(token => normalized.Contains(token, StringComparison.OrdinalIgnoreCase)) * 10;
+        if (normalized.EndsWith("readme.md", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 80;
+        }
+
+        if (normalized.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
+            || normalized.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            || normalized.EndsWith("package.json", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 70;
+        }
+
+        if (normalized.Contains("src/", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("backend/", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("frontend/", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 20;
+        }
+
+        return score;
+    }
+
+    private static string NormalizeUnifiedDiff(string content)
+    {
+        var normalized = content.Trim();
+        if (normalized.StartsWith("```", StringComparison.Ordinal))
+        {
+            normalized = normalized
+                .Replace("```diff", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace("```patch", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace("```", string.Empty, StringComparison.Ordinal)
+                .Trim();
+        }
+
+        if (normalized.StartsWith("NO_PATCH:", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(normalized);
+        }
+
+        if (!normalized.Contains("diff --git ", StringComparison.Ordinal)
+            || !normalized.Contains("--- ", StringComparison.Ordinal)
+            || !normalized.Contains("+++ ", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Provider did not return a valid unified diff.");
+        }
+
+        return normalized.EndsWith('\n') ? normalized : normalized + Environment.NewLine;
     }
 
     private static string BuildCodePatchArtifact(AgentJob job, IReadOnlyCollection<string> ragContext)
@@ -1148,11 +1511,45 @@ public class AgentJobProcessor(
         };
     }
 
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+            // Temporary agent work directories are best-effort cleanup.
+        }
+    }
+
     private sealed record AgentPlan(
         string Summary,
+        string ManagerAgentName,
+        string Runtime,
         IReadOnlyCollection<string> SubAgents,
+        IReadOnlyCollection<ToolIntent> ToolIntents,
+        IReadOnlyCollection<string> RuntimeSkills,
         string? ProviderNotes,
         IReadOnlyCollection<string> SafetyRules);
+
+    private sealed record AgentRuntimeContext(
+        IReadOnlyCollection<string> ContextLines,
+        IReadOnlyCollection<string> Sources);
+
+    private sealed record CodePatchBuildResult(
+        string Patch,
+        string ValidationResult,
+        string DiffSummary);
+
+    private sealed record ToolIntent(
+        string SubAgentName,
+        string Action,
+        string Target,
+        bool RequiresApproval);
 
     private sealed record CreateTaskActionPayload(
         Guid ProjectId,
