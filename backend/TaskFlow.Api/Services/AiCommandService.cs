@@ -875,36 +875,39 @@ public class AiCommandService(
                 }
             }
 
-            var imageCount = 0;
-            foreach (var page in document.GetPages())
+            if (sections.Count == 0 || configuration.GetValue("AI:SummarizePdfImagesWithText", false))
             {
-                foreach (var image in page.GetImages())
+                var imageCount = 0;
+                foreach (var page in document.GetPages())
                 {
+                    foreach (var image in page.GetImages())
+                    {
+                        if (imageCount >= MaxPdfImagesToSummarize)
+                        {
+                            break;
+                        }
+
+                        var imagePayload = TryExtractPdfImage(image);
+                        if (imagePayload is null)
+                        {
+                            continue;
+                        }
+
+                        imageCount++;
+                        var imageLabel = $"{fileName} page {page.Number} image {imageCount}";
+                        var imageSummary = await SummarizeImageAsync(
+                            imagePayload.Bytes,
+                            imagePayload.ContentType,
+                            imageLabel,
+                            provider,
+                            cancellationToken);
+                        sections.Add(new AttachmentIndexSection("pdf-image", imageLabel, imageSummary));
+                    }
+
                     if (imageCount >= MaxPdfImagesToSummarize)
                     {
                         break;
                     }
-
-                    var imagePayload = TryExtractPdfImage(image);
-                    if (imagePayload is null)
-                    {
-                        continue;
-                    }
-
-                    imageCount++;
-                    var imageLabel = $"{fileName} page {page.Number} image {imageCount}";
-                    var imageSummary = await SummarizeImageAsync(
-                        imagePayload.Bytes,
-                        imagePayload.ContentType,
-                        imageLabel,
-                        provider,
-                        cancellationToken);
-                    sections.Add(new AttachmentIndexSection("pdf-image", imageLabel, imageSummary));
-                }
-
-                if (imageCount >= MaxPdfImagesToSummarize)
-                {
-                    break;
                 }
             }
 
