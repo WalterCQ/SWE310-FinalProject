@@ -1,4 +1,4 @@
-import { Bell, CalendarDays, ClipboardList, Globe2 } from "lucide-react";
+import { Bell, CalendarDays, Globe2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import GlobalSearch from "./GlobalSearch.jsx";
 import { LOCALES, useI18n } from "../i18n.jsx";
@@ -24,15 +24,6 @@ export default function Topbar({ pageMeta }) {
             <option value={LOCALES.tg}>{t("topbar.language.tajik")}</option>
           </select>
         </label>
-        <button
-          className="icon-button"
-          aria-label={t("topbar.myTasks")}
-          title={t("topbar.myTasks")}
-          type="button"
-          onClick={() => navigate("/tasks?view=mine")}
-        >
-          <ClipboardList size={18} />
-        </button>
         <button
           className="icon-button notification-dot"
           aria-label={t("topbar.notifications")}

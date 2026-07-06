@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare, Plus, Search, Send, Trash2 } from "lucide-react";
+import { MessageSquare, Plus, Search, Send, Trash2, UserRoundCheck } from "lucide-react";
 import { motion } from "motion/react";
 import { useSearchParams } from "react-router-dom";
 import Avatar from "../components/Avatar.jsx";
@@ -165,7 +165,8 @@ export default function Tasks() {
     const nextParams = {};
     if (isMyTasksView) {
       nextParams.view = "mine";
-    } else if (selectedProjectId) {
+    }
+    if (selectedProjectId) {
       nextParams.projectId = selectedProjectId;
     }
     if (selectedTaskId) nextParams.taskId = selectedTaskId;
@@ -359,7 +360,17 @@ export default function Tasks() {
 
   async function fetchVisibleTasks(projectId = selectedProjectId) {
     if (isMyTasksView) {
-      if (!currentUserId || projects.length === 0) return [];
+      if (!currentUserId) return [];
+
+      if (projectId) {
+        const data = await tasksApi.listByProject(projectId);
+        return asArray(data)
+          .map((task) => mapTask(task, projectLookup))
+          .filter((task) => task.assigneeId === currentUserId)
+          .sort(compareTasksByDeadline);
+      }
+
+      if (projects.length === 0) return [];
 
       const taskGroups = await Promise.all(projects.map((project) => tasksApi.listByProject(project.id)));
       return taskGroups
@@ -512,20 +523,24 @@ export default function Tasks() {
     }
   }
 
+  function showMyTasks() {
+    const nextParams = { view: "mine" };
+    if (selectedProjectId) nextParams.projectId = selectedProjectId;
+    if (selectedTaskId) nextParams.taskId = selectedTaskId;
+    if (search.trim()) nextParams.search = search.trim();
+    setSearchParams(nextParams);
+  }
+
+  function showAllTasks() {
+    const nextParams = {};
+    if (selectedProjectId) nextParams.projectId = selectedProjectId;
+    if (selectedTaskId) nextParams.taskId = selectedTaskId;
+    if (search.trim()) nextParams.search = search.trim();
+    setSearchParams(nextParams);
+  }
+
   return (
     <div className="page-stack">
-      {isMyTasksView && (
-        <div className="page-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => setSearchParams(selectedProjectId ? { projectId: selectedProjectId } : {})}
-          >
-            {t("task.viewAll")}
-          </button>
-        </div>
-      )}
-
       {apiError && <section className="panel"><strong>{t("task.apiError")}</strong><p>{apiError}</p></section>}
 
       <section className="task-layout">
@@ -539,24 +554,32 @@ export default function Tasks() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
-            {!isMyTasksView && (
-              <select
-                className="control-select"
-                value={selectedProjectId}
-                onChange={(event) => {
-                  const nextProjectId = event.target.value;
-                  setSelectedProjectId(nextProjectId);
-                  setForm((current) => ({ ...current, assigneeId: "" }));
-                  setProjectMembers(projectMembersById[nextProjectId] || []);
-                }}
-                disabled={loadingProjects || projects.length === 0}
-              >
-                {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-            )}
+            <select
+              className="control-select"
+              value={selectedProjectId}
+              onChange={(event) => {
+                const nextProjectId = event.target.value;
+                setSelectedProjectId(nextProjectId);
+                setForm((current) => ({ ...current, assigneeId: "" }));
+                setProjectMembers(projectMembersById[nextProjectId] || []);
+              }}
+              disabled={loadingProjects || projects.length === 0}
+            >
+              {projects.length === 0 && <option value="">{t("task.noProjectsOption")}</option>}
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={isMyTasksView ? showAllTasks : showMyTasks}
+              aria-label={isMyTasksView ? t("task.viewAll") : t("task.myTasksTitle")}
+              title={isMyTasksView ? t("task.viewAll") : t("task.myTasksTitle")}
+            >
+              <UserRoundCheck size={18} />
+              {isMyTasksView ? t("task.viewAll") : t("task.myTasksTitle")}
+            </button>
             <span>{t("task.count", { count: filteredTasks.length })}</span>
             {showCreateTaskAction && (
               <LinearModal
