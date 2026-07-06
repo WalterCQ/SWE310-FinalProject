@@ -2594,3 +2594,178 @@ tr.target-highlight td { background: #e8f7f5; }
     min-height: auto;
   }
 }
+/* existing last styles above... */
+
+/* AI panel polish overrides - Ouday */
+
+.ai-command-card {
+  border-radius: 14px;
+  border: 1px solid var(--line, #d7d9d2);
+  background: #f7f8f3;
+  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+
+/* rest of the patch... */
+
+.ai-command-card:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ai-command-card-teal {
+  background: #e0f5f1;
+  border-color: #8ed8ce;
+}
+
+.ai-command-card-teal .ai-command-icon {
+  background: #0b6f66;
+  color: #ffffff;
+}
+
+.ai-command-card-green {
+  background: #edf8d8;
+  border-color: #b9e86d;
+}
+
+.ai-command-card-green .ai-command-icon {
+  background: #5b7f16;
+  color: #ffffff;
+}
+
+.ai-command-card-blue {
+  background: #e7f0ff;
+  border-color: #9abcf4;
+}
+
+.ai-command-card-blue .ai-command-icon {
+  background: #1d4f91;
+  color: #ffffff;
+}
+
+.ai-command-card-purple {
+  background: #f1e8ff;
+  border-color: #c4a7f4;
+}
+
+.ai-command-card-purple .ai-command-icon {
+  background: #56308a;
+  color: #ffffff;
+}
+
+.ai-command-card-orange {
+  background: #fff0df;
+  border-color: #efbd7a;
+}
+
+.ai-command-card-orange .ai-command-icon {
+  background: #9a5511;
+  color: #ffffff;
+}
+
+.ai-command-card-dark {
+  background: #101412;
+  border-color: #101412;
+  color: #ffffff;
+}
+
+.ai-command-card-dark small,
+.ai-command-card-dark em {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.ai-command-card-dark .ai-command-icon {
+  background: #b9ff47;
+  color: #101412;
+}
+
+.polished-attachment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-attachment-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: stretch;
+  padding: 0;
+  border: 1px solid #d7d9d2;
+  border-radius: 14px;
+  background: #f8f8f4;
+  overflow: hidden;
+}
+
+.ai-attachment-card.selected {
+  background: #e3f4f1;
+  border-color: #07998d;
+  box-shadow: inset 3px 0 0 #07998d;
+}
+
+.attachment-select-button {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.attachment-file-badge {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #101412;
+  color: #ffffff;
+}
+
+.attachment-copy {
+  min-width: 0;
+}
+
+.attachment-copy strong {
+  display: block;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attachment-copy small {
+  display: block;
+  margin-top: 3px;
+  color: #666a65;
+  font-size: 11px;
+}
+
+.selected-attachment-label {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #07998d;
+  color: white;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.polished-delete-button {
+  width: 34px;
+  height: auto;
+  min-height: 100%;
+  border: 0;
+  border-left: 1px solid #d7d9d2;
+  background: #ffffff;
+  color: #666a65;
+  border-radius: 0;
+}
+
+.polished-delete-button:hover {
+  background: #fff1ef;
+  color: #dc4b3f;
+}

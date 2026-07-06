@@ -294,24 +294,75 @@ export default function Channels() {
       key: "understand",
       label: t("channel.aiGroupUnderstand"),
       actions: [
-        { key: "summary", label: t("channel.quickSummary"), command: t("channel.commandSummary"), icon: Sparkles, output: t("channel.outputChat"), approval: t("channel.approvalNo") },
-        { key: "requirements", label: t("channel.quickRequirements"), command: t("channel.commandRequirements"), icon: ClipboardCheck, output: t("channel.outputChat"), approval: t("channel.approvalNo") },
+        {
+          key: "summary",
+          tone: "teal",
+          label: t("channel.quickSummary"),
+          command: t("channel.commandSummary"),
+          icon: Sparkles,
+          output: t("channel.outputChat"),
+          approval: t("channel.approvalNo"),
+        },
+        {
+          key: "requirements",
+          tone: "green",
+          label: t("channel.quickRequirements"),
+          command: t("channel.commandRequirements"),
+          icon: ClipboardCheck,
+          output: t("channel.outputChat"),
+          approval: t("channel.approvalNo"),
+        },
       ],
     },
     {
       key: "produce",
       label: t("channel.aiGroupProduce"),
       actions: [
-        { key: "tasks", label: t("channel.quickTasks"), command: t("channel.commandTasks"), icon: ListTodo, output: t("channel.outputTasks"), approval: t("channel.approvalYes") },
-        { key: "report", label: t("channel.quickReport"), command: t("channel.commandReport"), icon: FileText, output: t("channel.outputDocx"), approval: t("channel.approvalYes"), requiresIndexedAttachment: true },
-        { key: "ppt", label: t("channel.quickPpt"), command: t("channel.commandPpt"), icon: Layers3, output: t("channel.outputPptx"), approval: t("channel.approvalYes"), requiresIndexedAttachment: true },
+        {
+          key: "tasks",
+          tone: "blue",
+          label: t("channel.quickTasks"),
+          command: t("channel.commandTasks"),
+          icon: ListTodo,
+          output: t("channel.outputTasks"),
+          approval: t("channel.approvalYes"),
+        },
+        {
+          key: "report",
+          tone: "purple",
+          label: t("channel.quickReport"),
+          command: t("channel.commandReport"),
+          icon: FileText,
+          output: t("channel.outputDocx"),
+          approval: t("channel.approvalYes"),
+          requiresIndexedAttachment: true,
+        },
+        {
+          key: "ppt",
+          tone: "orange",
+          label: t("channel.quickPpt"),
+          command: t("channel.commandPpt"),
+          icon: Layers3,
+          output: t("channel.outputPptx"),
+          approval: t("channel.approvalYes"),
+          requiresIndexedAttachment: true,
+        },
       ],
     },
     {
       key: "engineering",
       label: t("channel.aiGroupEngineering"),
       actions: [
-        { key: "code", label: t("channel.quickCode"), command: t("channel.commandCode"), icon: Code2, output: t("channel.outputCodePlan"), approval: t("channel.approvalYes"), requiresIndexedAttachment: true },
+        {
+          key: "code",
+          tone: "dark",
+          label: t("channel.quickCode"),
+          command: t("channel.commandCode"),
+          icon: Code2,
+          output: t("channel.outputCodePlan"),
+          approval: t("channel.approvalYes"),
+          requiresIndexedAttachment: true,
+        },
       ],
     },
   ];
@@ -1693,7 +1744,7 @@ export default function Channels() {
                             <button
                               key={action.key}
                               type="button"
-                              className="ai-command-card"
+                              className={`ai-command-card ai-command-card-${action.tone || action.key}`}
                               data-ai-action={action.key}
                               onClick={() => runAiCommand(action.command, selectedAttachmentId)}
                               disabled={isAiActionDisabled(action)}
@@ -1755,25 +1806,34 @@ export default function Channels() {
                   </div>
                   {attachmentLoading && <p className="muted-small">{t("channel.loadingAttachments")}</p>}
                   {!attachmentLoading && attachments.length === 0 && <p className="muted-small">{t("channel.noAttachments")}</p>}
-                  <div className="attachment-list">
+                  <div className="attachment-list polished-attachment-list">
                     {attachments.map((attachment) => {
                       const isImage = attachment.contentType.startsWith("image/");
+                      const isSelected = attachment.id === selectedAttachmentId;
                       return (
-                        <div key={attachment.id} className="attachment-item">
+                        <div
+                          key={attachment.id}
+                          className={`attachment-item ai-attachment-card ${isSelected ? "selected" : ""}`}
+                        >
                           <button
                             type="button"
-                            className={attachment.id === selectedAttachmentId ? "active" : ""}
+                            className="attachment-select-button"
                             onClick={() => setSelectedAttachmentId(attachment.id)}
                           >
-                            {isImage ? <Image size={16} /> : <FileText size={16} />}
-                            <span>
-                              <strong>{attachment.fileName}</strong>
-                              <small>{formatFileSize(attachment.sizeBytes)} · {attachment.time}</small>
+                            <span className="attachment-file-badge" aria-hidden="true">
+                              {isImage ? <Image size={16} /> : <FileText size={16} />}
                             </span>
+                            <span className="attachment-copy">
+                              <strong>{attachment.fileName}</strong>
+                              <small>
+                                {getAttachmentLabel(attachment, t)} · {formatFileSize(attachment.sizeBytes)} · {attachment.time}
+                              </small>
+                            </span>
+                            {isSelected && <em className="selected-attachment-label">Selected</em>}
                           </button>
                           <button
                             type="button"
-                            className="delete-attachment-button"
+                            className="delete-attachment-button polished-delete-button"
                             onClick={(e) => {
                               e.stopPropagation();
                               deleteAttachment(attachment.id);
