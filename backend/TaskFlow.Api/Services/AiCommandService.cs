@@ -310,11 +310,33 @@ public class AiCommandService(
                 ? ExtractSuggestedTasks(result)
                 : [];
 
+            if (IsConversationSummaryCommand(intentCommand))
+            {
+                return ApiResponse.Ok(new AiChannelCommandResponse
+                {
+                    Result = result,
+                    ArtifactType = artifactType,
+                    UsedLlm = true,
+                    Sources = context.Sources,
+                    SuggestedTasks = suggestedTasks,
+                });
+            }
+
+            var generatedAttachment = BuildGeneratedArtifact(artifactType, channel.Name, result);
+            var sharedMessage = await CreateSharedAiMessageAsync(
+                channel,
+                userId,
+                result,
+                generatedAttachment,
+                cancellationToken);
+
             return ApiResponse.Ok(new AiChannelCommandResponse
             {
                 Result = result,
                 ArtifactType = artifactType,
                 UsedLlm = true,
+                SharedToChannel = true,
+                MessageId = sharedMessage.Id,
                 Sources = context.Sources,
                 SuggestedTasks = suggestedTasks,
             });
@@ -396,7 +418,7 @@ public class AiCommandService(
 
     private static bool ShouldRouteChannelCommandToAgent(string artifactType)
     {
-        return artifactType is "task-suggestions" or "report-outline" or "ppt-outline" or "code-advice";
+        return artifactType is "code-advice";
     }
 
     private static string? ResolveAgentArtifactTarget(string artifactType, bool hasRepository)
@@ -1042,6 +1064,241 @@ public class AiCommandService(
             .ToArray();
     }
 
+    private async Task<Message> CreateSharedAiMessageAsync(
+        Channel channel,
+        Guid userId,
+        string result,
+        GeneratedArtifact? generatedArtifact,
+        CancellationToken cancellationToken)
+    {
+        var message = new Message
+        {
+            Id = Guid.NewGuid(),
+            ChannelId = channel.Id,
+            SenderId = userId,
+            Content = $"{IAiCommandService.ChannelAiMessagePrefix}{TrimTo(result, 3900)}"
+        };
+
+        dbContext.Messages.Add(message);
+
+        if (generatedArtifact is not null)
+        {
+            var attachment = new ChannelAttachment
+            {
+                Id = Guid.NewGuid(),
+                WorkspaceId = channel.WorkspaceId,
+                ChannelId = channel.Id,
+                MessageId = message.Id,
+                UploadedByUserId = userId,
+                FileName = generatedArtifact.FileName,
+                ContentType = generatedArtifact.ContentType,
+                SizeBytes = generatedArtifact.Content.Length,
+                Summary = generatedArtifact.Summary,
+                ExtractedText = TrimTo(result, MaxExtractedTextLength),
+                IsAiIndexed = false
+            };
+            var blob = new ChannelAttachmentBlob
+            {
+                AttachmentId = attachment.Id,
+                Content = generatedArtifact.Content
+            };
+
+            dbContext.ChannelAttachments.Add(attachment);
+            dbContext.ChannelAttachmentBlobs.Add(blob);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return await dbContext.Messages
+            .Include(item => item.Sender)
+            .Include(item => item.Attachments)
+            .FirstAsync(item => item.Id == message.Id, cancellationToken);
+    }
+
+    private static GeneratedArtifact? BuildGeneratedArtifact(string artifactType, string channelName, string markdown)
+    {
+        var baseName = SafeFileName($"taskflow-{channelName}-{DateTime.UtcNow:yyyyMMdd-HHmm}");
+        return artifactType switch
+        {
+            "report-outline" => new GeneratedArtifact(
+                $"{baseName}-report.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                BuildDocx(markdown),
+                "AI-generated DOCX report outline."),
+            "ppt-outline" => new GeneratedArtifact(
+                $"{baseName}-presentation.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                BuildPptx(markdown),
+                "AI-generated PPTX presentation outline."),
+            _ => null
+        };
+    }
+
+    private static byte[] BuildDocx(string markdown)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(archive, "[Content_Types].xml", """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+                  <Default Extension="xml" ContentType="application/xml"/>
+                  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+                </Types>
+                """);
+            AddZipEntry(archive, "_rels/.rels", """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+                </Relationships>
+                """);
+
+            var paragraphs = SplitMarkdownLines(markdown)
+                .Select(line => $"<w:p><w:r><w:t xml:space=\"preserve\">{XmlEscape(line)}</w:t></w:r></w:p>");
+            AddZipEntry(archive, "word/document.xml", $$"""
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                  <w:body>
+                    {{string.Join(Environment.NewLine, paragraphs)}}
+                    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+                  </w:body>
+                </w:document>
+                """);
+        }
+
+        return output.ToArray();
+    }
+
+    private static byte[] BuildPptx(string markdown)
+    {
+        var slides = BuildSlideTexts(markdown);
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(archive, "[Content_Types].xml", $$"""
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+                  <Default Extension="xml" ContentType="application/xml"/>
+                  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+                  {{string.Join(Environment.NewLine, slides.Select((_, index) => $"""<Override PartName="/ppt/slides/slide{index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"""))}}
+                </Types>
+                """);
+            AddZipEntry(archive, "_rels/.rels", """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+                </Relationships>
+                """);
+            AddZipEntry(archive, "ppt/_rels/presentation.xml.rels", $$"""
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  {{string.Join(Environment.NewLine, slides.Select((_, index) => $"""<Relationship Id="rId{index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{index + 1}.xml"/>"""))}}
+                </Relationships>
+                """);
+            AddZipEntry(archive, "ppt/presentation.xml", $$"""
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+                  <p:sldIdLst>
+                    {{string.Join(Environment.NewLine, slides.Select((_, index) => $"""<p:sldId id="{256 + index}" r:id="rId{index + 1}"/>"""))}}
+                  </p:sldIdLst>
+                  <p:sldSz cx="9144000" cy="5143500" type="screen16x9"/>
+                </p:presentation>
+                """);
+
+            for (var index = 0; index < slides.Count; index++)
+            {
+                var slide = slides[index];
+                AddZipEntry(archive, $"ppt/slides/slide{index + 1}.xml", BuildSlideXml(slide.Title, slide.Body));
+            }
+        }
+
+        return output.ToArray();
+    }
+
+    private static string BuildSlideXml(string title, IReadOnlyCollection<string> bodyLines)
+    {
+        var body = string.Join(Environment.NewLine, bodyLines.Select((line, index) =>
+            $"""<a:p><a:r><a:rPr lang="en-US" sz="2400"/><a:t>{XmlEscape(line)}</a:t></a:r></a:p>"""));
+
+        return $$"""
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld><p:spTree>
+                <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>
+                <p:sp>
+                  <p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+                  <p:spPr><a:xfrm><a:off x="457200" y="274320"/><a:ext cx="8229600" cy="800000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+                  <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="3600" b="1"/><a:t>{{XmlEscape(title)}}</a:t></a:r></a:p></p:txBody>
+                </p:sp>
+                <p:sp>
+                  <p:nvSpPr><p:cNvPr id="3" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+                  <p:spPr><a:xfrm><a:off x="685800" y="1371600"/><a:ext cx="7772400" cy="3314700"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+                  <p:txBody><a:bodyPr wrap="square"/><a:lstStyle/>{{body}}</p:txBody>
+                </p:sp>
+              </p:spTree></p:cSld>
+            </p:sld>
+            """;
+    }
+
+    private static IReadOnlyList<GeneratedSlide> BuildSlideTexts(string markdown)
+    {
+        var lines = SplitMarkdownLines(markdown);
+        var slides = new List<GeneratedSlide>();
+        foreach (var line in lines)
+        {
+            var normalized = Regex.Replace(line, @"^#+\s*", string.Empty).Trim();
+            if ((line.StartsWith('#') || slides.Count == 0) && normalized.Length > 0)
+            {
+                slides.Add(new GeneratedSlide(TrimTo(normalized, 80), []));
+                continue;
+            }
+
+            if (slides.Count == 0)
+            {
+                slides.Add(new GeneratedSlide("TaskFlow AI Output", []));
+            }
+
+            if (slides[^1].Body.Count < 7)
+            {
+                slides[^1].Body.Add(TrimTo(Regex.Replace(normalized, @"^[-*]\s*", string.Empty), 140));
+            }
+        }
+
+        return slides.Take(12).ToArray();
+    }
+
+    private static IReadOnlyList<string> SplitMarkdownLines(string markdown)
+    {
+        var lines = markdown
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.TrimEntries)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToArray();
+
+        return lines.Length == 0 ? ["TaskFlow AI generated this artifact."] : lines;
+    }
+
+    private static void AddZipEntry(ZipArchive archive, string path, string content)
+    {
+        var entry = archive.CreateEntry(path, CompressionLevel.Fastest);
+        using var stream = entry.Open();
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+        writer.Write(content.Trim());
+    }
+
+    private static string SafeFileName(string value)
+    {
+        var sanitized = Regex.Replace(value.ToLowerInvariant(), @"[^a-z0-9._-]+", "-").Trim('-');
+        return string.IsNullOrWhiteSpace(sanitized) ? "taskflow-ai" : TrimTo(sanitized, 120);
+    }
+
+    private static string XmlEscape(string value)
+    {
+        return System.Security.SecurityElement.Escape(value) ?? string.Empty;
+    }
+
     private async Task<string> InvokeChatCompletionAsync(
         string model,
         string systemPrompt,
@@ -1275,6 +1532,14 @@ public class AiCommandService(
         return Regex.IsMatch(command, @"\b(tasks?|todos?)\b", RegexOptions.IgnoreCase)
             || command.Contains("任务", StringComparison.OrdinalIgnoreCase)
             || command.Contains("待办", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsConversationSummaryCommand(string command)
+    {
+        return Regex.IsMatch(command, @"\b(summarize|summary)\b", RegexOptions.IgnoreCase)
+            || command.Contains("总结", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("概括", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("Ҷамъбаст", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ShouldUseProModel(string command)
@@ -1558,6 +1823,10 @@ public class AiCommandService(
     private sealed record AttachmentProcessingResult(string Summary, IReadOnlyCollection<AttachmentIndexSection> Sections);
 
     private sealed record AttachmentIndexSection(string SourceType, string SourceLabel, string Content);
+
+    private sealed record GeneratedArtifact(string FileName, string ContentType, byte[] Content, string Summary);
+
+    private sealed record GeneratedSlide(string Title, List<string> Body);
 
     private sealed record AttachmentIndexBuildResult(
         IReadOnlyCollection<ChannelKnowledgeChunk> ChunkEntities,

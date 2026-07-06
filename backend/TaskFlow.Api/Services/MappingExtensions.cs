@@ -9,7 +9,7 @@ using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.Services;
 
-internal static class MappingExtensions
+public static class MappingExtensions
 {
     public static WorkspaceResponse ToResponse(this Workspace workspace)
     {

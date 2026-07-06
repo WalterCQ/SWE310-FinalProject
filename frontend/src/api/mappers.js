@@ -274,11 +274,16 @@ export function mapTaskComment(comment) {
 }
 
 export function mapMessage(message) {
+  const rawContent = message.content || "";
+  const aiPrefix = "[[TASKFLOW_AI]]";
+  const isAi = rawContent.startsWith(aiPrefix);
+
   return {
     ...message,
     id: message.id,
-    sender: message.senderName || shortId(message.senderId),
-    text: message.content || "",
+    sender: isAi ? translateKey("channel.aiMember") : (message.senderName || shortId(message.senderId)),
+    text: isAi ? rawContent.slice(aiPrefix.length) : rawContent,
+    isAi,
     attachments: asArray(message.attachments).map(mapAttachment),
     time: formatDateTime(message.createdAtUtc),
   };

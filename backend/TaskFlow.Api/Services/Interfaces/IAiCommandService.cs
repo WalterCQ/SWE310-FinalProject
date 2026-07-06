@@ -5,6 +5,8 @@ namespace TaskFlow.Api.Services.Interfaces;
 
 public interface IAiCommandService
 {
+    const string ChannelAiMessagePrefix = "[[TASKFLOW_AI]]";
+
     Task<ApiResponse<AiResponse>> ExecuteCommandAsync(AiCommandRequest request, CancellationToken cancellationToken = default);
     Task<ApiResponse<AiResponse>> SummarizeChannelAsync(AiChannelSummaryRequest request, CancellationToken cancellationToken = default);
     Task<ApiResponse<AiResponse>> SummarizeProjectAsync(AiProjectSummaryRequest request, CancellationToken cancellationToken = default);

@@ -1,10 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs.AI;
 using TaskFlow.Api.DTOs.Channels;
 using TaskFlow.Api.Helpers;
+using TaskFlow.Api.Hubs;
+using TaskFlow.Api.Services;
 using TaskFlow.Api.Services.Interfaces;
 
 namespace TaskFlow.Api.Controllers;
@@ -18,7 +21,8 @@ public class ChannelsController(
     AppDbContext dbContext,
     IPineconeVectorStore pineconeVectorStore,
     IPermissionService permissionService,
-    ICurrentUserService currentUser) : ControllerBase
+    ICurrentUserService currentUser,
+    IHubContext<ChatHub> chatHubContext) : ControllerBase
 {
     [HttpGet("workspaces/{workspaceId:guid}/channels")]
     public async Task<ActionResult> GetWorkspaceChannels(Guid workspaceId)
@@ -76,7 +80,21 @@ public class ChannelsController(
     [HttpPost("channels/{channelId:guid}/ai")]
     public async Task<ActionResult> RunChannelAi(Guid channelId, AiChannelCommandRequest request, CancellationToken cancellationToken)
     {
-        return this.ToActionResult(await aiCommandService.HandleChannelMentionAsync(channelId, request, cancellationToken));
+        var result = await aiCommandService.HandleChannelMentionAsync(channelId, request, cancellationToken);
+        if (result.Success && result.Data is { SharedToChannel: true, MessageId: not null })
+        {
+            var message = await dbContext.Messages
+                .AsNoTracking()
+                .Include(item => item.Sender)
+                .Include(item => item.Attachments)
+                .FirstOrDefaultAsync(item => item.Id == result.Data.MessageId.Value, cancellationToken);
+            if (message is not null)
+            {
+                await chatHubContext.Clients.Group($"channel:{channelId}").SendAsync("MessageReceived", message.ToResponse(), cancellationToken);
+            }
+        }
+
+        return this.ToActionResult(result);
     }
 
     [HttpGet("channels/{channelId:guid}/members")]

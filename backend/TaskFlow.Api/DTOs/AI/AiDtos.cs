@@ -69,6 +69,8 @@ public class AiChannelCommandResponse
     public string Result { get; set; } = string.Empty;
     public string ArtifactType { get; set; } = "answer";
     public bool UsedLlm { get; set; }
+    public bool SharedToChannel { get; set; }
+    public Guid? MessageId { get; set; }
     public Guid? AgentJobId { get; set; }
     public bool RequiresApproval { get; set; }
     public IReadOnlyCollection<string> Sources { get; set; } = [];

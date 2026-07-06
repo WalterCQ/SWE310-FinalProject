@@ -109,6 +109,14 @@ function normalizeAttachment(attachment) {
   return mapAttachment(attachment);
 }
 
+function selectContextAttachmentId(attachmentItems, currentId = "") {
+  if (attachmentItems.some((attachment) => attachment.id === currentId && attachment.isAiIndexed)) {
+    return currentId;
+  }
+
+  return attachmentItems.find((attachment) => attachment.isAiIndexed)?.id || currentId || "";
+}
+
 function isPdfAttachment(attachment) {
   return attachment.contentType === "application/pdf" || attachment.fileName.toLowerCase().endsWith(".pdf");
 }
@@ -311,11 +319,9 @@ export default function Channels() {
   const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId);
   const selectedAttachmentIndexed = Boolean(selectedAttachment?.isAiIndexed);
   const selectedAttachmentFailed = Boolean(selectedAttachment && !selectedAttachment.isAiIndexed);
-  const recentAgentOutputs = aiMessages
-    .filter((message) => message.channelId === activeChannelId && message.agentJobId)
-    .flatMap((message) => asArray(agentJobsById[message.agentJobId]?.artifacts)
-      .filter((artifact) => artifact?.isDownloadable)
-      .map((artifact) => ({ ...artifact, jobId: message.agentJobId })))
+  const recentChannelOutputs = messages
+    .filter((message) => message.channelId === activeChannelId && message.isAi)
+    .flatMap((message) => asArray(message.attachments))
     .sort((left, right) => new Date(right.createdAtUtc || 0).getTime() - new Date(left.createdAtUtc || 0).getTime())
     .slice(0, 6);
   const connectionLabel = t(`channel.${connectionStatus}`);
@@ -469,7 +475,7 @@ export default function Channels() {
         if (active) {
           setAttachments(attachmentItems);
           setSelectedAttachmentId((current) =>
-            attachmentItems.some((attachment) => attachment.id === current) ? current : attachmentItems[0]?.id || ""
+            selectContextAttachmentId(attachmentItems, current)
           );
         }
       } catch (apiError) {
@@ -975,6 +981,15 @@ export default function Channels() {
         command: command.trim(),
         attachmentId: attachmentId || null,
       });
+      if (response?.sharedToChannel) {
+        const messageItems = asArray(await messagesApi.listByChannel(activeChannelId)).map(mapMessage);
+        setMessages(messageItems);
+        const attachmentItems = asArray(await aiApi.channelAttachments(activeChannelId)).map(normalizeAttachment);
+        setAttachments(attachmentItems);
+        setSelectedAttachmentId((current) => selectContextAttachmentId(attachmentItems, current));
+        return response;
+      }
+
       const createdAtUtc = response?.createdAtUtc || new Date().toISOString();
       const aiMessage = {
         id: `ai-${activeChannelId}-${Date.now()}`,
@@ -1646,7 +1661,7 @@ export default function Channels() {
                         ? (selectedAttachmentIndexed ? t("channel.sourceReady") : t("channel.sourceBlocked"))
                         : t("channel.sourceChannel")}
                     </span>
-                    <span>{t("channel.recentOutputCount", { count: recentAgentOutputs.length })}</span>
+                    <span>{t("channel.recentOutputCount", { count: recentChannelOutputs.length })}</span>
                   </div>
                   <button
                     aria-label={t("channel.hideAiPanel")}
@@ -1708,22 +1723,22 @@ export default function Channels() {
                 <div className="inspector-section recent-output-section">
                   <div className="inspector-heading">
                     <strong>{t("channel.recentOutputs")}</strong>
-                    <span>{recentAgentOutputs.length}</span>
+                    <span>{recentChannelOutputs.length}</span>
                   </div>
-                  {recentAgentOutputs.length === 0 ? (
+                  {recentChannelOutputs.length === 0 ? (
                     <p className="muted-small">{t("channel.noRecentOutputs")}</p>
                   ) : (
                     <div className="recent-output-list">
-                      {recentAgentOutputs.map((artifact) => (
+                      {recentChannelOutputs.map((artifact) => (
                         <button
                           className="recent-output-item"
                           type="button"
                           key={artifact.id}
-                          onClick={() => downloadAgentArtifact(artifact)}
+                          onClick={() => downloadAttachment(artifact)}
                         >
                           <FileText size={15} />
                           <span>
-                            <strong>{artifact.name}</strong>
+                            <strong>{artifact.fileName}</strong>
                             <small>{artifact.contentType || formatFileSize(artifact.sizeBytes)}</small>
                           </span>
                           <Download size={14} />
