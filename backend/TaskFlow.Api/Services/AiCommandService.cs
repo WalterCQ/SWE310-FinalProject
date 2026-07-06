@@ -1389,8 +1389,15 @@ public class AiCommandService(
 
         var client = httpClientFactory.CreateClient();
         client.BaseAddress = new Uri($"{provider.BaseUrl.TrimEnd('/')}/");
+        client.Timeout = ResolveProviderTimeout();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
         return client;
+    }
+
+    private TimeSpan ResolveProviderTimeout()
+    {
+        var timeoutSeconds = configuration.GetValue("AI:ProviderTimeoutSeconds", 180);
+        return TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 30, 300));
     }
 
     private async Task<TaskItem?> TryCreateTaskFromAiResultAsync(

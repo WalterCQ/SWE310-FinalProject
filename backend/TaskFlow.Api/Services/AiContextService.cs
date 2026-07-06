@@ -282,6 +282,7 @@ public class AiContextService(
         };
         var client = httpClientFactory.CreateClient();
         client.BaseAddress = new Uri($"{provider.BaseUrl.TrimEnd('/')}/");
+        client.Timeout = ResolveProviderTimeout();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
 
         using var response = await PostEmbeddingRequestAsync(client, payload, provider, cancellationToken);
@@ -327,6 +328,12 @@ public class AiContextService(
     private string ResolveEmbeddingModel(AiProviderRuntime provider)
     {
         return configuration["AI:EmbeddingModel"] ?? configuration["AI:Model"] ?? provider.Model;
+    }
+
+    private TimeSpan ResolveProviderTimeout()
+    {
+        var timeoutSeconds = configuration.GetValue("AI:ProviderTimeoutSeconds", 180);
+        return TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 30, 300));
     }
 
     private static string TrimProviderError(string body, string apiKey)
