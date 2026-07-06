@@ -1678,22 +1678,24 @@ export default function Channels() {
                         {message.attachments.map((attachment) => {
                           const isPdf = isPdfAttachment(attachment);
                           const isImage = attachment.contentType.startsWith("image/");
+                          const attachmentMeta = `${getAttachmentLabel(attachment, t)} · ${formatFileSize(attachment.sizeBytes)}`;
                           return (
                             <button
                               key={attachment.id}
                               type="button"
-                              className={`message-attachment-card ${isPdf ? "pdf-card" : ""}`}
+                              className={`message-attachment-card ${isPdf ? "pdf-card" : ""} ${isImage ? "image-card" : ""}`}
                               onClick={() => downloadAttachment(attachment)}
                               aria-label={t("channel.downloadAttachment", { name: attachment.fileName })}
+                              title={`${attachment.fileName} · ${attachmentMeta}`}
                             >
                               <span className="message-attachment-icon" aria-hidden="true">
                                 {isImage ? <Image size={22} /> : <FileText size={22} />}
                               </span>
                               <span className="message-attachment-copy">
-                                <strong>{attachment.fileName}</strong>
-                                <small>{getAttachmentLabel(attachment, t)} · {formatFileSize(attachment.sizeBytes)}</small>
+                                <strong title={attachment.fileName}>{attachment.fileName}</strong>
+                                <small>{attachmentMeta}</small>
                               </span>
-                              <span className="message-attachment-download">
+                              <span className="message-attachment-download" aria-hidden="true">
                                 <Download size={14} />
                               </span>
                             </button>
@@ -1936,7 +1938,9 @@ export default function Channels() {
                   <div className="attachment-list polished-attachment-list">
                     {attachments.map((attachment) => {
                       const isImage = attachment.contentType.startsWith("image/");
+                      const isPdf = isPdfAttachment(attachment);
                       const isSelected = attachment.id === selectedAttachmentId;
+                      const attachmentMeta = `${getAttachmentLabel(attachment, t)} · ${formatFileSize(attachment.sizeBytes)} · ${attachment.time}`;
                       return (
                         <div
                           key={attachment.id}
@@ -1946,15 +1950,16 @@ export default function Channels() {
                             type="button"
                             className="attachment-select-button"
                             onClick={() => setSelectedAttachmentId(attachment.id)}
+                            aria-label={`${attachment.fileName} · ${attachmentMeta}`}
+                            aria-pressed={isSelected}
+                            title={`${attachment.fileName} · ${attachmentMeta}`}
                           >
-                            <span className="attachment-file-badge" aria-hidden="true">
+                            <span className={`attachment-file-badge ${isPdf ? "pdf" : ""} ${isImage ? "image" : ""}`} aria-hidden="true">
                               {isImage ? <Image size={16} /> : <FileText size={16} />}
                             </span>
                             <span className="attachment-copy">
-                              <strong>{attachment.fileName}</strong>
-                              <small>
-                                {getAttachmentLabel(attachment, t)} · {formatFileSize(attachment.sizeBytes)} · {attachment.time}
-                              </small>
+                              <strong title={attachment.fileName}>{attachment.fileName}</strong>
+                              <small title={attachmentMeta}>{attachmentMeta}</small>
                             </span>
                             {isSelected && <em className="selected-attachment-label">Selected</em>}
                           </button>

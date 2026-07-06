@@ -1026,6 +1026,100 @@ tr.target-highlight td { background: #e8f7f5; }
 .message-body { min-width: 0; display: grid; gap: 4px; }
 .message-body strong { line-height: 1.25; }
 .message-row p { margin: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-attachments {
+  width: min(100%, 540px);
+  display: grid;
+  gap: 6px;
+  margin-top: 3px;
+}
+.message-attachment-card {
+  min-width: 0;
+  width: 100%;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+}
+.message-attachment-card:hover {
+  border-color: #aeb8b4;
+  background: #f8f8f4;
+}
+.message-attachment-card:focus-visible {
+  outline: 3px solid rgba(7, 153, 141, .22);
+  outline-offset: 2px;
+}
+.message-row .message-attachment-card span {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.message-attachment-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d7d9d2;
+  border-radius: 7px;
+  background: #f1f5f4;
+  color: #56605c;
+}
+.message-attachment-card.image-card .message-attachment-icon {
+  border-color: #9ed0ca;
+  background: #e8f7f5;
+  color: var(--teal-dark);
+}
+.message-attachment-card.pdf-card .message-attachment-icon {
+  border-color: #f0aaa1;
+  background: #fff1ef;
+  color: var(--red);
+}
+.message-attachment-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.message-attachment-copy strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-attachment-copy small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-attachment-download {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--muted);
+}
+.message-attachment-card:hover .message-attachment-download {
+  background: #eef2ef;
+  color: var(--ink);
+}
 .markdown-content {
   display: grid;
   gap: 8px;
@@ -2776,90 +2870,142 @@ tr.target-highlight td { background: #e8f7f5; }
   gap: 8px;
 }
 
-.ai-attachment-card {
+.polished-attachment-list .ai-attachment-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  gap: 0;
   align-items: stretch;
+  min-height: 58px;
   padding: 0;
-  border: 1px solid #d7d9d2;
-  border-radius: 14px;
-  background: #f8f8f4;
+  border: 1px solid #d9ddd6;
+  border-radius: 8px;
+  background: #fffdfa;
   overflow: hidden;
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
 }
 
-.ai-attachment-card.selected {
-  background: #e3f4f1;
-  border-color: #07998d;
-  box-shadow: inset 3px 0 0 #07998d;
+.polished-attachment-list .ai-attachment-card:hover {
+  border-color: #b9c0bb;
+  background: #ffffff;
+  box-shadow: 0 5px 14px rgba(16, 20, 18, .06);
 }
 
-.attachment-select-button {
+.polished-attachment-list .ai-attachment-card.selected {
+  background: #f2fbf9;
+  border-color: var(--teal);
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.polished-attachment-list .attachment-select-button {
   min-width: 0;
   width: 100%;
+  min-height: 56px;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
-  padding: 9px;
+  gap: 11px;
+  padding: 8px 10px 8px 12px;
   border: 0;
   background: transparent;
+  color: var(--ink);
   text-align: left;
 }
 
-.attachment-file-badge {
-  width: 32px;
-  height: 32px;
+.polished-attachment-list .attachment-file-badge {
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  background: #101412;
-  color: #ffffff;
+  border: 1px solid #dfe3dc;
+  border-radius: 7px;
+  background: #f6f7f3;
+  color: #59615d;
 }
 
-.attachment-copy {
+.polished-attachment-list .attachment-file-badge.image {
+  border-color: #9ed0ca;
+  background: #edf9f7;
+  color: var(--teal-dark);
+}
+
+.polished-attachment-list .attachment-file-badge.pdf {
+  border-color: #f0aaa1;
+  background: #fff5f3;
+  color: var(--red);
+}
+
+.polished-attachment-list .attachment-copy {
   min-width: 0;
+  display: grid;
+  gap: 4px;
 }
 
-.attachment-copy strong {
+.polished-attachment-list .attachment-copy strong {
   display: block;
+  min-width: 0;
   max-width: 100%;
-  font-size: 12px;
-  line-height: 1.25;
-  white-space: nowrap;
   overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.18;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.attachment-copy small {
+.polished-attachment-list .attachment-copy small {
   display: block;
-  margin-top: 3px;
+  min-width: 0;
+  margin-top: 0;
+  overflow: hidden;
   color: #666a65;
   font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.selected-attachment-label {
-  padding: 3px 7px;
+.polished-attachment-list .selected-attachment-label {
+  justify-self: start;
+  max-width: 66px;
+  padding: 2px 5px;
   border-radius: 999px;
   background: #07998d;
   color: white;
-  font-size: 10px;
+  font-size: 9px;
   font-style: normal;
   font-weight: 800;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.polished-delete-button {
-  width: 34px;
+.polished-attachment-list .polished-delete-button {
+  width: 40px;
   height: auto;
   min-height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
   border: 0;
-  border-left: 1px solid #d7d9d2;
-  background: #ffffff;
-  color: #666a65;
+  border-left: 1px solid #eceee9;
+  background: transparent;
+  color: #6f7671;
   border-radius: 0;
+  text-align: center;
 }
 
-.polished-delete-button:hover {
+.polished-attachment-list .polished-delete-button:hover {
   background: #fff1ef;
   color: #dc4b3f;
+}
+
+.polished-attachment-list .attachment-select-button:focus-visible,
+.polished-attachment-list .polished-delete-button:focus-visible {
+  outline: 3px solid rgba(7, 153, 141, .22);
+  outline-offset: -3px;
 }
