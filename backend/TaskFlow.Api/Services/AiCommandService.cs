@@ -1415,6 +1415,7 @@ public class AiCommandService(
             Do not claim access to private channels or files that are not present in the context.
 
             Required behavior:
+            - Keep normal chat answers concise: 3-6 focused bullets unless the user explicitly asks for a report, PPT, or code plan.
             - Separate project updates, casual chat, attachment context, action items, and missing context.
             - Cite sources for every important claim using the source labels shown below.
             - If attachment content is unavailable, write: "Attachment content was not available to TaskFlow AI."
@@ -1424,10 +1425,7 @@ public class AiCommandService(
             - If evidence is weak or missing, say so directly.
 
             Output format:
-            ## Summary
-            ## Action Items
-            ## Missing Context
-            ## Sources
+            Use compact Markdown. Include Summary, Action Items, Missing Context, and Sources only when that section has useful content.
 
             Requested artifact type: {artifactType}
             User command:

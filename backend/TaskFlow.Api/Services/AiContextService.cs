@@ -1,4 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Helpers;
@@ -7,9 +10,13 @@ using TaskFlow.Api.Services.Interfaces;
 namespace TaskFlow.Api.Services;
 
 public class AiContextService(
+    IConfiguration configuration,
     AppDbContext dbContext,
     ICurrentUserService currentUser,
-    IPermissionService permissionService) : IAiContextService
+    IPermissionService permissionService,
+    IAiProviderService aiProviderService,
+    IPineconeVectorStore pineconeVectorStore,
+    IHttpClientFactory httpClientFactory) : IAiContextService
 {
     private const int RecentChannelMessageLimit = 80;
     private const int WorkspaceMessageScanLimit = 180;
@@ -50,7 +57,15 @@ public class AiContextService(
 
         var snippets = new List<ContextSnippet>();
         snippets.AddRange(await BuildWorkspaceMessageSnippetsAsync(channel.WorkspaceId, userId, query, cancellationToken));
-        snippets.AddRange(await BuildAttachmentSnippetsAsync(channel.WorkspaceId, channelId, attachmentId, cancellationToken));
+        var attachmentSnippetsResult = await BuildAttachmentSnippetsAsync(channel.WorkspaceId, channelId, query, attachmentId, cancellationToken);
+        if (!attachmentSnippetsResult.Success || attachmentSnippetsResult.Data is null)
+        {
+            return ApiResponse.Fail<AiChannelContext>(
+                attachmentSnippetsResult.Message,
+                attachmentSnippetsResult.StatusCode,
+                attachmentSnippetsResult.Errors);
+        }
+        snippets.AddRange(attachmentSnippetsResult.Data);
         snippets.AddRange(await BuildProjectTaskSnippetsAsync(channel.WorkspaceId, cancellationToken));
 
         var selected = RankSnippets(snippets, query, maxResults: 14)
@@ -109,9 +124,10 @@ public class AiContextService(
         return RankSnippets(snippets, query, RankedWorkspaceMessageLimit);
     }
 
-    private async Task<IReadOnlyCollection<ContextSnippet>> BuildAttachmentSnippetsAsync(
+    private async Task<ApiResponse<IReadOnlyCollection<ContextSnippet>>> BuildAttachmentSnippetsAsync(
         Guid workspaceId,
         Guid channelId,
+        string queryText,
         Guid? attachmentId,
         CancellationToken cancellationToken)
     {
@@ -124,14 +140,57 @@ public class AiContextService(
             query = query.Where(chunk => chunk.AttachmentId == attachmentId.Value);
         }
 
-        var limit = attachmentId.HasValue ? SelectedAttachmentChunkLimit : ChannelChunkLimit;
-        return await query
-            .OrderBy(chunk => chunk.CreatedAtUtc)
-            .Take(limit)
-            .Select(chunk => new ContextSnippet(
-                $"{chunk.SourceType}: {chunk.SourceLabel}",
-                chunk.Content))
-            .ToListAsync(cancellationToken);
+        if (attachmentId.HasValue)
+        {
+            var selectedAttachmentSnippets = await query
+                .OrderBy(chunk => chunk.CreatedAtUtc)
+                .Take(SelectedAttachmentChunkLimit)
+                .Select(chunk => new ContextSnippet(
+                    $"{chunk.SourceType}: {chunk.SourceLabel}",
+                    chunk.Content))
+                .ToListAsync(cancellationToken);
+
+            return ApiResponse.Ok<IReadOnlyCollection<ContextSnippet>>(selectedAttachmentSnippets);
+        }
+
+        if (!await query.AnyAsync(cancellationToken))
+        {
+            return ApiResponse.Ok<IReadOnlyCollection<ContextSnippet>>([]);
+        }
+
+        var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(workspaceId, cancellationToken);
+        if (!providerResult.Success || providerResult.Data is null)
+        {
+            return ApiResponse.Fail<IReadOnlyCollection<ContextSnippet>>(
+                providerResult.Message,
+                providerResult.StatusCode,
+                providerResult.Errors);
+        }
+
+        try
+        {
+            var embedding = await GenerateEmbeddingAsync(queryText, providerResult.Data, cancellationToken);
+            var matches = await pineconeVectorStore.SearchAsync(
+                workspaceId,
+                channelId,
+                attachmentId,
+                embedding,
+                ChannelChunkLimit,
+                cancellationToken);
+
+            IReadOnlyCollection<ContextSnippet> snippets = matches
+                .Select(match => new ContextSnippet(match.Source, match.Text))
+                .ToArray();
+            return ApiResponse.Ok(snippets);
+        }
+        catch (AiContextEmbeddingException ex)
+        {
+            return ApiResponse.Fail<IReadOnlyCollection<ContextSnippet>>(ex.Message, StatusCodes.Status502BadGateway);
+        }
+        catch (PineconeVectorStoreException ex)
+        {
+            return ApiResponse.Fail<IReadOnlyCollection<ContextSnippet>>(ex.Message, StatusCodes.Status502BadGateway);
+        }
     }
 
     private async Task<IReadOnlyCollection<ContextSnippet>> BuildProjectTaskSnippetsAsync(Guid workspaceId, CancellationToken cancellationToken)
@@ -214,5 +273,63 @@ public class AiContextService(
         return value?.ToString("yyyy-MM-dd HH:mm") ?? "None";
     }
 
+    private async Task<float[]> GenerateEmbeddingAsync(string input, AiProviderRuntime provider, CancellationToken cancellationToken)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = ResolveEmbeddingModel(provider),
+            ["input"] = new[] { TrimTo(input, 2000) }
+        };
+        var client = httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri($"{provider.BaseUrl.TrimEnd('/')}/");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
+
+        using var response = await client.PostAsJsonAsync("embeddings", payload, JsonOptions, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new AiContextEmbeddingException($"Embedding provider error {(int)response.StatusCode}: {TrimProviderError(body, provider.ApiKey)}");
+        }
+
+        using var document = JsonDocument.Parse(body);
+        var embeddingElement = document.RootElement
+            .GetProperty("data")[0]
+            .GetProperty("embedding");
+        return embeddingElement.EnumerateArray()
+            .Select(value => value.GetSingle())
+            .ToArray();
+    }
+
+    private string ResolveEmbeddingModel(AiProviderRuntime provider)
+    {
+        return configuration["AI:EmbeddingModel"] ?? configuration["AI:Model"] ?? provider.Model;
+    }
+
+    private static string TrimProviderError(string body, string apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return "empty provider error response";
+        }
+
+        return TrimTo(RedactSecret(body, apiKey).Replace(Environment.NewLine, " ", StringComparison.Ordinal), 600);
+    }
+
+    private static string TrimTo(string value, int maxLength)
+    {
+        return value.Length <= maxLength ? value : value[..maxLength].Trim();
+    }
+
+    private static string RedactSecret(string value, string secret)
+    {
+        return string.IsNullOrWhiteSpace(secret)
+            ? value
+            : value.Replace(secret, "[redacted]", StringComparison.Ordinal);
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     private sealed record ContextSnippet(string Source, string Text);
+
+    private sealed class AiContextEmbeddingException(string message) : Exception(message);
 }

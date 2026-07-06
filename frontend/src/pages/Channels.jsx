@@ -144,6 +144,20 @@ function getMessageTimestamp(message) {
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
+function formatAiPreview(message, fallback) {
+  const lines = String(message?.text || "")
+    .split("\n")
+    .map((line) => line.replace(/^#+\s*/, "").replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+  const title = lines[0] || fallback;
+  const excerpt = lines.slice(1).join(" ") || title;
+
+  return {
+    title: title.length > 96 ? `${title.slice(0, 93).trim()}...` : title,
+    excerpt: excerpt.length > 180 ? `${excerpt.slice(0, 177).trim()}...` : excerpt,
+  };
+}
+
 const AGENT_JOB_STATUS_KEYS = {
   0: "planning",
   1: "awaiting-approval",
@@ -271,6 +285,7 @@ export default function Channels() {
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(() => {
     return localStorage.getItem(AI_PANEL_OPEN_KEY) === "true";
   });
+  const [selectedAiMessageId, setSelectedAiMessageId] = useState("");
   const [isMessageListAtBottom, setIsMessageListAtBottom] = useState(true);
   const [unseenMessages, setUnseenMessages] = useState(0);
   const [connection, setConnection] = useState(null);
@@ -326,10 +341,27 @@ export default function Channels() {
     .slice(0, 6);
   const connectionLabel = t(`channel.${connectionStatus}`);
   const isConnected = connectionStatus === "connected";
+  const activeAiMessages = aiMessages.filter((message) => message.channelId === activeChannelId);
+  const messageIds = new Set(messages.map((message) => message.id));
+  const aiDetailsById = new Map(activeAiMessages.map((message) => [message.id, message]));
+  const mergedMessages = messages.map((message) => {
+    const details = aiDetailsById.get(message.id);
+    if (!message.isAi || !details) return message;
+
+    return {
+      ...message,
+      ...details,
+      attachments: message.attachments,
+      text: message.text || details.text,
+      time: message.time || details.time,
+      createdAtUtc: message.createdAtUtc || details.createdAtUtc,
+    };
+  });
   const combinedMessages = [
-    ...messages,
-    ...aiMessages.filter((message) => message.channelId === activeChannelId),
+    ...mergedMessages,
+    ...activeAiMessages.filter((message) => !messageIds.has(message.id)),
   ].sort((left, right) => getMessageTimestamp(left) - getMessageTimestamp(right));
+  const selectedAiMessage = combinedMessages.find((message) => message.id === selectedAiMessageId && message.isAi) || null;
   const canSubmit = Boolean(
     activeChannel
       && (draft.trim() || selectedFile)
@@ -644,6 +676,11 @@ export default function Channels() {
   function openAiPanel() {
     setIsAiPanelOpen(true);
     localStorage.setItem(AI_PANEL_OPEN_KEY, "true");
+  }
+
+  function openAiMessage(message) {
+    setSelectedAiMessageId(message.id);
+    openAiPanel();
   }
 
   function closeAiPanel() {
@@ -984,6 +1021,26 @@ export default function Channels() {
       if (response?.sharedToChannel) {
         const messageItems = asArray(await messagesApi.listByChannel(activeChannelId)).map(mapMessage);
         setMessages(messageItems);
+        if (response?.messageId) {
+          const createdAtUtc = response?.createdAtUtc || new Date().toISOString();
+          const aiMessage = {
+            id: response.messageId,
+            channelId: activeChannelId,
+            sender: t("channel.aiMember"),
+            text: response?.result || t("channel.aiEmpty"),
+            createdAtUtc,
+            time: formatDateTime(createdAtUtc),
+            isAi: true,
+            artifactType: response?.artifactType || "answer",
+            sources: response?.sources || [],
+            suggestedTasks: response?.suggestedTasks || [],
+            createdTaskTitle: response?.createdTaskTitle || "",
+            agentJobId: response?.agentJobId || "",
+            requiresApproval: Boolean(response?.requiresApproval),
+          };
+          setAiMessages((current) => [...current.filter((message) => message.id !== aiMessage.id), aiMessage]);
+          setSelectedAiMessageId(aiMessage.id);
+        }
         const attachmentItems = asArray(await aiApi.channelAttachments(activeChannelId)).map(normalizeAttachment);
         setAttachments(attachmentItems);
         setSelectedAttachmentId((current) => selectContextAttachmentId(attachmentItems, current));
@@ -1333,6 +1390,29 @@ export default function Channels() {
     );
   }
 
+  function renderAiMessageCard(message) {
+    const preview = formatAiPreview(message, t("channel.aiEmpty"));
+    const sourceCount = asArray(message.sources).length;
+
+    return (
+      <button
+        type="button"
+        className="ai-result-card"
+        onClick={() => openAiMessage(message)}
+        aria-label={t("channel.openAiResult")}
+      >
+        <span className="ai-result-icon" aria-hidden="true"><Sparkles size={16} /></span>
+        <span className="ai-result-copy">
+          <strong>{preview.title}</strong>
+          <small>{preview.excerpt}</small>
+        </span>
+        <span className="ai-result-meta">
+          {sourceCount > 0 ? t("channel.aiSourceCount", { count: sourceCount }) : t("channel.noAiSources")}
+        </span>
+      </button>
+    );
+  }
+
   return (
     <div className="channel-page">
       {loading && <section className="panel">{t("channel.loading")}</section>}
@@ -1503,7 +1583,7 @@ export default function Channels() {
                   <div className="message-body">
                     <strong>{message.sender} <span className="message-time">{message.time}</span></strong>
                     {message.isAi ? (
-                      <MarkdownContent>{message.text}</MarkdownContent>
+                      renderAiMessageCard(message)
                     ) : (
                       message.text && <p>{message.text}</p>
                     )}
@@ -1533,12 +1613,6 @@ export default function Channels() {
                             </button>
                           );
                         })}
-                      </div>
-                    )}
-                    {message.isAi && message.sources.length > 0 && (
-                      <div className="message-sources">
-                        <span>{t("channel.sources")}</span>
-                        {message.sources.slice(0, 4).map((source) => <small key={source}>{source}</small>)}
                       </div>
                     )}
                     {message.isAi && message.createdTaskTitle && (
@@ -1678,6 +1752,24 @@ export default function Channels() {
                   <strong>{t("channel.aiWorkbenchTitle")}</strong>
                   <p>{t("channel.aiMemberHelp")}</p>
                 </div>
+
+                {selectedAiMessage && (
+                  <div className="inspector-section ai-response-section">
+                    <div className="inspector-heading">
+                      <strong>{t("channel.fullAiResponse")}</strong>
+                      <span>{asArray(selectedAiMessage.sources).length}</span>
+                    </div>
+                    <div className="ai-response-detail">
+                      <MarkdownContent>{selectedAiMessage.text}</MarkdownContent>
+                      {asArray(selectedAiMessage.sources).length > 0 && (
+                        <div className="message-sources expanded">
+                          <span>{t("channel.sources")}</span>
+                          {asArray(selectedAiMessage.sources).map((source) => <small key={source}>{source}</small>)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="ai-action-groups">
                   {aiActionGroups.map((group) => (

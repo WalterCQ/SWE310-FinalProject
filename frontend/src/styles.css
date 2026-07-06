@@ -1076,6 +1076,61 @@ tr.target-highlight td { background: #e8f7f5; }
 .message-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
 .message-sources span { color: var(--muted); font-size: 12px; font-weight: 850; }
 .message-sources small, .created-task-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--muted); font-size: 11px; font-weight: 800; }
+.ai-result-card {
+  width: min(100%, 540px);
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #cfcbf3;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+.ai-result-card:hover {
+  border-color: #a9a2e8;
+  background: #faf9ff;
+  transform: translateY(-1px);
+}
+.ai-result-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #f3f2ff;
+  color: #46408b;
+}
+.ai-result-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.ai-result-copy strong,
+.ai-result-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-result-copy strong { font-size: 13px; line-height: 1.2; }
+.ai-result-copy small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.ai-result-meta {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
 .created-task-chip { justify-self: start; border-color: #9ed0ca; background: #e8f7f5; color: var(--teal-dark); margin-top: 6px; }
 .agent-job-chip code { color: inherit; font-size: 11px; font-weight: 900; }
 .channel-agent-job {
@@ -1501,6 +1556,17 @@ tr.target-highlight td { background: #e8f7f5; }
 }
 .source-readiness-status.ready { background: #d7f2ee; color: var(--teal-dark); }
 .source-readiness-status.blocked { background: #fff1ef; color: var(--red); }
+.ai-response-detail {
+  display: grid;
+  gap: 10px;
+  max-height: 48vh;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.ai-response-detail .message-sources { margin-top: 0; }
 .recent-output-list {
   display: grid;
   gap: 7px;
@@ -2219,6 +2285,13 @@ tr.target-highlight td { background: #e8f7f5; }
   .channel-list button { min-width: min(220px, 76vw); }
   .chat-panel { min-height: 0; max-height: none; }
   .channel-inspector { min-height: 0; max-height: none; }
+  .ai-result-card {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+  .ai-result-meta {
+    grid-column: 2;
+    justify-self: start;
+  }
   .chat-header-actions { align-items: center; flex-direction: row; }
   .composer-footer { align-items: center; flex-direction: row; }
   .composer-send { width: 34px; }
