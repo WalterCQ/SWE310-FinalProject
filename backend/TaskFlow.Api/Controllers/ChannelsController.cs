@@ -56,6 +56,22 @@ public class ChannelsController(
         return this.ToActionResult(await aiCommandService.IndexChannelAttachmentAsync(channelId, file, cancellationToken));
     }
 
+    [HttpPost("channels/{channelId:guid}/attachments/{attachmentId:guid}/index")]
+    public async Task<ActionResult> ReindexChannelAttachment(Guid channelId, Guid attachmentId, CancellationToken cancellationToken)
+    {
+        var attachmentExists = await dbContext.ChannelAttachments
+            .AsNoTracking()
+            .AnyAsync(item => item.Id == attachmentId && item.ChannelId == channelId, cancellationToken);
+        if (!attachmentExists)
+        {
+            return NotFound(ApiResponse.Fail<ChannelAttachmentResponse>(
+                "Attachment not found.",
+                StatusCodes.Status404NotFound));
+        }
+
+        return this.ToActionResult(await aiCommandService.IndexExistingChannelAttachmentAsync(attachmentId, cancellationToken));
+    }
+
     [HttpGet("channels/{channelId:guid}/attachments/{attachmentId:guid}/download")]
     public async Task<ActionResult> DownloadChannelAttachment(Guid channelId, Guid attachmentId, CancellationToken cancellationToken)
     {
