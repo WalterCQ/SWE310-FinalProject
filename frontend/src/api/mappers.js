@@ -284,6 +284,11 @@ export function mapMessage(message) {
     sender: isAi ? translateKey("channel.aiMember") : (message.senderName || shortId(message.senderId)),
     text: isAi ? rawContent.slice(aiPrefix.length) : rawContent,
     isAi,
+    sources: asArray(message.sources),
+    suggestedTasks: asArray(message.suggestedTasks),
+    createdTaskTitle: message.createdTaskTitle || "",
+    agentJobId: message.agentJobId || "",
+    requiresApproval: Boolean(message.requiresApproval),
     attachments: asArray(message.attachments).map(mapAttachment),
     time: formatDateTime(message.createdAtUtc),
   };
