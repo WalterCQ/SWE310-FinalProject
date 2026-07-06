@@ -284,7 +284,7 @@ public class AiContextService(
         client.BaseAddress = new Uri($"{provider.BaseUrl.TrimEnd('/')}/");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
 
-        using var response = await client.PostAsJsonAsync("embeddings", payload, JsonOptions, cancellationToken);
+        using var response = await PostEmbeddingRequestAsync(client, payload, provider, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -298,6 +298,30 @@ public class AiContextService(
         return embeddingElement.EnumerateArray()
             .Select(value => value.GetSingle())
             .ToArray();
+    }
+
+    private static async Task<HttpResponseMessage> PostEmbeddingRequestAsync(
+        HttpClient client,
+        Dictionary<string, object?> payload,
+        AiProviderRuntime provider,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await client.PostAsJsonAsync("embeddings", payload, JsonOptions, cancellationToken);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new AiContextEmbeddingException(
+                $"Embedding provider request timed out after {client.Timeout.TotalSeconds:0} seconds. Try again later.",
+                ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new AiContextEmbeddingException(
+                $"Embedding provider request failed: {RedactSecret(ex.Message, provider.ApiKey)}",
+                ex);
+        }
     }
 
     private string ResolveEmbeddingModel(AiProviderRuntime provider)
@@ -331,5 +355,6 @@ public class AiContextService(
 
     private sealed record ContextSnippet(string Source, string Text);
 
-    private sealed class AiContextEmbeddingException(string message) : Exception(message);
+    private sealed class AiContextEmbeddingException(string message, Exception? innerException = null)
+        : Exception(message, innerException);
 }

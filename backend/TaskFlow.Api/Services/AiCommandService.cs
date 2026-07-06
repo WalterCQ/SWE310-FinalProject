@@ -1048,7 +1048,7 @@ public class AiCommandService(
             ["input"] = new[] { TrimTo(input, 2000) }
         };
         var client = CreateAiHttpClient(provider);
-        using var response = await client.PostAsJsonAsync("embeddings", payload, JsonOptions, cancellationToken);
+        using var response = await PostProviderJsonAsync(client, "embeddings", payload, provider, "Embedding provider", cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -1332,7 +1332,7 @@ public class AiCommandService(
     private async Task<string> PostChatCompletionAsync(Dictionary<string, object?> payload, AiProviderRuntime provider, CancellationToken cancellationToken)
     {
         var client = CreateAiHttpClient(provider);
-        using var response = await client.PostAsJsonAsync("chat/completions", payload, JsonOptions, cancellationToken);
+        using var response = await PostProviderJsonAsync(client, "chat/completions", payload, provider, "AI provider", cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -1352,6 +1352,32 @@ public class AiCommandService(
         }
 
         return content.Trim();
+    }
+
+    private static async Task<HttpResponseMessage> PostProviderJsonAsync(
+        HttpClient client,
+        string requestUri,
+        Dictionary<string, object?> payload,
+        AiProviderRuntime provider,
+        string providerName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await client.PostAsJsonAsync(requestUri, payload, JsonOptions, cancellationToken);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new AiProviderException(
+                $"{providerName} request timed out after {client.Timeout.TotalSeconds:0} seconds. Try again later or use a smaller attachment.",
+                ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new AiProviderException(
+                $"{providerName} request failed: {RedactSecret(ex.Message, provider.ApiKey)}",
+                ex);
+        }
     }
 
     private HttpClient CreateAiHttpClient(AiProviderRuntime provider)
@@ -1832,7 +1858,8 @@ public class AiCommandService(
 
     private sealed record PdfImagePayload(string ContentType, byte[] Bytes);
 
-    private sealed class AiProviderException(string message) : Exception(message);
+    private sealed class AiProviderException(string message, Exception? innerException = null)
+        : Exception(message, innerException);
 
     private sealed class AttachmentProcessingException(
         string message,
