@@ -1556,6 +1556,27 @@ tr.target-highlight td { background: #e8f7f5; }
 }
 .source-readiness-status.ready { background: #d7f2ee; color: var(--teal-dark); }
 .source-readiness-status.blocked { background: #fff1ef; color: var(--red); }
+.source-reindex-button {
+  justify-self: start;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid #9ed0ca;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--teal-dark);
+  font-size: 12px;
+  font-weight: 850;
+}
+.source-reindex-button:hover {
+  background: #e8f7f5;
+}
+.source-reindex-button:disabled {
+  cursor: not-allowed;
+  opacity: .62;
+}
 .ai-response-detail {
   display: grid;
   gap: 10px;

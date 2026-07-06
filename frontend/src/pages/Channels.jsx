@@ -274,6 +274,7 @@ export default function Channels() {
   const [messageLoading, setMessageLoading] = useState(false);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [reindexingAttachmentId, setReindexingAttachmentId] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [agentJobsById, setAgentJobsById] = useState({});
   const [agentJobLoadingIds, setAgentJobLoadingIds] = useState({});
@@ -1057,6 +1058,28 @@ export default function Channels() {
     }
   }
 
+  async function reindexAttachment(attachmentId) {
+    if (!activeChannelId || !attachmentId || reindexingAttachmentId) return;
+
+    setReindexingAttachmentId(attachmentId);
+    setAiError("");
+
+    try {
+      const attachment = normalizeAttachment(await aiApi.reindexChannelAttachment(activeChannelId, attachmentId));
+      setAttachments((current) => {
+        const hasAttachment = current.some((item) => item.id === attachment.id);
+        return hasAttachment
+          ? current.map((item) => (item.id === attachment.id ? attachment : item))
+          : [attachment, ...current];
+      });
+      setSelectedAttachmentId(attachment.id);
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+    } finally {
+      setReindexingAttachmentId("");
+    }
+  }
+
   async function runAiCommand(command, attachmentId = "") {
     if (!activeChannelId || !command.trim()) return null;
 
@@ -1423,6 +1446,7 @@ export default function Channels() {
     const summary = selectedAttachment.summary || (selectedAttachmentIndexed
       ? t("channel.sourceReadyNoSummary")
       : t("channel.sourceNotIndexed"));
+    const isReindexingSelectedAttachment = reindexingAttachmentId === selectedAttachment.id;
 
     return (
       <div className={`source-readiness-card ${statusKey}`}>
@@ -1437,6 +1461,17 @@ export default function Channels() {
           {selectedAttachmentIndexed ? t("channel.sourceReady") : t("channel.sourceBlocked")}
         </div>
         <p>{summary}</p>
+        {!selectedAttachmentIndexed && (
+          <button
+            type="button"
+            className="source-reindex-button"
+            onClick={() => reindexAttachment(selectedAttachment.id)}
+            disabled={Boolean(reindexingAttachmentId)}
+          >
+            <RefreshCw size={14} />
+            {isReindexingSelectedAttachment ? t("channel.sourceIndexing") : t("channel.retryIndex")}
+          </button>
+        )}
       </div>
     );
   }
