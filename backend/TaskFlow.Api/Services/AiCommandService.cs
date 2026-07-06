@@ -273,7 +273,8 @@ public class AiCommandService(
 
         try
         {
-            var artifactType = ResolveArtifactType(command);
+            var intentCommand = NormalizeCommandForIntent(command);
+            var artifactType = ResolveArtifactType(intentCommand);
             var contextResult = await aiContextService.BuildChannelContextAsync(channelId, command, request.AttachmentId, cancellationToken);
             if (!contextResult.Success || contextResult.Data is null)
             {
@@ -305,7 +306,7 @@ public class AiCommandService(
                 provider,
                 cancellationToken);
 
-            var suggestedTasks = IsTaskCommand(command)
+            var suggestedTasks = IsTaskCommand(intentCommand)
                 ? ExtractSuggestedTasks(result)
                 : [];
 
@@ -1222,6 +1223,12 @@ public class AiCommandService(
             return "ppt-outline";
         }
 
+        if (command.Contains("report", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("报告", StringComparison.OrdinalIgnoreCase))
+        {
+            return "report-outline";
+        }
+
         if (command.Contains("requirement", StringComparison.OrdinalIgnoreCase)
             || command.Contains("deliverable", StringComparison.OrdinalIgnoreCase)
             || command.Contains("acceptance", StringComparison.OrdinalIgnoreCase)
@@ -1232,12 +1239,6 @@ public class AiCommandService(
             || command.Contains("评分", StringComparison.OrdinalIgnoreCase))
         {
             return "requirements";
-        }
-
-        if (command.Contains("report", StringComparison.OrdinalIgnoreCase)
-            || command.Contains("报告", StringComparison.OrdinalIgnoreCase))
-        {
-            return "report-outline";
         }
 
         if (IsTaskCommand(command))
@@ -1262,10 +1263,16 @@ public class AiCommandService(
         return "answer";
     }
 
+    private static string NormalizeCommandForIntent(string command)
+    {
+        return Regex
+            .Replace(command, @"@?\s*TaskFlow\s+AI\b\s*[:,：-]?", string.Empty, RegexOptions.IgnoreCase)
+            .Trim();
+    }
+
     private static bool IsTaskCommand(string command)
     {
-        return command.Contains("task", StringComparison.OrdinalIgnoreCase)
-            || command.Contains("todo", StringComparison.OrdinalIgnoreCase)
+        return Regex.IsMatch(command, @"\b(tasks?|todos?)\b", RegexOptions.IgnoreCase)
             || command.Contains("任务", StringComparison.OrdinalIgnoreCase)
             || command.Contains("待办", StringComparison.OrdinalIgnoreCase);
     }

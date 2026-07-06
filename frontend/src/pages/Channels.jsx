@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  Layers3,
   Trash2,
   UserPlus,
   Users,
@@ -31,6 +32,7 @@ import LinearModal from "../components/LinearModal.jsx";
 import MarkdownContent from "../components/MarkdownContent.jsx";
 import {
   ai as aiApi,
+  agent as agentApi,
   channels as channelsApi,
   formatApiError,
   messages as messagesApi,
@@ -134,8 +136,91 @@ function getMessageTimestamp(message) {
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
+const AGENT_JOB_STATUS_KEYS = {
+  0: "planning",
+  1: "awaiting-approval",
+  2: "running",
+  3: "needs-approval",
+  4: "paused",
+  5: "completed",
+  6: "failed",
+  7: "canceled",
+};
+
+const AGENT_APPROVAL_STATUS_KEYS = {
+  0: "pending",
+  1: "approved",
+  2: "rejected",
+  3: "expired",
+};
+
+const TERMINAL_AGENT_STATUSES = new Set(["completed", "failed", "canceled"]);
+
+function normalizeStatusKey(value, numericMap) {
+  if (value === null || typeof value === "undefined" || value === "") return "unknown";
+  const raw = String(value).trim();
+  if (Object.prototype.hasOwnProperty.call(numericMap, raw)) return numericMap[raw];
+
+  return raw
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[_\s]+/g, "-")
+    .toLowerCase();
+}
+
+function getStatusClassName(statusKey) {
+  return statusKey.replace(/[^a-z0-9]+/g, "");
+}
+
+function getStatusLabel(statusKey) {
+  return statusKey
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function isPendingApproval(approval) {
+  return normalizeStatusKey(approval?.status, AGENT_APPROVAL_STATUS_KEYS) === "pending";
+}
+
+function isAgentJobActive(job) {
+  if (!job) return true;
+  const statusKey = normalizeStatusKey(job.status, AGENT_JOB_STATUS_KEYS);
+  return !TERMINAL_AGENT_STATUSES.has(statusKey) || asArray(job.approvals).some(isPendingApproval);
+}
+
+function parseJsonPreview(value) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function formatAgentJobId(jobId) {
+  return jobId ? String(jobId).slice(0, 8) : "";
+}
+
 const blankChannelForm = { name: "", description: "", isPrivate: false };
 const AI_PANEL_OPEN_KEY = "taskflow.aiPanelOpen";
+const AI_MESSAGES_STORAGE_KEY = "taskflow.channelAiMessages";
+
+function readStoredAiMessages() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(AI_MESSAGES_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredAiMessages(messages) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(AI_MESSAGES_STORAGE_KEY, JSON.stringify(messages.slice(-50)));
+}
 
 export default function Channels() {
   const { t } = useI18n();
@@ -158,7 +243,7 @@ export default function Channels() {
   const [isMembersPanelOpen, setIsMembersPanelOpen] = useState(false);
   const [openMemberMenuId, setOpenMemberMenuId] = useState("");
   const [messages, setMessages] = useState([]);
-  const [aiMessages, setAiMessages] = useState([]);
+  const [aiMessages, setAiMessages] = useState(readStoredAiMessages);
   const [attachments, setAttachments] = useState([]);
   const [selectedAttachmentId, setSelectedAttachmentId] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
@@ -168,6 +253,10 @@ export default function Channels() {
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [agentJobsById, setAgentJobsById] = useState({});
+  const [agentJobLoadingIds, setAgentJobLoadingIds] = useState({});
+  const [agentJobErrors, setAgentJobErrors] = useState({});
+  const [agentApprovalActionIds, setAgentApprovalActionIds] = useState({});
   const [loadError, setLoadError] = useState("");
   const [chatError, setChatError] = useState("");
   const [aiError, setAiError] = useState("");
@@ -192,16 +281,43 @@ export default function Channels() {
   const membersDrawerRef = useRef(null);
   const membersPanelTriggerRef = useRef(null);
 
-  const quickActions = [
-    { key: "summary", label: t("channel.quickSummary"), command: t("channel.commandSummary"), icon: Sparkles },
-    { key: "requirements", label: t("channel.quickRequirements"), command: t("channel.commandRequirements"), icon: ClipboardCheck },
-    { key: "tasks", label: t("channel.quickTasks"), command: t("channel.commandTasks"), icon: ListTodo },
-    { key: "report", label: t("channel.quickReport"), command: t("channel.commandReport"), icon: FileText },
-    { key: "ppt", label: t("channel.quickPpt"), command: t("channel.commandPpt"), icon: FileText },
-    { key: "code", label: t("channel.quickCode"), command: t("channel.commandCode"), icon: Code2 },
+  const aiActionGroups = [
+    {
+      key: "understand",
+      label: t("channel.aiGroupUnderstand"),
+      actions: [
+        { key: "summary", label: t("channel.quickSummary"), command: t("channel.commandSummary"), icon: Sparkles, output: t("channel.outputChat"), approval: t("channel.approvalNo") },
+        { key: "requirements", label: t("channel.quickRequirements"), command: t("channel.commandRequirements"), icon: ClipboardCheck, output: t("channel.outputChat"), approval: t("channel.approvalNo") },
+      ],
+    },
+    {
+      key: "produce",
+      label: t("channel.aiGroupProduce"),
+      actions: [
+        { key: "tasks", label: t("channel.quickTasks"), command: t("channel.commandTasks"), icon: ListTodo, output: t("channel.outputTasks"), approval: t("channel.approvalYes") },
+        { key: "report", label: t("channel.quickReport"), command: t("channel.commandReport"), icon: FileText, output: t("channel.outputDocx"), approval: t("channel.approvalYes"), requiresIndexedAttachment: true },
+        { key: "ppt", label: t("channel.quickPpt"), command: t("channel.commandPpt"), icon: Layers3, output: t("channel.outputPptx"), approval: t("channel.approvalYes"), requiresIndexedAttachment: true },
+      ],
+    },
+    {
+      key: "engineering",
+      label: t("channel.aiGroupEngineering"),
+      actions: [
+        { key: "code", label: t("channel.quickCode"), command: t("channel.commandCode"), icon: Code2, output: t("channel.outputCodePlan"), approval: t("channel.approvalYes"), requiresIndexedAttachment: true },
+      ],
+    },
   ];
   const activeChannel = channels.find((channel) => channel.id === activeChannelId);
   const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId);
+  const selectedAttachmentIndexed = Boolean(selectedAttachment?.isAiIndexed);
+  const selectedAttachmentFailed = Boolean(selectedAttachment && !selectedAttachment.isAiIndexed);
+  const recentAgentOutputs = aiMessages
+    .filter((message) => message.channelId === activeChannelId && message.agentJobId)
+    .flatMap((message) => asArray(agentJobsById[message.agentJobId]?.artifacts)
+      .filter((artifact) => artifact?.isDownloadable)
+      .map((artifact) => ({ ...artifact, jobId: message.agentJobId })))
+    .sort((left, right) => new Date(right.createdAtUtc || 0).getTime() - new Date(left.createdAtUtc || 0).getTime())
+    .slice(0, 6);
   const connectionLabel = t(`channel.${connectionStatus}`);
   const isConnected = connectionStatus === "connected";
   const combinedMessages = [
@@ -232,6 +348,10 @@ export default function Channels() {
   useEffect(() => {
     setOpenMemberMenuId("");
   }, [activeChannelId]);
+
+  useEffect(() => {
+    writeStoredAiMessages(aiMessages);
+  }, [aiMessages]);
 
   useEffect(() => {
     if (!isMembersPanelOpen) return;
@@ -600,6 +720,26 @@ export default function Channels() {
     }
   }, [activeChannel, activeChannelId, aiLoading, combinedMessages.length, isMessageListAtBottom]);
 
+  useEffect(() => {
+    const activeJobIds = aiMessages
+      .filter((message) => message.channelId === activeChannelId && message.agentJobId)
+      .map((message) => message.agentJobId)
+      .filter((jobId, index, allJobIds) => allJobIds.indexOf(jobId) === index)
+      .filter((jobId) => isAgentJobActive(agentJobsById[jobId]));
+
+    if (activeJobIds.length === 0) return undefined;
+
+    activeJobIds.forEach((jobId) => {
+      if (!agentJobsById[jobId]) loadAgentJob(jobId, { silent: true });
+    });
+
+    const refreshTimer = window.setInterval(() => {
+      activeJobIds.forEach((jobId) => loadAgentJob(jobId, { silent: true }));
+    }, 5000);
+
+    return () => window.clearInterval(refreshTimer);
+  }, [activeChannelId, agentJobsById, aiMessages]);
+
   function notifyTyping(nextValue) {
     if (!connection || !activeChannelId || connection.state !== chatConnectionState.connected) return;
 
@@ -645,6 +785,87 @@ export default function Channels() {
   function clearSelectedFile() {
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function setAgentJobLoading(jobId, isLoading) {
+    setAgentJobLoadingIds((current) => {
+      const next = { ...current };
+      if (isLoading) next[jobId] = true;
+      else delete next[jobId];
+      return next;
+    });
+  }
+
+  function setAgentJobError(jobId, errorMessage) {
+    setAgentJobErrors((current) => {
+      const next = { ...current };
+      if (errorMessage) next[jobId] = errorMessage;
+      else delete next[jobId];
+      return next;
+    });
+  }
+
+  async function loadAgentJob(jobId, options = {}) {
+    if (!jobId) return null;
+    const silent = Boolean(options.silent);
+    if (!silent) setAgentJobLoading(jobId, true);
+
+    try {
+      const job = await agentApi.getJob(jobId);
+      setAgentJobsById((current) => ({ ...current, [jobId]: job }));
+      setAgentJobError(jobId, "");
+      return job;
+    } catch (apiError) {
+      const errorMessage = formatApiError(apiError);
+      setAgentJobError(jobId, errorMessage);
+      if (!silent) setAiError(errorMessage);
+      return null;
+    } finally {
+      if (!silent) setAgentJobLoading(jobId, false);
+    }
+  }
+
+  async function decideAgentApproval(jobId, approval, decision) {
+    if (!jobId || !approval?.id) return;
+    const actionId = `${decision}-${approval.id}`;
+    setAgentApprovalActionIds((current) => ({ ...current, [actionId]: true }));
+    setAiError("");
+
+    try {
+      if (decision === "approve") {
+        await agentApi.approve(approval.id);
+      } else {
+        await agentApi.reject(approval.id);
+      }
+      await loadAgentJob(jobId);
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+    } finally {
+      setAgentApprovalActionIds((current) => {
+        const next = { ...current };
+        delete next[actionId];
+        return next;
+      });
+    }
+  }
+
+  async function downloadAgentArtifact(artifact) {
+    if (!artifact?.id) return;
+    setAiError("");
+
+    try {
+      const response = await agentApi.downloadArtifact(artifact.id);
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = artifact.name || "agent-artifact";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+    }
   }
 
   async function uploadSelectedAttachment() {
@@ -771,6 +992,9 @@ export default function Channels() {
         requiresApproval: Boolean(response?.requiresApproval),
       };
       setAiMessages((current) => [...current, aiMessage]);
+      if (response?.agentJobId) {
+        loadAgentJob(response.agentJobId, { silent: true });
+      }
       return response;
     } catch (apiError) {
       setAiError(formatApiError(apiError));
@@ -931,6 +1155,167 @@ export default function Channels() {
     if (event.key === "Escape") {
       setOpenMemberMenuId("");
     }
+  }
+
+  function renderAgentJobPanel(message) {
+    const jobId = message.agentJobId;
+    const job = agentJobsById[jobId];
+    const statusKey = normalizeStatusKey(job?.status ?? (message.requiresApproval ? "AwaitingApproval" : "Planning"), AGENT_JOB_STATUS_KEYS);
+    const pendingApprovals = asArray(job?.approvals).filter(isPendingApproval);
+    const artifacts = asArray(job?.artifacts);
+    const errorMessage = agentJobErrors[jobId];
+    const isRefreshing = Boolean(agentJobLoadingIds[jobId]);
+
+    return (
+      <div className="channel-agent-job" data-agent-job-id={jobId}>
+        <div className="channel-agent-job-header">
+          <div>
+            <span className="channel-agent-job-kicker">{t("channel.agentJob")}</span>
+            <strong>{formatAgentJobId(jobId)}</strong>
+          </div>
+          <span className={`status-badge ${getStatusClassName(statusKey)}`}>
+            {getStatusLabel(statusKey)}
+          </span>
+          <button
+            className="secondary-button compact channel-agent-refresh"
+            type="button"
+            onClick={() => loadAgentJob(jobId)}
+            disabled={isRefreshing}
+          >
+            <RefreshCw size={13} /> {isRefreshing ? t("channel.agentLoading") : t("ai.refresh")}
+          </button>
+        </div>
+
+        {errorMessage && <p className="channel-agent-error" role="alert">{errorMessage}</p>}
+
+        <div className="channel-agent-section">
+          <div className="channel-agent-section-title">
+            <strong>{t("ai.approvalQueue")}</strong>
+            <span>{pendingApprovals.length}</span>
+          </div>
+          {pendingApprovals.length === 0 ? (
+            <p className="muted-small">{t("ai.noApprovals")}</p>
+          ) : (
+            <div className="channel-agent-approval-list">
+              {pendingApprovals.map((approval) => {
+                const approveActionId = `approve-${approval.id}`;
+                const rejectActionId = `reject-${approval.id}`;
+                const preview = parseJsonPreview(approval.previewJson);
+                const previewText = preview
+                  ? JSON.stringify(preview, null, 2)
+                  : approval.previewJson;
+
+                return (
+                  <div className="channel-agent-approval" key={approval.id}>
+                    <div>
+                      <strong>{approval.title || t("ai.reviewAction")}</strong>
+                      <small>{approval.actionName || approval.approvalType || t("ai.needsConfirmation")}</small>
+                    </div>
+                    {previewText && (
+                      <details className="raw-json channel-agent-preview">
+                        <summary>{t("ai.viewRawJson")}</summary>
+                        <pre>{previewText}</pre>
+                      </details>
+                    )}
+                    <div className="channel-agent-actions">
+                      <button
+                        className="primary-button compact"
+                        type="button"
+                        onClick={() => decideAgentApproval(jobId, approval, "approve")}
+                        disabled={Boolean(agentApprovalActionIds[approveActionId]) || Boolean(agentApprovalActionIds[rejectActionId])}
+                      >
+                        <ClipboardCheck size={13} /> {t("ai.approve")}
+                      </button>
+                      <button
+                        className="secondary-button compact danger"
+                        type="button"
+                        onClick={() => decideAgentApproval(jobId, approval, "reject")}
+                        disabled={Boolean(agentApprovalActionIds[approveActionId]) || Boolean(agentApprovalActionIds[rejectActionId])}
+                      >
+                        <X size={13} /> {t("ai.reject")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="channel-agent-section">
+          <div className="channel-agent-section-title">
+            <strong>{t("ai.artifacts")}</strong>
+            <span>{artifacts.length}</span>
+          </div>
+          {artifacts.length === 0 ? (
+            <p className="muted-small">{t("ai.noArtifacts")}</p>
+          ) : (
+            <div className="channel-agent-artifact-list">
+              {artifacts.map((artifact) => (
+                <button
+                  className="channel-agent-artifact"
+                  type="button"
+                  key={artifact.id}
+                  onClick={() => downloadAgentArtifact(artifact)}
+                  disabled={!artifact.isDownloadable}
+                >
+                  <FileText size={16} />
+                  <span>
+                    <strong>{artifact.name}</strong>
+                    <small>{artifact.contentType || formatFileSize(artifact.sizeBytes)}</small>
+                  </span>
+                  <Download size={14} />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function isAiActionDisabled(action) {
+    return !activeChannel
+      || aiLoading
+      || Boolean(action.requiresIndexedAttachment && selectedAttachmentFailed);
+  }
+
+  function getAiActionDisabledReason(action) {
+    if (!action.requiresIndexedAttachment || !selectedAttachmentFailed) return "";
+    return t("channel.actionNeedsIndexedAttachment");
+  }
+
+  function renderSourceReadiness() {
+    if (!selectedAttachment) {
+      return (
+        <div className="source-readiness-card empty">
+          <strong>{t("channel.noSelectedContext")}</strong>
+          <p>{t("channel.sourceChannelFallback")}</p>
+        </div>
+      );
+    }
+
+    const isImage = selectedAttachment.contentType.startsWith("image/");
+    const statusKey = selectedAttachmentIndexed ? "ready" : "blocked";
+    const summary = selectedAttachment.summary || (selectedAttachmentIndexed
+      ? t("channel.sourceReadyNoSummary")
+      : t("channel.sourceNotIndexed"));
+
+    return (
+      <div className={`source-readiness-card ${statusKey}`}>
+        <div className="source-readiness-main">
+          {isImage ? <Image size={17} /> : <FileText size={17} />}
+          <span>
+            <strong>{selectedAttachment.fileName}</strong>
+            <small>{getAttachmentLabel(selectedAttachment, t)} · {formatFileSize(selectedAttachment.sizeBytes)}</small>
+          </span>
+        </div>
+        <div className={`source-readiness-status ${statusKey}`}>
+          {selectedAttachmentIndexed ? t("channel.sourceReady") : t("channel.sourceBlocked")}
+        </div>
+        <p>{summary}</p>
+      </div>
+    );
   }
 
   return (
@@ -1147,11 +1532,7 @@ export default function Channels() {
                       </div>
                     )}
                     {message.isAi && message.agentJobId && (
-                      <div className="created-task-chip agent-job-chip">
-                        <ClipboardCheck size={14} />
-                        {message.requiresApproval ? t("channel.agentApprovalRequired") : t("channel.agentJobCreated")}
-                        <code>{message.agentJobId.slice(0, 8)}</code>
-                      </div>
+                      renderAgentJobPanel(message)
                     )}
                   </div>
                 </div>
@@ -1256,8 +1637,16 @@ export default function Channels() {
                     <div className="ai-member-icon"><Bot size={19} /></div>
                     <div>
                       <strong>{t("channel.aiMember")}</strong>
-                      <p>{t("channel.aiMemberHelp")}</p>
+                      <p>{activeChannel ? `#${activeChannel.name}` : t("channel.selectChannel")}</p>
                     </div>
+                  </div>
+                  <div className="ai-workbench-status" aria-label={t("channel.aiWorkbenchStatus")}>
+                    <span className={selectedAttachmentIndexed ? "ready" : "neutral"}>
+                      {selectedAttachment
+                        ? (selectedAttachmentIndexed ? t("channel.sourceReady") : t("channel.sourceBlocked"))
+                        : t("channel.sourceChannel")}
+                    </span>
+                    <span>{t("channel.recentOutputCount", { count: recentAgentOutputs.length })}</span>
                   </div>
                   <button
                     aria-label={t("channel.hideAiPanel")}
@@ -1270,24 +1659,81 @@ export default function Channels() {
                   </button>
                 </div>
 
-                <div className="quick-action-grid">
-                  {quickActions.map((action) => {
-                    const Icon = action.icon;
-                    return (
-                      <button
-                        key={action.key}
-                        type="button"
-                        onClick={() => runAiCommand(action.command, selectedAttachmentId)}
-                        disabled={!activeChannel || aiLoading}
-                      >
-                        <Icon size={16} />
-                        <span>{action.label}</span>
-                      </button>
-                    );
-                  })}
+                <div className="ai-workbench-intro">
+                  <strong>{t("channel.aiWorkbenchTitle")}</strong>
+                  <p>{t("channel.aiMemberHelp")}</p>
                 </div>
 
-                <div className="inspector-section">
+                <div className="ai-action-groups">
+                  {aiActionGroups.map((group) => (
+                    <section className="ai-action-group" key={group.key}>
+                      <div className="inspector-heading">
+                        <strong>{group.label}</strong>
+                      </div>
+                      <div className="ai-command-card-grid">
+                        {group.actions.map((action) => {
+                          const Icon = action.icon;
+                          const disabledReason = getAiActionDisabledReason(action);
+                          return (
+                            <button
+                              key={action.key}
+                              type="button"
+                              className="ai-command-card"
+                              data-ai-action={action.key}
+                              onClick={() => runAiCommand(action.command, selectedAttachmentId)}
+                              disabled={isAiActionDisabled(action)}
+                              title={disabledReason || action.label}
+                            >
+                              <span className="ai-command-icon"><Icon size={16} /></span>
+                              <span className="ai-command-copy">
+                                <strong>{action.label}</strong>
+                                <small>{action.output} · {action.approval}</small>
+                                {disabledReason && <em>{disabledReason}</em>}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+
+                <div className="inspector-section source-readiness-section">
+                  <div className="inspector-heading">
+                    <strong>{t("channel.sourceReadiness")}</strong>
+                  </div>
+                  {renderSourceReadiness()}
+                </div>
+
+                <div className="inspector-section recent-output-section">
+                  <div className="inspector-heading">
+                    <strong>{t("channel.recentOutputs")}</strong>
+                    <span>{recentAgentOutputs.length}</span>
+                  </div>
+                  {recentAgentOutputs.length === 0 ? (
+                    <p className="muted-small">{t("channel.noRecentOutputs")}</p>
+                  ) : (
+                    <div className="recent-output-list">
+                      {recentAgentOutputs.map((artifact) => (
+                        <button
+                          className="recent-output-item"
+                          type="button"
+                          key={artifact.id}
+                          onClick={() => downloadAgentArtifact(artifact)}
+                        >
+                          <FileText size={15} />
+                          <span>
+                            <strong>{artifact.name}</strong>
+                            <small>{artifact.contentType || formatFileSize(artifact.sizeBytes)}</small>
+                          </span>
+                          <Download size={14} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="inspector-section attachment-context-section">
                   <div className="inspector-heading">
                     <strong>{t("channel.attachments")}</strong>
                     <span>{attachments.length}</span>
@@ -1326,20 +1772,6 @@ export default function Channels() {
                       );
                     })}
                   </div>
-                </div>
-
-                <div className="inspector-section selected-context">
-                  <div className="inspector-heading">
-                    <strong>{t("channel.selectedContext")}</strong>
-                  </div>
-                  {selectedAttachment ? (
-                    <div className="attachment-summary-card">
-                      <strong>{selectedAttachment.fileName}</strong>
-                      <p>{selectedAttachment.summary || t("channel.noAttachmentSummary")}</p>
-                    </div>
-                  ) : (
-                    <p className="muted-small">{t("channel.noSelectedContext")}</p>
-                  )}
                 </div>
               </aside>
             </>

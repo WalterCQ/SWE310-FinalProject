@@ -17,6 +17,13 @@ public class AgentSkillRegistry(IConfiguration configuration, ILogger<AgentSkill
         IReadOnlyCollection<string> contextLines,
         CancellationToken cancellationToken)
     {
+        return await BuildDeckFromMarkdownAsync(BuildMarkdown("TaskFlow AI Deck", goal, contextLines), cancellationToken);
+    }
+
+    public async Task<SkillBinaryResult> BuildDeckFromMarkdownAsync(
+        string markdown,
+        CancellationToken cancellationToken)
+    {
         var skillRoot = ResolveSkillRoot("ppt-master");
         var workRoot = Path.Combine(Path.GetTempPath(), "taskflow-agent-skills", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);
@@ -25,7 +32,7 @@ public class AgentSkillRegistry(IConfiguration configuration, ILogger<AgentSkill
         {
             var inputPath = Path.Combine(workRoot, "deck.md");
             var outputPath = Path.Combine(workRoot, "taskflow-ai-deck.pptx");
-            await File.WriteAllTextAsync(inputPath, BuildMarkdown("TaskFlow AI Deck", goal, contextLines), Encoding.UTF8, cancellationToken);
+            await File.WriteAllTextAsync(inputPath, markdown, Encoding.UTF8, cancellationToken);
 
             var adapterPath = Path.Combine(skillRoot, "taskflow_ppt_master.py");
             if (!File.Exists(adapterPath))
@@ -68,19 +75,21 @@ public class AgentSkillRegistry(IConfiguration configuration, ILogger<AgentSkill
         IReadOnlyCollection<string> contextLines,
         CancellationToken cancellationToken)
     {
+        return await BuildDocxFromMarkdownAsync(BuildMarkdown("TaskFlow AI Report", goal, contextLines), cancellationToken);
+    }
+
+    public async Task<SkillBinaryResult> BuildDocxFromMarkdownAsync(
+        string markdown,
+        CancellationToken cancellationToken)
+    {
         var preferred = configuration["AgentSkills:DocxSkill"];
-        if (string.Equals(preferred, "md-to-docx", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(preferred)
+            || string.Equals(preferred, "md-to-docx", StringComparison.OrdinalIgnoreCase))
         {
-            return await BuildDocxWithMarkdownSkillAsync(goal, contextLines, cancellationToken);
+            return await BuildDocxWithMarkdownSkillAsync(markdown, cancellationToken);
         }
 
-        var content = AgentArtifactDocumentBuilder.BuildReportDocx(goal, BuildReportSections(goal, contextLines));
-        return new SkillBinaryResult(
-            "openxml-docx",
-            "taskflow-ai-report.docx",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            content,
-            "Generated with the built-in openxml-docx runtime skill.");
+        throw new InvalidOperationException("Only the md-to-docx runtime skill is enabled for report artifacts.");
     }
 
     public string BuildMarkdown(string title, string goal, IReadOnlyCollection<string> contextLines)
@@ -118,8 +127,7 @@ public class AgentSkillRegistry(IConfiguration configuration, ILogger<AgentSkill
     }
 
     private async Task<SkillBinaryResult> BuildDocxWithMarkdownSkillAsync(
-        string goal,
-        IReadOnlyCollection<string> contextLines,
+        string markdown,
         CancellationToken cancellationToken)
     {
         var skillRoot = ResolveSkillRoot("md-to-docx");
@@ -135,7 +143,7 @@ public class AgentSkillRegistry(IConfiguration configuration, ILogger<AgentSkill
         {
             var inputPath = Path.Combine(workRoot, "report.md");
             var outputPath = Path.Combine(workRoot, "taskflow-ai-report.docx");
-            await File.WriteAllTextAsync(inputPath, BuildMarkdown("TaskFlow AI Report", goal, contextLines), Encoding.UTF8, cancellationToken);
+            await File.WriteAllTextAsync(inputPath, markdown, Encoding.UTF8, cancellationToken);
 
             var output = await RunProcessAsync("node", [scriptPath, inputPath, outputPath], workRoot, cancellationToken);
             if (!File.Exists(outputPath))

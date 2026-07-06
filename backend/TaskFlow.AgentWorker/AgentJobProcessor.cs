@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.AI;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -239,46 +240,61 @@ public class AgentJobProcessor(
 
         if (subAgents.Contains("CodeSubAgent"))
         {
-            var codePatchResult = await BuildCodePatchAsync(job, step.Id, agentContext.ContextLines, cancellationToken);
-            var patchArtifact = AddArtifact(
-                job.Id,
-                step.Id,
-                AgentArtifactKind.CodePatch,
-                "code-subagent.patch",
-                "text/x-patch",
-                codePatchResult.Patch,
-                storeAsBlob: true);
-
-            if (!string.IsNullOrWhiteSpace(codePatchResult.ValidationResult))
+            if (job.GitHubRepositoryConnectionId.HasValue)
             {
-                AddArtifact(
+                var codePatchResult = await BuildCodePatchAsync(job, step.Id, agentContext.ContextLines, cancellationToken);
+                var patchArtifact = AddArtifact(
                     job.Id,
                     step.Id,
                     AgentArtifactKind.CodePatch,
-                    "code-validation-result.md",
-                    $"""
-                    # Code Validation Result
+                    "code-subagent.patch",
+                    "text/x-patch",
+                    codePatchResult.Patch,
+                    storeAsBlob: true);
 
-                    {codePatchResult.ValidationResult}
+                if (!string.IsNullOrWhiteSpace(codePatchResult.ValidationResult))
+                {
+                    AddArtifact(
+                        job.Id,
+                        step.Id,
+                        AgentArtifactKind.CodePatch,
+                        "code-validation-result.md",
+                        $"""
+                        # Code Validation Result
 
-                    ## Diff Summary
+                        {codePatchResult.ValidationResult}
 
-                    {codePatchResult.DiffSummary}
-                    """);
-            }
+                        ## Diff Summary
 
-            if (job.GitHubRepositoryConnectionId.HasValue)
-            {
+                        {codePatchResult.DiffSummary}
+                        """);
+                }
+
                 await AddCreatePullRequestApprovalAsync(job, step.Id, patchArtifact.Id, cancellationToken);
+            }
+            else
+            {
+                try
+                {
+                    var codeAdviceSpec = await BuildCodeAdviceSpecAsync(job, agentContext.ContextLines, cancellationToken);
+                    AddArtifact(job.Id, step.Id, AgentArtifactKind.CodePatch, "code-review-plan.md", BuildCodeAdviceMarkdown(codeAdviceSpec));
+                }
+                catch (Exception ex)
+                {
+                    AddSkillFailure(job, step.Id, AgentArtifactKind.CodePatch, "code-advice-spec", ex);
+                    throw;
+                }
             }
         }
 
         if (subAgents.Contains("DeckSubAgent"))
         {
-            AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, "deck-subagent-source.md", skillRegistry.BuildMarkdown("TaskFlow AI Deck", job.Goal, agentContext.ContextLines));
             try
             {
-                var deck = await skillRegistry.BuildDeckAsync(job.Goal, agentContext.ContextLines, cancellationToken);
+                var deckSpec = await BuildDeckSpecAsync(job, agentContext.ContextLines, cancellationToken);
+                var deckMarkdown = BuildDeckMarkdown(deckSpec);
+                AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, "deck-subagent-source.md", deckMarkdown);
+                var deck = await skillRegistry.BuildDeckFromMarkdownAsync(deckMarkdown, cancellationToken);
                 AddArtifact(job.Id, step.Id, AgentArtifactKind.Deck, deck.FileName, deck.ContentType, deck.Content);
                 AddEvent(
                     job.Id,
@@ -296,10 +312,12 @@ public class AgentJobProcessor(
 
         if (subAgents.Contains("ReportSubAgent"))
         {
-            AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, "report-subagent-draft.md", skillRegistry.BuildMarkdown("TaskFlow AI Report", job.Goal, agentContext.ContextLines));
             try
             {
-                var report = await skillRegistry.BuildDocxAsync(job.Goal, agentContext.ContextLines, cancellationToken);
+                var reportSpec = await BuildReportSpecAsync(job, agentContext.ContextLines, cancellationToken);
+                var reportMarkdown = BuildReportMarkdown(reportSpec);
+                AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, "report-subagent-draft.md", reportMarkdown);
+                var report = await skillRegistry.BuildDocxFromMarkdownAsync(reportMarkdown, cancellationToken);
                 AddArtifact(job.Id, step.Id, AgentArtifactKind.Report, report.FileName, report.ContentType, report.Content);
                 AddEvent(
                     job.Id,
@@ -514,7 +532,7 @@ public class AgentJobProcessor(
             approval.AgentStepId,
             AgentArtifactKind.CodePatch,
             "github-pr-result.md",
-            $"""
+            $$"""
             # GitHub PR Result
 
             Repository: {repository.FullName}
@@ -548,7 +566,9 @@ public class AgentJobProcessor(
 
     private async Task AddTaskFlowActionApprovalsAsync(AgentJob job, Guid stepId, CancellationToken cancellationToken)
     {
-        if (ContainsAny(job.Goal, "task", "任务", "todo", "to-do"))
+        var intentGoal = NormalizeGoalForIntent(job.Goal);
+
+        if (IsTaskCommand(intentGoal))
         {
             var project = await dbContext.Projects
                 .AsNoTracking()
@@ -573,7 +593,7 @@ public class AgentJobProcessor(
             }
         }
 
-        if (ContainsAny(job.Goal, "reminder", "提醒", "notify", "notification"))
+        if (IsReminderCommand(intentGoal))
         {
             var payload = new CreateReminderActionPayload(
                 job.WorkspaceId,
@@ -606,7 +626,7 @@ public class AgentJobProcessor(
             headBranch,
             $"TaskFlow AI: {Shorten(job.Goal, 80)}",
             $"TaskFlow AI update for job {job.Id}",
-            $"""
+            $$"""
             Generated by TaskFlow AI.
 
             Job: {job.Id}
@@ -654,6 +674,514 @@ public class AgentJobProcessor(
         }
 
         AddArtifact(job.Id, stepId, AgentArtifactKind.Summary, "summary-subagent.md", string.Join(Environment.NewLine, lines));
+    }
+
+    private async Task<ReportSpec> BuildReportSpecAsync(
+        AgentJob job,
+        IReadOnlyCollection<string> contextLines,
+        CancellationToken cancellationToken)
+    {
+        var sources = BuildSourceReferences(contextLines);
+        var json = await RequestArtifactSpecJsonAsync(
+            job,
+            "report",
+            $$"""
+            Build a polished coursework/demo report specification from the approved TaskFlow context.
+
+            Return exactly one JSON object with this shape:
+            {
+              "title": "short report title",
+              "audience": "intended readers",
+              "sourceIds": ["S1"],
+              "confidenceNotes": "one sentence about limits or missing evidence",
+              "sections": [
+                {
+                  "heading": "Executive Summary",
+                  "purpose": "one concise paragraph",
+                  "bullets": ["specific grounded point"],
+                  "evidenceNeeded": ["screenshot or validation evidence to collect"],
+                  "sourceIds": ["S1"]
+                }
+              ]
+            }
+
+            Rules:
+            - Use only source ids listed below; do not invent facts.
+            - Create at least 5 sections: Executive Summary, Requirements and Deliverables, Evidence Checklist, Risks and Acceptance Checks, Next Actions, Sources.
+            - Every section must have at least 2 bullets and at least 1 source id.
+            - Keep headings professional and coursework/demo friendly.
+            - If a fact is missing, put it in evidenceNeeded instead of inventing it.
+
+            Goal:
+            {{job.Goal}}
+
+            Sources:
+            {{BuildSourcePromptBlock(sources)}}
+            """,
+            cancellationToken);
+
+        return ValidateReportSpec(DeserializeSpec<ReportSpec>(json, "report"), sources);
+    }
+
+    private async Task<DeckSpec> BuildDeckSpecAsync(
+        AgentJob job,
+        IReadOnlyCollection<string> contextLines,
+        CancellationToken cancellationToken)
+    {
+        var sources = BuildSourceReferences(contextLines);
+        var json = await RequestArtifactSpecJsonAsync(
+            job,
+            "deck",
+            $$"""
+            Build a professional editable presentation specification for a TaskFlow coursework/demo walkthrough.
+
+            Return exactly one JSON object with this shape:
+            {
+              "title": "short deck title",
+              "audience": "intended viewers",
+              "sourceIds": ["S1"],
+              "confidenceNotes": "one sentence about limits or missing evidence",
+              "slides": [
+                {
+                  "title": "unique slide title",
+                  "bullets": ["short bullet, maximum 12 words"],
+                  "speakerNotes": "one sentence presenter note",
+                  "sourceIds": ["S1"]
+                }
+              ]
+            }
+
+            Rules:
+            - Use only source ids listed below; do not invent facts.
+            - Create 6 to 8 slides in this order: title, agenda, assignment summary, deliverables, evidence plan, risks/quality checks, next actions, sources.
+            - Each slide title must be unique.
+            - Each slide must have 2 to 4 bullets and at least 1 source id.
+            - Bullets must be short, concrete, and presentation-ready.
+
+            Goal:
+            {{job.Goal}}
+
+            Sources:
+            {{BuildSourcePromptBlock(sources)}}
+            """,
+            cancellationToken);
+
+        return ValidateDeckSpec(DeserializeSpec<DeckSpec>(json, "deck"), sources);
+    }
+
+    private async Task<CodeAdviceSpec> BuildCodeAdviceSpecAsync(
+        AgentJob job,
+        IReadOnlyCollection<string> contextLines,
+        CancellationToken cancellationToken)
+    {
+        var sources = BuildSourceReferences(contextLines);
+        var json = await RequestArtifactSpecJsonAsync(
+            job,
+            "code advice",
+            $$"""
+            Build a code review plan from approved TaskFlow context. No GitHub repository is connected, so do not produce a patch.
+
+            Return exactly one JSON object with this shape:
+            {
+              "title": "short code advice title",
+              "audience": "intended readers",
+              "sourceIds": ["S1"],
+              "confidenceNotes": "one sentence about limits or missing repository evidence",
+              "findings": [
+                {
+                  "title": "specific finding",
+                  "rationale": "why it matters",
+                  "recommendation": "practical next step",
+                  "sourceIds": ["S1"]
+                }
+              ],
+              "validationPlan": ["command or manual check to run"]
+            }
+
+            Rules:
+            - Use only source ids listed below; do not invent repository files.
+            - Make it clear this is a review plan, not an applied patch.
+            - Include 3 to 6 findings and at least 2 validation steps.
+            - Every finding must cite at least 1 source id.
+
+            Goal:
+            {{job.Goal}}
+
+            Sources:
+            {{BuildSourcePromptBlock(sources)}}
+            """,
+            cancellationToken);
+
+        return ValidateCodeAdviceSpec(DeserializeSpec<CodeAdviceSpec>(json, "code advice"), sources);
+    }
+
+    private async Task<string> RequestArtifactSpecJsonAsync(
+        AgentJob job,
+        string artifactKind,
+        string userPrompt,
+        CancellationToken cancellationToken)
+    {
+        var provider = await ResolveJobProviderRuntimeAsync(job, cancellationToken);
+        var client = httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{provider.BaseUrl.TrimEnd('/')}/chat/completions");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
+        request.Content = new StringContent(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["model"] = provider.Model,
+            ["temperature"] = 0.1,
+            ["max_tokens"] = 2600,
+            ["response_format"] = new { type = "json_object" },
+            ["messages"] = new object[]
+            {
+                new
+                {
+                    role = "system",
+                    content = $"You are TaskFlow ArtifactSpecAgent. Return only valid JSON for a {artifactKind} artifact. Do not include Markdown fences or commentary."
+                },
+                new { role = "user", content = userPrompt }
+            }
+        }, JsonOptions), Encoding.UTF8, "application/json");
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Provider {artifactKind} spec call failed with {(int)response.StatusCode}: {Shorten(RedactSecret(body, provider.ApiKey), 400)}");
+        }
+
+        using var document = JsonDocument.Parse(body);
+        var content = document.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString();
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw new InvalidOperationException($"Provider returned an empty {artifactKind} spec.");
+        }
+
+        using var specDocument = JsonDocument.Parse(content);
+        if (specDocument.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Provider returned a non-object {artifactKind} spec.");
+        }
+
+        return specDocument.RootElement.GetRawText();
+    }
+
+    private static TSpec DeserializeSpec<TSpec>(string json, string artifactKind)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<TSpec>(json, JsonOptions)
+                ?? throw new InvalidOperationException($"Provider returned an empty {artifactKind} spec.");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException($"Provider returned invalid {artifactKind} spec JSON: {ex.Message}", ex);
+        }
+    }
+
+    private static ReportSpec ValidateReportSpec(ReportSpec spec, IReadOnlyCollection<ArtifactSource> sources)
+    {
+        var sourceIds = ValidateSourceIds(spec.SourceIds, sources, "report");
+        var sections = spec.Sections?.ToArray() ?? [];
+        if (sections.Length < 5)
+        {
+            throw new InvalidOperationException("Report spec must include at least 5 sections.");
+        }
+
+        var normalizedSections = sections.Select((section, index) =>
+        {
+            var bullets = NormalizeList(section.Bullets, $"report section {index + 1} bullets", minimum: 2);
+            var evidence = NormalizeList(section.EvidenceNeeded, $"report section {index + 1} evidence", minimum: 1);
+            return new ReportSectionSpec(
+                RequiredText(section.Heading, $"report section {index + 1} heading"),
+                RequiredText(section.Purpose, $"report section {index + 1} purpose"),
+                bullets,
+                evidence,
+                ValidateSourceIds(section.SourceIds, sources, $"report section {index + 1}"));
+        }).ToArray();
+
+        return new ReportSpec(
+            RequiredText(spec.Title, "report title"),
+            RequiredText(spec.Audience, "report audience"),
+            sourceIds,
+            RequiredText(spec.ConfidenceNotes, "report confidence notes"),
+            normalizedSections);
+    }
+
+    private static DeckSpec ValidateDeckSpec(DeckSpec spec, IReadOnlyCollection<ArtifactSource> sources)
+    {
+        var sourceIds = ValidateSourceIds(spec.SourceIds, sources, "deck");
+        var slides = spec.Slides?.ToArray() ?? [];
+        if (slides.Length < 5)
+        {
+            throw new InvalidOperationException("Deck spec must include at least 5 slides.");
+        }
+
+        var seenTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalizedSlides = slides.Select((slide, index) =>
+        {
+            var title = RequiredText(slide.Title, $"deck slide {index + 1} title");
+            if (!seenTitles.Add(title))
+            {
+                throw new InvalidOperationException($"Deck slide title is duplicated: {title}");
+            }
+
+            var bullets = NormalizeList(slide.Bullets, $"deck slide {index + 1} bullets", minimum: 2, maximum: 4);
+            return new DeckSlideSpec(
+                title,
+                bullets,
+                RequiredText(slide.SpeakerNotes, $"deck slide {index + 1} speaker notes"),
+                ValidateSourceIds(slide.SourceIds, sources, $"deck slide {index + 1}"));
+        }).ToArray();
+
+        return new DeckSpec(
+            RequiredText(spec.Title, "deck title"),
+            RequiredText(spec.Audience, "deck audience"),
+            sourceIds,
+            RequiredText(spec.ConfidenceNotes, "deck confidence notes"),
+            normalizedSlides);
+    }
+
+    private static CodeAdviceSpec ValidateCodeAdviceSpec(CodeAdviceSpec spec, IReadOnlyCollection<ArtifactSource> sources)
+    {
+        var sourceIds = ValidateSourceIds(spec.SourceIds, sources, "code advice");
+        var findings = spec.Findings?.ToArray() ?? [];
+        if (findings.Length < 3)
+        {
+            throw new InvalidOperationException("Code advice spec must include at least 3 findings.");
+        }
+
+        var normalizedFindings = findings.Select((finding, index) => new CodeFindingSpec(
+            RequiredText(finding.Title, $"code finding {index + 1} title"),
+            RequiredText(finding.Rationale, $"code finding {index + 1} rationale"),
+            RequiredText(finding.Recommendation, $"code finding {index + 1} recommendation"),
+            ValidateSourceIds(finding.SourceIds, sources, $"code finding {index + 1}"))).ToArray();
+
+        return new CodeAdviceSpec(
+            RequiredText(spec.Title, "code advice title"),
+            RequiredText(spec.Audience, "code advice audience"),
+            sourceIds,
+            RequiredText(spec.ConfidenceNotes, "code advice confidence notes"),
+            normalizedFindings,
+            NormalizeList(spec.ValidationPlan, "code validation plan", minimum: 2));
+    }
+
+    private static IReadOnlyCollection<ArtifactSource> BuildSourceReferences(IReadOnlyCollection<string> contextLines)
+    {
+        var sourceLines = contextLines
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Take(12)
+            .ToArray();
+
+        if (sourceLines.Length == 0)
+        {
+            throw new InvalidOperationException("No indexed channel, task, or attachment context was available for artifact generation.");
+        }
+
+        return sourceLines
+            .Select((line, index) =>
+            {
+                var labelEnd = line.IndexOf(':', StringComparison.Ordinal);
+                var label = labelEnd > 0 ? line[..labelEnd].Trim() : $"Source {index + 1}";
+                return new ArtifactSource($"S{index + 1}", label, Shorten(line.Replace(Environment.NewLine, " ", StringComparison.Ordinal), 900));
+            })
+            .ToArray();
+    }
+
+    private static string BuildSourcePromptBlock(IReadOnlyCollection<ArtifactSource> sources)
+    {
+        return string.Join(Environment.NewLine, sources.Select(source => $"- {source.Id} ({source.Label}): {source.Content}"));
+    }
+
+    private static IReadOnlyCollection<string> ValidateSourceIds(
+        IReadOnlyCollection<string>? sourceIds,
+        IReadOnlyCollection<ArtifactSource> sources,
+        string owner)
+    {
+        var allowed = sources.Select(source => source.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var normalized = (sourceIds ?? [])
+            .Select(sourceId => sourceId.Trim())
+            .Where(sourceId => !string.IsNullOrWhiteSpace(sourceId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (normalized.Length == 0)
+        {
+            throw new InvalidOperationException($"{owner} must cite at least one source id.");
+        }
+
+        var invalid = normalized.Where(sourceId => !allowed.Contains(sourceId)).ToArray();
+        if (invalid.Length > 0)
+        {
+            throw new InvalidOperationException($"{owner} cited unknown source ids: {string.Join(", ", invalid)}.");
+        }
+
+        return normalized;
+    }
+
+    private static IReadOnlyCollection<string> NormalizeList(
+        IReadOnlyCollection<string>? values,
+        string owner,
+        int minimum,
+        int? maximum = null)
+    {
+        var normalized = (values ?? [])
+            .Select(value => value.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+
+        if (normalized.Length < minimum)
+        {
+            throw new InvalidOperationException($"{owner} must include at least {minimum} item(s).");
+        }
+
+        if (maximum.HasValue && normalized.Length > maximum.Value)
+        {
+            throw new InvalidOperationException($"{owner} must include no more than {maximum.Value} item(s).");
+        }
+
+        return normalized;
+    }
+
+    private static string RequiredText(string? value, string owner)
+    {
+        var normalized = value?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new InvalidOperationException($"{owner} is required.");
+        }
+
+        return normalized;
+    }
+
+    private static string BuildReportMarkdown(ReportSpec spec)
+    {
+        var title = spec.Title ?? string.Empty;
+        var audience = spec.Audience ?? string.Empty;
+        var confidenceNotes = spec.ConfidenceNotes ?? string.Empty;
+        var lines = new List<string>
+        {
+            "---",
+            $"title: {EscapeYaml(title)}",
+            $"date: {DateTime.UtcNow:yyyy-MM-dd}",
+            "version: 1.0",
+            $"audience: {EscapeYaml(audience)}",
+            "---",
+            "",
+            $"# {title}",
+            "",
+            $"Audience: {audience}",
+            "",
+            $"Confidence note: {confidenceNotes}",
+            ""
+        };
+
+        foreach (var section in spec.Sections ?? [])
+        {
+            lines.Add($"## {section.Heading}");
+            lines.Add("");
+            lines.Add(section.Purpose ?? string.Empty);
+            lines.Add("");
+            foreach (var bullet in section.Bullets ?? [])
+            {
+                lines.Add($"- {bullet}");
+            }
+
+            lines.Add("");
+            lines.Add("| Evidence Needed | Sources |");
+            lines.Add("| --- | --- |");
+            foreach (var evidence in section.EvidenceNeeded ?? [])
+            {
+                lines.Add($"| {EscapeTableCell(evidence)} | {EscapeTableCell(string.Join(", ", section.SourceIds ?? []))} |");
+            }
+            lines.Add("");
+        }
+
+        lines.Add("## Source Appendix");
+        lines.Add("");
+        foreach (var sourceId in spec.SourceIds ?? [])
+        {
+            lines.Add($"- {sourceId}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string BuildDeckMarkdown(DeckSpec spec)
+    {
+        var lines = new List<string>();
+        foreach (var slide in spec.Slides ?? [])
+        {
+            lines.Add($"# {slide.Title}");
+            lines.Add("");
+            foreach (var bullet in slide.Bullets ?? [])
+            {
+                lines.Add($"- {bullet}");
+            }
+            lines.Add($"- Sources: {string.Join(", ", slide.SourceIds ?? [])}");
+            lines.Add($"Notes: {slide.SpeakerNotes}");
+            lines.Add("");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string BuildCodeAdviceMarkdown(CodeAdviceSpec spec)
+    {
+        var lines = new List<string>
+        {
+            $"# {spec.Title}",
+            "",
+            $"Audience: {spec.Audience}",
+            "",
+            $"Confidence note: {spec.ConfidenceNotes}",
+            "",
+            "This artifact is a review plan because no GitHub repository connection is attached to the AgentJob. It is not a generated patch.",
+            "",
+            "## Findings"
+        };
+
+        foreach (var finding in spec.Findings ?? [])
+        {
+            lines.Add("");
+            lines.Add($"### {finding.Title}");
+            lines.Add("");
+            lines.Add($"Rationale: {finding.Rationale}");
+            lines.Add("");
+            lines.Add($"Recommendation: {finding.Recommendation}");
+            lines.Add("");
+            lines.Add($"Sources: {string.Join(", ", finding.SourceIds ?? [])}");
+        }
+
+        lines.Add("");
+        lines.Add("## Validation Plan");
+        foreach (var item in spec.ValidationPlan ?? [])
+        {
+            lines.Add($"- {item}");
+        }
+
+        lines.Add("");
+        lines.Add("## Source Appendix");
+        foreach (var sourceId in spec.SourceIds ?? [])
+        {
+            lines.Add($"- {sourceId}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string EscapeYaml(string value)
+    {
+        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+    }
+
+    private static string EscapeTableCell(string value)
+    {
+        return value.Replace("|", "\\|", StringComparison.Ordinal).Replace(Environment.NewLine, " ", StringComparison.Ordinal);
     }
 
     private async Task<AgentRuntimeContext> LoadAgentContextAsync(AgentJob job, CancellationToken cancellationToken)
@@ -713,11 +1241,7 @@ public class AgentJobProcessor(
     {
         if (!job.GitHubRepositoryConnectionId.HasValue)
         {
-            AddEvent(job.Id, job.UserId, AgentEventType.StepStarted, "No GitHub repository is connected; generated a reviewable patch artifact only.");
-            return new CodePatchBuildResult(
-                BuildCodePatchArtifact(job, contextLines),
-                "Validation skipped: no GitHub repository connection is attached to this job.",
-                "No repository diff was produced.");
+            throw new InvalidOperationException("A GitHub repository connection is required before generating a patch artifact.");
         }
 
         var repository = await dbContext.GitHubRepositoryConnections
@@ -1165,27 +1689,28 @@ public class AgentJobProcessor(
 
     private static IReadOnlyCollection<string> InferSubAgents(string goal, string? artifactTarget)
     {
+        var intentGoal = NormalizeGoalForIntent(goal);
         var subAgents = new List<string> { "SummarySubAgent" };
 
-        if (ContainsAny(goal, "code", "代码", "implement", "bug", "fix")
+        if (ContainsAny(intentGoal, "code", "代码", "implement", "bug", "fix")
             || artifactTarget is "patch" or "pull-request")
         {
             subAgents.Add("CodeSubAgent");
         }
 
-        if (ContainsAny(goal, "ppt", "deck", "slides", "presentation", "幻灯片")
+        if (ContainsAny(intentGoal, "ppt", "deck", "slides", "presentation", "幻灯片")
             || artifactTarget == "pptx")
         {
             subAgents.Add("DeckSubAgent");
         }
 
-        if (ContainsAny(goal, "report", "报告", "document", "文档")
+        if (ContainsAny(intentGoal, "report", "报告", "document", "文档")
             || artifactTarget == "docx")
         {
             subAgents.Add("ReportSubAgent");
         }
 
-        if (ContainsAny(goal, "task", "任务", "reminder", "提醒", "notify", "notification"))
+        if (IsTaskCommand(intentGoal) || IsReminderCommand(intentGoal))
         {
             subAgents.Add("TaskFlowActionSubAgent");
         }
@@ -1239,6 +1764,27 @@ public class AgentJobProcessor(
     private static bool ContainsAny(string text, params string[] needles)
     {
         return needles.Any(needle => text.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeGoalForIntent(string goal)
+    {
+        return Regex
+            .Replace(goal, @"@?\s*TaskFlow\s+AI\b\s*[:,：-]?", string.Empty, RegexOptions.IgnoreCase)
+            .Trim();
+    }
+
+    private static bool IsTaskCommand(string goal)
+    {
+        return Regex.IsMatch(goal, @"\b(tasks?|todos?|to-dos?)\b", RegexOptions.IgnoreCase)
+            || goal.Contains("任务", StringComparison.OrdinalIgnoreCase)
+            || goal.Contains("待办", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsReminderCommand(string goal)
+    {
+        return Regex.IsMatch(goal, @"\b(reminders?|notifications?|notify)\b", RegexOptions.IgnoreCase)
+            || goal.Contains("提醒", StringComparison.OrdinalIgnoreCase)
+            || goal.Contains("通知", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Shorten(string value, int maxLength)
@@ -1539,6 +2085,52 @@ public class AgentJobProcessor(
     private sealed record AgentRuntimeContext(
         IReadOnlyCollection<string> ContextLines,
         IReadOnlyCollection<string> Sources);
+
+    private sealed record ArtifactSource(
+        string Id,
+        string Label,
+        string Content);
+
+    private sealed record ReportSpec(
+        string? Title,
+        string? Audience,
+        IReadOnlyCollection<string>? SourceIds,
+        string? ConfidenceNotes,
+        IReadOnlyCollection<ReportSectionSpec>? Sections);
+
+    private sealed record ReportSectionSpec(
+        string? Heading,
+        string? Purpose,
+        IReadOnlyCollection<string>? Bullets,
+        IReadOnlyCollection<string>? EvidenceNeeded,
+        IReadOnlyCollection<string>? SourceIds);
+
+    private sealed record DeckSpec(
+        string? Title,
+        string? Audience,
+        IReadOnlyCollection<string>? SourceIds,
+        string? ConfidenceNotes,
+        IReadOnlyCollection<DeckSlideSpec>? Slides);
+
+    private sealed record DeckSlideSpec(
+        string? Title,
+        IReadOnlyCollection<string>? Bullets,
+        string? SpeakerNotes,
+        IReadOnlyCollection<string>? SourceIds);
+
+    private sealed record CodeAdviceSpec(
+        string? Title,
+        string? Audience,
+        IReadOnlyCollection<string>? SourceIds,
+        string? ConfidenceNotes,
+        IReadOnlyCollection<CodeFindingSpec>? Findings,
+        IReadOnlyCollection<string>? ValidationPlan);
+
+    private sealed record CodeFindingSpec(
+        string? Title,
+        string? Rationale,
+        string? Recommendation,
+        IReadOnlyCollection<string>? SourceIds);
 
     private sealed record CodePatchBuildResult(
         string Patch,
