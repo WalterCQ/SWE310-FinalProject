@@ -1,4 +1,4 @@
-import axiosClient from "./axiosClient.js";
+﻿import axiosClient from "./axiosClient.js";
 import { translateKey } from "../i18n.jsx";
 
 const technicalErrorPatterns = [
@@ -221,7 +221,9 @@ export const tasks = {
   update: (taskId, payload) => request({ method: "PUT", url: `/api/tasks/${taskId}`, data: payload }),
   remove: (taskId) => request({ method: "DELETE", url: `/api/tasks/${taskId}` }),
   updateStatus: (taskId, status) => request({ method: "PUT", url: `/api/tasks/${taskId}/status`, data: { status } }),
-  assign: (taskId, assigneeId) => request({ method: "PUT", url: `/api/tasks/${taskId}/assign`, data: { assigneeId } }),
+    assign: (taskId, assigneeId) => request({ method: "PUT", url: `/api/tasks/${taskId}/assign`, data: { assigneeId } }),
+  registerUser: (payload) => request({ method: "POST", url: "/api/auth/register", data: payload }),
+  loginUser: (payload) => request({ method: "POST", url: "/api/auth/login", data: payload }),
   setDeadline: (taskId, deadlineUtc) => request({ method: "PUT", url: `/api/tasks/${taskId}/deadline`, data: { deadlineUtc } }),
   comments: (taskId) => request({ method: "GET", url: `/api/tasks/${taskId}/comments` }),
   addComment: (taskId, payload) => request({ method: "POST", url: `/api/tasks/${taskId}/comments`, data: payload }),
