@@ -50,6 +50,11 @@ public class TasksController(ITaskService taskService) : ControllerBase
     [HttpPut("tasks/{taskId:guid}/assign")]
     public async Task<ActionResult> AssignTask(Guid taskId, AssignTaskRequest request)
     {
+        // Validate that the assigneeId is provided
+        if (request.AssigneeId == Guid.Empty)
+        {
+            return BadRequest("AssigneeId must be provided.");
+        }
         return this.ToActionResult(await taskService.AssignTaskAsync(taskId, request));
     }
 
