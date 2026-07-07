@@ -39,6 +39,7 @@ public class AiCommandService(
     private const int MaxChunksPerAttachment = 24;
     private const int MaxDirectAttachmentChunks = 12;
     private const int MaxPdfImagesToSummarize = 3;
+    private const int MaxImageSummaryTokens = 1800;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<ApiResponse<AiResponse>> ExecuteCommandAsync(AiCommandRequest request, CancellationToken cancellationToken = default)
@@ -946,7 +947,7 @@ public class AiCommandService(
         {
             ["model"] = ResolveVisionModel(provider),
             ["temperature"] = 0.1,
-            ["max_tokens"] = 900,
+            ["max_tokens"] = MaxImageSummaryTokens,
             ["messages"] = new object[]
             {
                 new Dictionary<string, object?>
@@ -962,7 +963,16 @@ public class AiCommandService(
                         new Dictionary<string, object?>
                         {
                             ["type"] = "text",
-                            ["text"] = $"Summarize image attachment '{fileName}'. Include visible text, objects, UI state, tasks, risks, and any action items. Do not invent unseen details."
+                            ["text"] = $"""
+                                Describe image attachment '{fileName}' for a project collaboration RAG index.
+                                Return a complete factual description, not a short summary.
+                                Cover the image from top to bottom and left to right, including:
+                                - all visible text, labels, numbers, dates, statuses, and table/list content;
+                                - key objects, people, diagrams, UI controls, layout, colors, and spatial relationships;
+                                - project tasks, requirements, risks, blockers, decisions, and action items visible in the image.
+                                If the image is a long screenshot, continue until every visible region is described.
+                                Do not invent unseen details.
+                                """
                         },
                         new Dictionary<string, object?>
                         {
@@ -1592,13 +1602,16 @@ public class AiCommandService(
 
     private static IEnumerable<AttachmentIndexSection> BuildIndexChunks(IReadOnlyCollection<AttachmentIndexSection> sections)
     {
-        var imageSections = sections
-            .Where(section => section.SourceType.Contains("image", StringComparison.OrdinalIgnoreCase))
+        var imageChunks = sections
+            .Where(IsImageSection)
+            .SelectMany(section => SplitIntoChunks(section.Content)
+                .Select(chunk => section with { Content = chunk }))
+            .Take(MaxChunksPerAttachment)
             .ToArray();
-        var textSectionLimit = Math.Max(0, MaxChunksPerAttachment - imageSections.Length);
+        var textSectionLimit = Math.Max(0, MaxChunksPerAttachment - imageChunks.Length);
         var emitted = 0;
 
-        foreach (var section in sections.Where(section => !section.SourceType.Contains("image", StringComparison.OrdinalIgnoreCase)))
+        foreach (var section in sections.Where(section => !IsImageSection(section)))
         {
             foreach (var chunk in SplitIntoChunks(section.Content))
             {
@@ -1612,7 +1625,7 @@ public class AiCommandService(
             }
         }
 
-        foreach (var section in imageSections)
+        foreach (var section in imageChunks)
         {
             if (emitted >= MaxChunksPerAttachment)
             {
@@ -1620,8 +1633,13 @@ public class AiCommandService(
             }
 
             emitted++;
-            yield return section with { Content = TrimTo(section.Content, 2500) };
+            yield return section;
         }
+    }
+
+    private static bool IsImageSection(AttachmentIndexSection section)
+    {
+        return section.SourceType.Contains("image", StringComparison.OrdinalIgnoreCase);
     }
 
     private static PdfImagePayload? TryExtractPdfImage(IPdfImage image)
