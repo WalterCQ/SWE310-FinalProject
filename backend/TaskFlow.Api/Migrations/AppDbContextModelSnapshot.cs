@@ -260,6 +260,9 @@ namespace TaskFlow.Api.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("ContextAttachmentIdsJson")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("CurrentSubAgent")
                         .HasMaxLength(120)
                         .HasColumnType("nvarchar(120)");
@@ -730,6 +733,29 @@ namespace TaskFlow.Api.Migrations
 
                     b.Property<Guid>("ChannelId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AiAgentJobId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AiArtifactType")
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<Guid?>("AiCreatedTaskId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AiCreatedTaskTitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("AiRequiresApproval")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("AiSourcesJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("AiSuggestedTasksJson")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Content")
                         .IsRequired()

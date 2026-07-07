@@ -99,18 +99,37 @@ public class ChannelsController(
         var result = await aiCommandService.HandleChannelMentionAsync(channelId, request, cancellationToken);
         if (result.Success && result.Data is { SharedToChannel: true, MessageId: not null })
         {
-            var message = await dbContext.Messages
-                .AsNoTracking()
-                .Include(item => item.Sender)
-                .Include(item => item.Attachments)
-                .FirstOrDefaultAsync(item => item.Id == result.Data.MessageId.Value, cancellationToken);
-            if (message is not null)
-            {
-                await chatHubContext.Clients.Group($"channel:{channelId}").SendAsync("MessageReceived", message.ToResponse(), cancellationToken);
-            }
+            await BroadcastSharedAiMessageAsync(channelId, result.Data.MessageId.Value, cancellationToken);
         }
 
         return this.ToActionResult(result);
+    }
+
+    [HttpPost("channels/{channelId:guid}/ai/share")]
+    public async Task<ActionResult> ShareChannelAi(Guid channelId, AiChannelShareRequest request, CancellationToken cancellationToken)
+    {
+        var result = await aiCommandService.ShareChannelResultAsync(channelId, request, cancellationToken);
+        if (result.Success && result.Data is { SharedToChannel: true, MessageId: not null })
+        {
+            await BroadcastSharedAiMessageAsync(channelId, result.Data.MessageId.Value, cancellationToken);
+        }
+
+        return this.ToActionResult(result);
+    }
+
+    private async Task BroadcastSharedAiMessageAsync(Guid channelId, Guid messageId, CancellationToken cancellationToken)
+    {
+        var message = await dbContext.Messages
+            .AsNoTracking()
+            .Include(item => item.Sender)
+            .Include(item => item.Attachments)
+            .FirstOrDefaultAsync(item => item.Id == messageId, cancellationToken);
+        if (message is null)
+        {
+            return;
+        }
+
+        await chatHubContext.Clients.Group($"channel:{channelId}").SendAsync("MessageReceived", message.ToResponse(), cancellationToken);
     }
 
     [HttpGet("channels/{channelId:guid}/members")]

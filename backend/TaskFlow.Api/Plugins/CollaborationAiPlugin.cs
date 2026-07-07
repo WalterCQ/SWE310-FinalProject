@@ -147,7 +147,10 @@ public class CollaborationAiPlugin(
             return result.Message;
         }
 
-        var messages = result.Data.TakeLast(20).Select(message => $"{message.SenderName}: {message.Content}");
+        var messages = result.Data
+            .Where(message => !message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix, StringComparison.Ordinal))
+            .TakeLast(20)
+            .Select(message => $"{message.SenderName}: {message.Content}");
         return string.Join(Environment.NewLine, messages);
     }
 

@@ -85,9 +85,13 @@ public class AiCommandService(
             return ToProviderFailure<AiResponse>(providerResult);
         }
 
-        var context = string.Join(Environment.NewLine, messagesResult.Data.TakeLast(50).Select(message => $"{message.SenderName}: {message.Content}"));
+        var humanMessages = messagesResult.Data
+            .Where(message => !IsAiGeneratedContent(message.Content))
+            .TakeLast(50)
+            .ToArray();
+        var context = string.Join(Environment.NewLine, humanMessages.Select(message => $"{message.SenderName}: {message.Content}"));
         var prompt = string.IsNullOrWhiteSpace(context)
-            ? "Summarize this channel discussion clearly for a project team. The channel has no messages yet."
+            ? "Summarize this channel discussion clearly for a project team. The channel has no human-authored messages yet."
             : $"Summarize this channel discussion clearly for a project team:\n{context}";
 
         return await AskLlmOrFail(providerResult.Data, prompt, cancellationToken);
@@ -258,25 +262,67 @@ public class AiCommandService(
         }
         var provider = providerResult.Data;
 
-        if (request.AttachmentId.HasValue)
+        var intentCommand = NormalizeCommandForIntent(command);
+        var isSummaryCommand = IsConversationSummaryCommand(intentCommand);
+        var artifactType = ResolveArtifactType(intentCommand);
+        var requestedAttachmentIds = ResolveRequestedAttachmentIds(request);
+        var useChannelOnlyContext = isSummaryCommand || requestedAttachmentIds is { Count: 0 };
+
+        if (requestedAttachmentIds is { Count: > 0 })
         {
-            var attachmentAllowed = await dbContext.ChannelAttachments
+            var selectedAttachments = await dbContext.ChannelAttachments
                 .AsNoTracking()
-                .AnyAsync(attachment =>
-                    attachment.Id == request.AttachmentId.Value
-                    && attachment.ChannelId == channelId,
-                    cancellationToken);
-            if (!attachmentAllowed)
+                .Include(attachment => attachment.Message)
+                .Where(attachment =>
+                    requestedAttachmentIds.Contains(attachment.Id)
+                    && attachment.WorkspaceId == channel.WorkspaceId
+                    && attachment.ChannelId == channelId)
+                .ToListAsync(cancellationToken);
+            if (selectedAttachments.Count != requestedAttachmentIds.Count)
             {
                 return ApiResponse.Fail<AiChannelCommandResponse>("Attachment not found in this channel.", StatusCodes.Status404NotFound);
             }
+
+            if (selectedAttachments.Any(IsAiGeneratedAttachment))
+            {
+                return ApiResponse.Fail<AiChannelCommandResponse>(
+                    "AI-generated outputs cannot be selected as channel context.",
+                    StatusCodes.Status400BadRequest);
+            }
+
+            if (selectedAttachments.Any(attachment => !attachment.IsAiIndexed))
+            {
+                return ApiResponse.Fail<AiChannelCommandResponse>(
+                    "Only indexed attachments can be selected as AI context.",
+                    StatusCodes.Status400BadRequest);
+            }
+        }
+
+        var selectedContextHasIndexedAttachment = requestedAttachmentIds is { Count: > 0 };
+        if (RequiresIndexedAttachment(artifactType) && !selectedContextHasIndexedAttachment && requestedAttachmentIds is null)
+        {
+            selectedContextHasIndexedAttachment = await WhereContextSourceAttachments(dbContext.ChannelAttachments.AsNoTracking())
+                .AnyAsync(attachment =>
+                    attachment.ChannelId == channelId
+                    && attachment.IsAiIndexed,
+                    cancellationToken);
+        }
+
+        if (RequiresIndexedAttachment(artifactType) && !selectedContextHasIndexedAttachment)
+        {
+            return ApiResponse.Fail<AiChannelCommandResponse>(
+                "Select an indexed attachment before requesting report, PPT, or code output.",
+                StatusCodes.Status400BadRequest);
         }
 
         try
         {
-            var intentCommand = NormalizeCommandForIntent(command);
-            var artifactType = ResolveArtifactType(intentCommand);
-            var contextResult = await aiContextService.BuildChannelContextAsync(channelId, command, request.AttachmentId, cancellationToken);
+            var contextResult = await aiContextService.BuildChannelContextAsync(
+                channelId,
+                command,
+                requestedAttachmentIds,
+                cancellationToken,
+                channelOnly: useChannelOnlyContext);
             if (!contextResult.Success || contextResult.Data is null)
             {
                 return ApiResponse.Fail<AiChannelCommandResponse>(contextResult.Message, contextResult.StatusCode, contextResult.Errors);
@@ -285,7 +331,7 @@ public class AiCommandService(
             var context = contextResult.Data;
             if (ShouldRouteChannelCommandToAgent(artifactType))
             {
-                var agentJob = await CreateChannelAgentJobAsync(channel, command, artifactType, request.AttachmentId, cancellationToken);
+                var agentJob = await CreateChannelAgentJobAsync(channel, command, artifactType, requestedAttachmentIds, cancellationToken);
                 return ApiResponse.Ok(new AiChannelCommandResponse
                 {
                     Result = $"TaskFlow Agent job created for {artifactType}. Approve the generated plan before it performs any write actions.",
@@ -298,46 +344,35 @@ public class AiCommandService(
                 });
             }
 
-            var prompt = BuildChannelAiPrompt(channel.Name, artifactType, command, context.RecentMessages, context.RetrievedContext);
+            var isTaskCommand = IsTaskCommand(intentCommand);
+            var prompt = isTaskCommand
+                ? BuildChannelTaskSuggestionPrompt(channel.Name, command, context.RecentMessages, context.RetrievedContext)
+                : BuildChannelAiPrompt(channel.Name, artifactType, command, context.RecentMessages, context.RetrievedContext);
             var model = ShouldUseProModel(command) ? ResolveProModel(provider) : ResolveMainModel(provider);
             var result = await InvokeChatCompletionAsync(
                 model,
                 "You are TaskFlow AI, a channel member inside a project collaboration app. Use only the provided accessible context.",
                 prompt,
                 provider,
-                cancellationToken);
+                cancellationToken,
+                responseFormatJson: isTaskCommand);
 
-            var suggestedTasks = IsTaskCommand(intentCommand)
-                ? ExtractSuggestedTasks(result)
-                : [];
-
-            if (IsConversationSummaryCommand(intentCommand))
+            var suggestedTasks = Array.Empty<string>();
+            if (isTaskCommand)
             {
-                return ApiResponse.Ok(new AiChannelCommandResponse
+                suggestedTasks = ExtractSuggestedTasks(result).ToArray();
+                if (suggestedTasks.Length == 0)
                 {
-                    Result = result,
-                    ArtifactType = artifactType,
-                    UsedLlm = true,
-                    Sources = context.Sources,
-                    SuggestedTasks = suggestedTasks,
-                });
+                    throw new AiProviderException("AI provider did not return task suggestions in the required JSON format.");
+                }
+                result = FormatSuggestedTasks(suggestedTasks);
             }
-
-            var generatedAttachment = BuildGeneratedArtifact(artifactType, channel.Name, result);
-            var sharedMessage = await CreateSharedAiMessageAsync(
-                channel,
-                userId,
-                result,
-                generatedAttachment,
-                cancellationToken);
 
             return ApiResponse.Ok(new AiChannelCommandResponse
             {
                 Result = result,
                 ArtifactType = artifactType,
                 UsedLlm = true,
-                SharedToChannel = true,
-                MessageId = sharedMessage.Id,
                 Sources = context.Sources,
                 SuggestedTasks = suggestedTasks,
             });
@@ -356,23 +391,83 @@ public class AiCommandService(
         }
     }
 
+    public async Task<ApiResponse<AiChannelCommandResponse>> ShareChannelResultAsync(
+        Guid channelId,
+        AiChannelShareRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = currentUser.GetUserId();
+        var channel = await dbContext.Channels
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == channelId, cancellationToken);
+        if (channel is null || !await permissionService.CanSendMessage(userId, channelId))
+        {
+            return ApiResponse.Fail<AiChannelCommandResponse>("Channel not found or access denied.", StatusCodes.Status404NotFound);
+        }
+
+        if (!await permissionService.CanUseAiCommand(userId, channel.WorkspaceId))
+        {
+            return ApiResponse.Fail<AiChannelCommandResponse>("AI command access denied.", StatusCodes.Status403Forbidden);
+        }
+
+        var result = request.Result.Trim();
+        var artifactType = NormalizeShareArtifactType(request.ArtifactType);
+        if (artifactType is "report-outline" or "ppt-outline" && request.AgentJobId is null)
+        {
+            return ApiResponse.Fail<AiChannelCommandResponse>(
+                "Report and PPT outputs are generated by a TaskFlow Agent job. Run the channel AI command again so the artifact can be created through the approval flow.",
+                StatusCodes.Status400BadRequest);
+        }
+
+        GeneratedArtifact? generatedAttachment = null;
+        var sharedMessage = await CreateSharedAiMessageAsync(
+            channel,
+            userId,
+            result,
+            generatedAttachment,
+            artifactType,
+            request.Sources,
+            request.SuggestedTasks,
+            request.AgentJobId,
+            request.RequiresApproval,
+            null,
+            null,
+            cancellationToken);
+
+        return ApiResponse.Ok(new AiChannelCommandResponse
+        {
+            Result = result,
+            ArtifactType = artifactType,
+            UsedLlm = false,
+            SharedToChannel = true,
+            MessageId = sharedMessage.Id,
+            AgentJobId = request.AgentJobId,
+            RequiresApproval = request.RequiresApproval,
+            Sources = sharedMessage.ToResponse().Sources,
+            SuggestedTasks = sharedMessage.ToResponse().SuggestedTasks,
+            CreatedAtUtc = sharedMessage.CreatedAtUtc
+        });
+    }
+
     private async Task<AgentJob> CreateChannelAgentJobAsync(
         Channel channel,
         string command,
         string artifactType,
-        Guid? attachmentId,
+        IReadOnlyCollection<Guid>? attachmentIds,
         CancellationToken cancellationToken)
     {
         var userId = currentUser.GetUserId();
         var repository = await ResolveDefaultRepositoryAsync(channel.WorkspaceId, artifactType, cancellationToken);
         var artifactTarget = ResolveAgentArtifactTarget(artifactType, repository is not null);
+        var primaryAttachmentId = attachmentIds?.FirstOrDefault();
         var job = new AgentJob
         {
             Id = Guid.NewGuid(),
             WorkspaceId = channel.WorkspaceId,
             UserId = userId,
             ChannelId = channel.Id,
-            AttachmentId = attachmentId,
+            AttachmentId = primaryAttachmentId == Guid.Empty ? null : primaryAttachmentId,
+            ContextAttachmentIdsJson = attachmentIds is null ? null : JsonSerializer.Serialize(attachmentIds, JsonOptions),
             GitHubRepositoryConnectionId = repository?.Id,
             ArtifactTarget = artifactTarget,
             Goal = command,
@@ -392,7 +487,8 @@ public class AiCommandService(
                 artifactType,
                 artifactTarget,
                 channelId = channel.Id,
-                attachmentId,
+                attachmentId = primaryAttachmentId == Guid.Empty ? null : primaryAttachmentId,
+                attachmentIds,
                 repositoryId = repository?.Id
             }, JsonOptions)
         });
@@ -419,7 +515,27 @@ public class AiCommandService(
 
     private static bool ShouldRouteChannelCommandToAgent(string artifactType)
     {
-        return artifactType is "code-advice";
+        return artifactType is "report-outline" or "ppt-outline" or "code-advice";
+    }
+
+    private static bool RequiresIndexedAttachment(string artifactType)
+    {
+        return artifactType is "report-outline" or "ppt-outline" or "code-advice";
+    }
+
+    private static string NormalizeShareArtifactType(string? artifactType)
+    {
+        var normalized = (artifactType ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "summary" => "summary",
+            "requirements" => "requirements",
+            "task-suggestions" => "task-suggestions",
+            "report-outline" => "report-outline",
+            "ppt-outline" => "ppt-outline",
+            "code-advice" => "code-advice",
+            _ => "answer"
+        };
     }
 
     private static string? ResolveAgentArtifactTarget(string artifactType, bool hasRepository)
@@ -521,6 +637,7 @@ public class AiCommandService(
     {
         var userId = currentUser.GetUserId();
         var attachment = await dbContext.ChannelAttachments
+            .Include(item => item.Message)
             .Include(item => item.Blob)
             .FirstOrDefaultAsync(item => item.Id == attachmentId, cancellationToken);
         if (attachment?.Blob is null)
@@ -531,6 +648,13 @@ public class AiCommandService(
         if (!await permissionService.CanAccessChannel(userId, attachment.ChannelId))
         {
             return ApiResponse.Fail<ChannelAttachmentResponse>("Attachment not found or access denied.", StatusCodes.Status404NotFound);
+        }
+
+        if (IsAiGeneratedAttachment(attachment))
+        {
+            return ApiResponse.Fail<ChannelAttachmentResponse>(
+                "AI-generated outputs cannot be indexed as channel context.",
+                StatusCodes.Status400BadRequest);
         }
 
         var providerResult = await aiProviderService.ResolveWorkspaceProviderAsync(attachment.WorkspaceId, cancellationToken);
@@ -602,14 +726,25 @@ public class AiCommandService(
                 .Where(channel => channel.Id == attachment.ChannelId)
                 .Select(channel => channel.Name)
                 .FirstAsync(cancellationToken);
+        var trimmedChunks = chunks
+            .Select(chunk => chunk with { Content = TrimTo(chunk.Content, 2500) })
+            .ToArray();
+        var embeddings = await GenerateEmbeddingsAsync(
+            trimmedChunks.Select(chunk => chunk.Content).ToArray(),
+            provider,
+            cancellationToken);
+        if (embeddings.Count != trimmedChunks.Length)
+        {
+            throw new AiProviderException(
+                $"Embedding provider returned {embeddings.Count} vectors for {trimmedChunks.Length} attachment chunks.");
+        }
+
         var chunkEntities = new List<ChannelKnowledgeChunk>();
         var pineconeChunks = new List<PineconeKnowledgeChunk>();
-        for (var index = 0; index < chunks.Length; index++)
+        for (var index = 0; index < trimmedChunks.Length; index++)
         {
-            var chunk = chunks[index];
+            var chunk = trimmedChunks[index];
             var chunkId = Guid.NewGuid();
-            var trimmedChunk = TrimTo(chunk.Content, 2500);
-            var embedding = await GenerateEmbeddingAsync(trimmedChunk, provider, cancellationToken);
 
             chunkEntities.Add(new ChannelKnowledgeChunk
             {
@@ -619,16 +754,16 @@ public class AiCommandService(
                 AttachmentId = attachment.Id,
                 SourceType = chunk.SourceType,
                 SourceLabel = chunk.SourceLabel,
-                Content = trimmedChunk
+                Content = chunk.Content
             });
             pineconeChunks.Add(new PineconeKnowledgeChunk(
                 chunkId,
                 chunk.SourceType,
                 chunk.SourceLabel,
                 channelName,
-                trimmedChunk,
+                chunk.Content,
                 index + 1,
-                embedding));
+                embeddings[index]));
         }
 
         return new AttachmentIndexBuildResult(chunkEntities, pineconeChunks);
@@ -642,8 +777,7 @@ public class AiCommandService(
             return ApiResponse.Fail<IReadOnlyCollection<ChannelAttachmentResponse>>("Channel not found or access denied.", StatusCodes.Status404NotFound);
         }
 
-        var attachments = await dbContext.ChannelAttachments
-            .AsNoTracking()
+        var attachments = await WhereContextSourceAttachments(dbContext.ChannelAttachments.AsNoTracking())
             .Where(attachment => attachment.ChannelId == channelId)
             .OrderByDescending(attachment => attachment.CreatedAtUtc)
             .Take(30)
@@ -714,6 +848,7 @@ public class AiCommandService(
             .Where(message =>
                 message.Channel!.WorkspaceId == workspaceId
                 && !message.IsDeleted
+                && !message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix)
                 && (!message.Channel!.IsPrivate || message.Channel.Members.Any(member => member.UserId == userId)))
             .OrderByDescending(message => message.CreatedAtUtc)
             .Take(120)
@@ -788,6 +923,7 @@ public class AiCommandService(
             .Where(message =>
                 message.Channel!.WorkspaceId == workspaceId
                 && !message.IsDeleted
+                && !message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix)
                 && (!message.Channel!.IsPrivate || message.Channel.Members.Any(member => member.UserId == userId)))
             .OrderByDescending(message => message.CreatedAtUtc)
             .Take(180)
@@ -1055,10 +1191,18 @@ public class AiCommandService(
 
     private async Task<float[]> GenerateEmbeddingAsync(string input, AiProviderRuntime provider, CancellationToken cancellationToken)
     {
+        var embeddings = await GenerateEmbeddingsAsync([input], provider, cancellationToken);
+        return embeddings.Count == 1
+            ? embeddings[0]
+            : throw new AiProviderException($"Embedding provider returned {embeddings.Count} vectors for one input.");
+    }
+
+    private async Task<IReadOnlyList<float[]>> GenerateEmbeddingsAsync(IReadOnlyCollection<string> inputs, AiProviderRuntime provider, CancellationToken cancellationToken)
+    {
         var payload = new Dictionary<string, object?>
         {
             ["model"] = ResolveEmbeddingModel(provider),
-            ["input"] = new[] { TrimTo(input, 2000) }
+            ["input"] = inputs.Select(input => TrimTo(input, 2000)).ToArray()
         };
         var client = CreateAiHttpClient(provider);
         using var response = await PostProviderJsonAsync(client, "embeddings", payload, provider, "Embedding provider", cancellationToken);
@@ -1069,11 +1213,14 @@ public class AiCommandService(
         }
 
         using var document = JsonDocument.Parse(body);
-        var embeddingElement = document.RootElement
-            .GetProperty("data")[0]
-            .GetProperty("embedding");
-        return embeddingElement.EnumerateArray()
-            .Select(value => value.GetSingle())
+        return document.RootElement
+            .GetProperty("data")
+            .EnumerateArray()
+            .OrderBy(item => item.TryGetProperty("index", out var indexElement) ? indexElement.GetInt32() : 0)
+            .Select(item => item.GetProperty("embedding")
+                .EnumerateArray()
+                .Select(value => value.GetSingle())
+                .ToArray())
             .ToArray();
     }
 
@@ -1082,14 +1229,38 @@ public class AiCommandService(
         Guid userId,
         string result,
         GeneratedArtifact? generatedArtifact,
+        string artifactType,
+        IReadOnlyCollection<string> sources,
+        IReadOnlyCollection<string> suggestedTasks,
+        Guid? agentJobId,
+        bool requiresApproval,
+        Guid? createdTaskId,
+        string? createdTaskTitle,
         CancellationToken cancellationToken)
     {
+        var normalizedSources = (sources ?? Array.Empty<string>())
+            .Where(source => !string.IsNullOrWhiteSpace(source))
+            .Distinct()
+            .Take(20)
+            .ToArray();
+        var normalizedSuggestedTasks = (suggestedTasks ?? Array.Empty<string>())
+            .Where(task => !string.IsNullOrWhiteSpace(task))
+            .Distinct()
+            .Take(10)
+            .ToArray();
         var message = new Message
         {
             Id = Guid.NewGuid(),
             ChannelId = channel.Id,
             SenderId = userId,
-            Content = $"{IAiCommandService.ChannelAiMessagePrefix}{TrimTo(result, 3900)}"
+            Content = $"{IAiCommandService.ChannelAiMessagePrefix}{TrimTo(result, 3900)}",
+            AiArtifactType = artifactType,
+            AiSourcesJson = JsonSerializer.Serialize(normalizedSources, JsonOptions),
+            AiSuggestedTasksJson = JsonSerializer.Serialize(normalizedSuggestedTasks, JsonOptions),
+            AiAgentJobId = agentJobId,
+            AiRequiresApproval = requiresApproval,
+            AiCreatedTaskId = createdTaskId,
+            AiCreatedTaskTitle = createdTaskTitle
         };
 
         dbContext.Messages.Add(message);
@@ -1317,7 +1488,8 @@ public class AiCommandService(
         string systemPrompt,
         string userPrompt,
         AiProviderRuntime provider,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool responseFormatJson = false)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -1338,6 +1510,14 @@ public class AiCommandService(
                 }
             }
         };
+
+        if (responseFormatJson)
+        {
+            payload["response_format"] = new Dictionary<string, object?>
+            {
+                ["type"] = "json_object"
+            };
+        }
 
         return await PostChatCompletionAsync(payload, provider, cancellationToken);
     }
@@ -1466,12 +1646,20 @@ public class AiCommandService(
             - Cite sources for every important claim using the source labels shown below.
             - If attachment content is unavailable, write: "Attachment content was not available to TaskFlow AI."
             - Do not create tasks or claim tasks were created. For task requests, return suggested task titles only.
-            - If the user asks for a report or PPT, generate a structured outline only, not a real file.
-            - If the user asks for code, provide code advice or a patch plan as text only.
+            - Follow the requested artifact type. For report-outline, write DOCX-ready report content. For ppt-outline, write PPTX-ready slide content. For code-advice, write an implementation plan for the agent approval flow.
+            - Respect approval and indexing constraints already enforced by the backend. Do not claim to have approved, deployed, or applied changes.
             - If evidence is weak or missing, say so directly.
 
             Output format:
             Use compact Markdown. Include Summary, Action Items, Missing Context, and Sources only when that section has useful content.
+
+            Available channel AI tools:
+            - summary: summarize recent channel and selected context.
+            - requirements: extract requirements, deliverables, grading criteria, and acceptance checks.
+            - task-suggestions: propose task titles only.
+            - report-outline: generate content for a DOCX report artifact from the selected indexed attachments.
+            - ppt-outline: generate content for a PPTX presentation artifact from the selected indexed attachments.
+            - code-advice: create a code-advice agent job that requires approval.
 
             Requested artifact type: {artifactType}
             User command:
@@ -1485,21 +1673,94 @@ public class AiCommandService(
             """;
     }
 
+    private static string BuildChannelTaskSuggestionPrompt(string channelName, string command, string messageContext, string ragContext)
+    {
+        return $"""
+            You are @TaskFlow AI inside channel #{channelName}.
+            The backend has already filtered context to the current user's workspace/channel permissions.
+            Use only the provided context below. Do not infer file, folder, image, PDF, URL, or attachment contents unless extracted text or image summaries are present below.
+
+            Return only valid JSON with one top-level property named "tasks".
+            The "tasks" value must be an array of strings, for example two verb-led task title strings.
+
+            Task suggestion rules:
+            - Provide 3 to 5 concise task titles.
+            - Each task title must be one actionable title, 8 to 90 characters.
+            - Do not include Markdown, prose, numbering, headings, source labels, explanations, or created-task claims.
+            - Do not create tasks. The frontend will create tasks only after user approval.
+
+            User command:
+            {command}
+
+            Recent channel messages:
+            {messageContext}
+
+            Retrieved attachment/file/image context:
+            {ragContext}
+            """;
+    }
+
     private static IReadOnlyCollection<string> ExtractSuggestedTasks(string result)
     {
-        return result
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(line => Regex.Replace(line, @"^[-*\d\.\)\s]+", string.Empty).Trim())
-            .Where(line => line.Length >= 6 && line.Length <= 180)
-            .Where(line =>
-                line.Contains("task", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("todo", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("follow", StringComparison.OrdinalIgnoreCase)
-                || line.Contains('任')
-                || line.Contains('做')
-                || line.Contains('跟'))
-            .Take(5)
-            .ToArray();
+        try
+        {
+            using var document = JsonDocument.Parse(NormalizeJsonObject(result));
+            if (!document.RootElement.TryGetProperty("tasks", out var tasksElement)
+                || tasksElement.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            return tasksElement
+                .EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => NormalizeTaskTitle(item.GetString() ?? string.Empty))
+                .Where(title => title.Length >= 8 && title.Length <= 90)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(5)
+                .ToArray();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static string NormalizeJsonObject(string result)
+    {
+        var text = result.Trim();
+        if (text.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text[7..].Trim();
+        }
+        else if (text.StartsWith("```", StringComparison.Ordinal))
+        {
+            text = text[3..].Trim();
+        }
+
+        if (text.EndsWith("```", StringComparison.Ordinal))
+        {
+            text = text[..^3].Trim();
+        }
+
+        return text;
+    }
+
+    private static string NormalizeTaskTitle(string title)
+    {
+        return Regex.Replace(title.Trim(), @"\s+", " ");
+    }
+
+    private static string FormatSuggestedTasks(IReadOnlyCollection<string> suggestedTasks)
+    {
+        var builder = new StringBuilder("Suggested tasks");
+        foreach (var task in suggestedTasks)
+        {
+            builder.AppendLine();
+            builder.Append("- ").Append(task);
+        }
+
+        return builder.ToString();
     }
 
     private static string ExtractTaskTitle(string result, string command)
@@ -1516,25 +1777,39 @@ public class AiCommandService(
 
     private static string ResolveArtifactType(string command)
     {
+        if (IsConversationSummaryCommand(command))
+        {
+            return "summary";
+        }
+
         if (command.Contains("PPT", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("deck", StringComparison.OrdinalIgnoreCase)
             || command.Contains("slides", StringComparison.OrdinalIgnoreCase)
             || command.Contains("presentation", StringComparison.OrdinalIgnoreCase)
-            || command.Contains("幻灯片", StringComparison.OrdinalIgnoreCase))
+            || command.Contains("powerpoint", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("幻灯片", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("演示", StringComparison.OrdinalIgnoreCase))
         {
             return "ppt-outline";
         }
 
         if (command.Contains("report", StringComparison.OrdinalIgnoreCase)
-            || command.Contains("报告", StringComparison.OrdinalIgnoreCase))
+            || command.Contains("docx", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("document", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("报告", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("文档", StringComparison.OrdinalIgnoreCase))
         {
             return "report-outline";
         }
 
         if (command.Contains("requirement", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("rubric", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("criteria", StringComparison.OrdinalIgnoreCase)
             || command.Contains("deliverable", StringComparison.OrdinalIgnoreCase)
             || command.Contains("acceptance", StringComparison.OrdinalIgnoreCase)
             || command.Contains("grading", StringComparison.OrdinalIgnoreCase)
             || command.Contains("需求", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("要求", StringComparison.OrdinalIgnoreCase)
             || command.Contains("交付", StringComparison.OrdinalIgnoreCase)
             || command.Contains("验收", StringComparison.OrdinalIgnoreCase)
             || command.Contains("评分", StringComparison.OrdinalIgnoreCase))
@@ -1548,7 +1823,15 @@ public class AiCommandService(
         }
 
         if (command.Contains("code", StringComparison.OrdinalIgnoreCase)
-            || command.Contains("代码", StringComparison.OrdinalIgnoreCase))
+            || command.Contains("implementation", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("patch", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("bug", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("fix", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("architecture", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("代码", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("修复", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("实现", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("架构", StringComparison.OrdinalIgnoreCase))
         {
             return "code-advice";
         }
@@ -1574,8 +1857,10 @@ public class AiCommandService(
     private static bool IsTaskCommand(string command)
     {
         return Regex.IsMatch(command, @"\b(tasks?|todos?)\b", RegexOptions.IgnoreCase)
+            || Regex.IsMatch(command, @"\b(action items?|checklist)\b", RegexOptions.IgnoreCase)
             || command.Contains("任务", StringComparison.OrdinalIgnoreCase)
-            || command.Contains("待办", StringComparison.OrdinalIgnoreCase);
+            || command.Contains("待办", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("行动项", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsConversationSummaryCommand(string command)
@@ -1713,22 +1998,60 @@ public class AiCommandService(
 
     private string ResolveMainModel(AiProviderRuntime provider)
     {
+        if (IsGeminiProvider(provider) || IsGitHubModelsProvider(provider))
+        {
+            return provider.Model;
+        }
+
         return configuration["AI:MainModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private string ResolveProModel(AiProviderRuntime provider)
     {
+        if (IsGeminiProvider(provider) || IsGitHubModelsProvider(provider))
+        {
+            return provider.Model;
+        }
+
         return configuration["AI:ProModel"] ?? configuration["AI:MainModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private string ResolveVisionModel(AiProviderRuntime provider)
     {
+        if (IsGeminiProvider(provider) || IsGitHubModelsProvider(provider))
+        {
+            return provider.Model;
+        }
+
         return configuration["AI:VisionModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private string ResolveEmbeddingModel(AiProviderRuntime provider)
     {
+        if (IsGeminiProvider(provider))
+        {
+            return configuration["AI:GeminiEmbeddingModel"] ?? "gemini-embedding-001";
+        }
+
+        if (IsGitHubModelsProvider(provider))
+        {
+            return configuration["AI:GitHubEmbeddingModel"] ?? "openai/text-embedding-3-small";
+        }
+
         return configuration["AI:EmbeddingModel"] ?? configuration["AI:Model"] ?? provider.Model;
+    }
+
+    private static bool IsGeminiProvider(AiProviderRuntime provider)
+    {
+        return provider.ProviderName.Contains("Google", StringComparison.OrdinalIgnoreCase)
+            || provider.ProviderName.Contains("Gemini", StringComparison.OrdinalIgnoreCase)
+            || provider.BaseUrl.Contains("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGitHubModelsProvider(AiProviderRuntime provider)
+    {
+        return provider.ProviderName.Contains("GitHub", StringComparison.OrdinalIgnoreCase)
+            || provider.BaseUrl.Contains("models.github.ai", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string TrimProviderError(string body, string apiKey)
@@ -1868,6 +2191,39 @@ public class AiCommandService(
         return string.IsNullOrWhiteSpace(secret)
             ? value
             : value.Replace(secret, "[redacted]", StringComparison.Ordinal);
+    }
+
+    private static bool IsAiGeneratedContent(string? content)
+    {
+        return !string.IsNullOrWhiteSpace(content)
+            && content.StartsWith(IAiCommandService.ChannelAiMessagePrefix, StringComparison.Ordinal);
+    }
+
+    private static bool IsAiGeneratedAttachment(ChannelAttachment attachment)
+    {
+        return IsAiGeneratedContent(attachment.Message?.Content);
+    }
+
+    private static IQueryable<ChannelAttachment> WhereContextSourceAttachments(IQueryable<ChannelAttachment> query)
+    {
+        return query.Where(attachment =>
+            attachment.Message == null
+            || !attachment.Message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix));
+    }
+
+    private static IReadOnlyCollection<Guid>? ResolveRequestedAttachmentIds(AiChannelCommandRequest request)
+    {
+        if (request.AttachmentIds is not null)
+        {
+            return request.AttachmentIds
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .ToArray();
+        }
+
+        return request.AttachmentId.HasValue && request.AttachmentId.Value != Guid.Empty
+            ? [request.AttachmentId.Value]
+            : null;
     }
 
     private sealed record KnowledgeSnippet(string Source, string Text);

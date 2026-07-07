@@ -1,8 +1,7 @@
-# ppt-master Vendored Source
+# ppt-master source
 
 - Upstream: https://github.com/hugohe3/ppt-master
-- License: MIT, copied in `LICENSE`
-- Vendored content: runtime subset required by TaskFlow to convert generated SVG slides into PPTX artifacts.
-- TaskFlow entrypoint: `taskflow_ppt_master.py`
-
-This is not the full upstream repository. TaskFlow uses this vendored skill as the PPT runtime boundary. The TaskFlow adapter parses Agent markdown, fails on empty slides, writes an inspectable SVG project for traceability, and renders editable PowerPoint text boxes through the `python-pptx` dependency declared by upstream `requirements.txt`.
+- Path: skills/ppt-master
+- Tag: v3.1.0
+- Commit: b8808a3a17377ea4e7fd79bdad096bab613f86b9
+- Local addition: taskflow_ppt_master.py adapts TaskFlow Agent markdown into a PPT Master SVG project before running scripts/svg_to_pptx.py.

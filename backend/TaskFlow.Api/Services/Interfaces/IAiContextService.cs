@@ -7,8 +7,9 @@ public interface IAiContextService
     Task<ApiResponse<AiChannelContext>> BuildChannelContextAsync(
         Guid channelId,
         string query,
-        Guid? attachmentId = null,
-        CancellationToken cancellationToken = default);
+        IReadOnlyCollection<Guid>? attachmentIds = null,
+        CancellationToken cancellationToken = default,
+        bool channelOnly = false);
 }
 
 public sealed record AiChannelContext(

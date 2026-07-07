@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TaskFlow.Api.DTOs.AI;
 using TaskFlow.Api.DTOs.Channels;
 using TaskFlow.Api.DTOs.Messages;
@@ -11,6 +12,8 @@ namespace TaskFlow.Api.Services;
 
 public static class MappingExtensions
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     public static WorkspaceResponse ToResponse(this Workspace workspace)
     {
         return new WorkspaceResponse
@@ -54,6 +57,13 @@ public static class MappingExtensions
             IsDeleted = message.IsDeleted,
             CreatedAtUtc = message.CreatedAtUtc,
             EditedAtUtc = message.EditedAtUtc,
+            AiArtifactType = message.AiArtifactType,
+            AgentJobId = message.AiAgentJobId,
+            RequiresApproval = message.AiRequiresApproval,
+            Sources = ParseJsonStringArray(message.AiSourcesJson),
+            SuggestedTasks = ParseJsonStringArray(message.AiSuggestedTasksJson),
+            CreatedTaskId = message.AiCreatedTaskId,
+            CreatedTaskTitle = message.AiCreatedTaskTitle,
             Attachments = message.Attachments
                 .OrderBy(attachment => attachment.CreatedAtUtc)
                 .Select(attachment => attachment.ToResponse())
@@ -130,5 +140,22 @@ public static class MappingExtensions
             IsRead = notification.IsRead,
             CreatedAtUtc = notification.CreatedAtUtc
         };
+    }
+
+    private static IReadOnlyCollection<string> ParseJsonStringArray(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return [];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<string[]>(value, JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 }

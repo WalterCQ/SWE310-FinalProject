@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""TaskFlow adapter for the vendored PPT Master runtime.
+"""TaskFlow adapter for PPT Master.
 
-Input: markdown text from TaskFlow Agent.
-Output: a PPTX generated from simple editable SVG slides through ppt-master's
-svg_to_pptx runtime.
+The worker passes markdown from DeckSubAgent. This adapter builds a PPT Master
+project (svg_output + notes) and delegates the final editable deck generation to
+the upstream svg_to_pptx runtime.
 """
 
 from __future__ import annotations
@@ -11,16 +11,17 @@ from __future__ import annotations
 import argparse
 import html
 import re
+import subprocess
 import sys
 import textwrap
-from zipfile import ZipFile
 from pathlib import Path
+from zipfile import ZipFile
 
-from pptx import Presentation
-from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
+
+CANVAS_WIDTH = 1280
+CANVAS_HEIGHT = 720
+MAX_SLIDES = 12
+MAX_BULLETS = 4
 
 
 def strip_front_matter(lines: list[str]) -> list[str]:
@@ -34,91 +35,55 @@ def strip_front_matter(lines: list[str]) -> list[str]:
     return lines
 
 
-def split_markdown(markdown: str) -> list[tuple[str, list[str]]]:
+def split_markdown(markdown: str) -> list[dict[str, object]]:
     lines = strip_front_matter([line.rstrip().lstrip("\ufeff") for line in markdown.splitlines()])
-    slides: list[tuple[str, list[str]]] = []
-    title: str | None = None
-    body: list[str] = []
+    slides: list[dict[str, object]] = []
+    current_title: str | None = None
+    current_body: list[str] = []
 
     def flush_slide() -> None:
-        if title is None:
+        nonlocal current_title, current_body
+        if current_title is None:
             return
 
-        if not body:
-            raise ValueError(f"Slide '{title}' has no content.")
-
-        slides.append((title, body.copy()))
+        bullets, sources, notes = parse_body(current_body)
+        slides.append({
+            "title": current_title,
+            "bullets": bullets,
+            "sources": sources,
+            "notes": notes,
+        })
 
     for line in lines:
         heading = re.match(r"^#{1,3}\s+(.+)$", line)
         if heading:
             flush_slide()
-            body = []
-            title = heading.group(1).strip()
+            current_title = heading.group(1).strip()
+            current_body = []
             continue
 
         stripped = line.strip()
         if stripped:
-            body.append(stripped)
+            current_body.append(stripped)
 
     flush_slide()
     if not slides:
-        raise ValueError("No non-empty slides were generated from markdown.")
+        raise ValueError("Deck markdown did not contain any non-empty slides.")
 
-    return [(item_title, item_body[:8]) for item_title, item_body in slides[:10]]
+    titles = [str(slide["title"]) for slide in slides]
+    if len(titles) != len(set(titles)):
+        raise ValueError("Deck markdown contains duplicate slide titles.")
 
-
-def svg_text_lines(text: str, max_chars: int) -> list[str]:
-    normalized = re.sub(r"\s+", " ", text).strip()
-    return textwrap.wrap(normalized, width=max_chars) or [""]
-
-
-def write_svg_slide(path: Path, title: str, body: list[str], index: int) -> None:
-    title_lines = svg_text_lines(title, 36)[:2]
-    content_lines: list[str] = []
-    visible_body = [item for item in body if not item.lower().startswith("notes:")]
-    for item in visible_body:
-        marker = "• " if item.startswith(("-", "*")) else ""
-        clean = re.sub(r"^[-*]\s+", "", item)
-        wrapped = svg_text_lines(clean, 68)
-        if wrapped:
-            content_lines.append(marker + wrapped[0])
-            content_lines.extend("  " + line for line in wrapped[1:3])
-    content_lines = content_lines[:14]
-    if not content_lines:
-        raise ValueError(f"Slide '{title}' has no visible content.")
-
-    title_text = "\n".join(
-        f'<text x="80" y="{170 + idx * 48}" font-family="Aptos, Arial, sans-serif" font-size="42" font-weight="700" fill="#111827">{html.escape(line)}</text>'
-        for idx, line in enumerate(title_lines)
-    )
-    content_text = "\n".join(
-        f'<text x="96" y="{305 + idx * 34}" font-family="Aptos, Arial, sans-serif" font-size="25" fill="#374151">{html.escape(line)}</text>'
-        for idx, line in enumerate(content_lines)
-    )
-
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-  <rect x="0" y="0" width="1280" height="720" fill="#fbfaf7"/>
-  <rect x="0" y="0" width="1280" height="88" fill="#123f3c"/>
-  <rect x="80" y="126" width="74" height="8" rx="4" fill="#00a99d"/>
-  <text x="80" y="56" font-family="Aptos, Arial, sans-serif" font-size="23" font-weight="700" fill="#e6fffb">TaskFlow AI</text>
-  <text x="1180" y="56" text-anchor="end" font-family="Aptos, Arial, sans-serif" font-size="18" fill="#b8e5df">{index:02d}</text>
-  {title_text}
-  <rect x="80" y="245" width="1120" height="370" rx="12" fill="#ffffff" stroke="#d8d5ce"/>
-  {content_text}
-  <text x="80" y="668" font-family="Aptos, Arial, sans-serif" font-size="17" fill="#6b7280">Generated from approved TaskFlow context</text>
-</svg>
-'''
-    path.write_text(svg, encoding="utf-8")
+    return slides[:MAX_SLIDES]
 
 
-def parse_slide_body(body: list[str]) -> tuple[list[str], str, str]:
+def parse_body(lines: list[str]) -> tuple[list[str], str, str]:
     bullets: list[str] = []
     sources = ""
     notes = ""
 
-    for item in body:
-        clean = re.sub(r"^[-*]\s+", "", item).strip()
+    for line in lines:
+        clean = re.sub(r"^[-*]\s+", "", line).strip()
         if not clean:
             continue
 
@@ -133,115 +98,129 @@ def parse_slide_body(body: list[str]) -> tuple[list[str], str, str]:
         bullets.append(clean)
 
     if not bullets:
-        raise ValueError("Slide has no visible bullet content.")
-    if len(bullets) > 4:
-        raise ValueError("Slide has more than 4 visible bullets.")
+        raise ValueError("Each slide must include at least one visible bullet.")
 
-    return bullets, sources or "S1", notes
+    return bullets[:MAX_BULLETS], sources or "Source list unavailable", notes
 
 
-def add_textbox(
-    slide,
-    left,
-    top,
-    width,
-    height,
-    text: str,
-    font_size: int,
-    color: RGBColor,
-    bold: bool = False,
-    align=PP_ALIGN.LEFT,
-):
-    shape = slide.shapes.add_textbox(left, top, width, height)
-    frame = shape.text_frame
-    frame.clear()
-    paragraph = frame.paragraphs[0]
-    paragraph.alignment = align
-    run = paragraph.add_run()
-    run.text = text
-    run.font.name = "Aptos"
-    run.font.size = Pt(font_size)
-    run.font.bold = bold
-    run.font.color.rgb = color
-    return shape
+def wrap_lines(text: str, width: int, max_lines: int) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    return textwrap.wrap(normalized, width=width)[:max_lines] or [""]
 
 
-def build_pptx(markdown_path: Path, output_path: Path) -> None:
+def safe_stem(index: int, title: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", title).strip("_").lower()[:46] or "slide"
+    return f"{index:02d}_{slug}"
+
+
+def svg_text(x: int, y: int, text: str, size: int, fill: str, weight: int = 400, anchor: str = "start") -> str:
+    return (
+        f'<text x="{x}" y="{y}" text-anchor="{anchor}" '
+        f'font-family="Aptos, Arial, sans-serif" font-size="{size}" '
+        f'font-weight="{weight}" fill="{fill}">{html.escape(text)}</text>'
+    )
+
+
+def write_svg_slide(path: Path, slide: dict[str, object], index: int) -> None:
+    title = str(slide["title"])
+    bullets = [str(item) for item in slide["bullets"]]
+    sources = str(slide["sources"])
+
+    title_lines = wrap_lines(title, 36, 2)
+    bullet_lines: list[tuple[str, bool]] = []
+    for bullet in bullets:
+        wrapped = wrap_lines(bullet, 70, 3)
+        bullet_lines.append((wrapped[0], True))
+        bullet_lines.extend((line, False) for line in wrapped[1:])
+
+    bullet_lines = bullet_lines[:12]
+    title_svg = "\n  ".join(
+        svg_text(86, 162 + offset * 48, line, 42, "#101828", 760)
+        for offset, line in enumerate(title_lines)
+    )
+    bullet_svg = "\n  ".join(
+        (
+            f'<circle cx="106" cy="{302 + offset * 37 - 8}" r="5" fill="#0e9384"/>'
+            if is_first
+            else ""
+        )
+        + svg_text(126 if is_first else 140, 302 + offset * 37, line, 25, "#344054", 430)
+        for offset, (line, is_first) in enumerate(bullet_lines)
+    )
+    sources_text = "; ".join(wrap_lines(sources, 82, 2))
+
+    path.write_text(
+        f'''<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS_WIDTH}" height="{CANVAS_HEIGHT}" viewBox="0 0 {CANVAS_WIDTH} {CANVAS_HEIGHT}">
+  <rect id="background" x="0" y="0" width="1280" height="720" fill="#fbfaf7"/>
+  <rect id="header" x="0" y="0" width="1280" height="88" fill="#123f3c"/>
+  <rect id="accent" x="86" y="112" width="78" height="8" rx="4" fill="#0e9384"/>
+  {svg_text(86, 56, "TaskFlow AI", 23, "#e6fffb", 760)}
+  {svg_text(1188, 56, f"{index:02d}", 18, "#b8e5df", 600, "end")}
+  <g id="title">
+  {title_svg}
+  </g>
+  <g id="content-card">
+    <rect x="86" y="244" width="1108" height="360" rx="16" fill="#ffffff" stroke="#d8d5ce" stroke-width="2"/>
+  </g>
+  <g id="bullet-list">
+  {bullet_svg}
+  </g>
+  <g id="source-band">
+    <rect x="106" y="556" width="650" height="34" rx="17" fill="#e6f7f5" stroke="#b3e1dc" stroke-width="1"/>
+    {svg_text(126, 579, "Sources: " + sources_text, 14, "#123f3c", 700)}
+  </g>
+  {svg_text(86, 674, "Generated from approved TaskFlow context", 17, "#667085", 500)}
+</svg>
+''',
+        encoding="utf-8",
+    )
+
+
+def build_project(markdown_path: Path, project_dir: Path) -> int:
     slides = split_markdown(markdown_path.read_text(encoding="utf-8"))
-    titles = [title for title, _ in slides]
-    if len(titles) != len(set(titles)):
-        raise ValueError("Deck contains duplicate slide titles.")
+    svg_dir = project_dir / "svg_output"
+    notes_dir = project_dir / "notes"
+    svg_dir.mkdir(parents=True, exist_ok=True)
+    notes_dir.mkdir(parents=True, exist_ok=True)
 
-    prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
-    blank_layout = prs.slide_layouts[6]
+    for index, slide in enumerate(slides, start=1):
+        stem = safe_stem(index, str(slide["title"]))
+        write_svg_slide(svg_dir / f"{stem}.svg", slide, index)
+        notes = str(slide["notes"]) or "\n".join(str(item) for item in slide["bullets"])
+        notes_dir.joinpath(f"{stem}.md").write_text(notes, encoding="utf-8")
 
-    teal = RGBColor(18, 63, 60)
-    accent = RGBColor(0, 169, 157)
-    ink = RGBColor(17, 24, 39)
-    muted = RGBColor(75, 85, 99)
-    surface = RGBColor(255, 255, 255)
-    background = RGBColor(251, 250, 247)
-    border = RGBColor(216, 213, 206)
+    return len(slides)
 
-    for index, (title, body) in enumerate(slides, start=1):
-        bullets, sources, notes = parse_slide_body(body)
-        slide = prs.slides.add_slide(blank_layout)
-        slide.background.fill.solid()
-        slide.background.fill.fore_color.rgb = background
 
-        header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, Inches(0.92))
-        header.fill.solid()
-        header.fill.fore_color.rgb = teal
-        header.line.fill.background()
+def run_svg_to_pptx(skill_dir: Path, project_dir: Path, output_path: Path) -> str:
+    script = skill_dir / "scripts" / "svg_to_pptx.py"
+    if not script.exists():
+        raise ValueError("ppt-master svg_to_pptx.py is missing.")
 
-        add_textbox(slide, Inches(0.8), Inches(0.24), Inches(3.0), Inches(0.35), "TaskFlow AI", 18, RGBColor(230, 255, 251), bold=True)
-        add_textbox(slide, Inches(11.65), Inches(0.24), Inches(0.9), Inches(0.35), f"{index:02d}", 14, RGBColor(184, 229, 223), align=PP_ALIGN.RIGHT)
+    command = [
+        sys.executable,
+        str(script),
+        str(project_dir),
+        "-o",
+        str(output_path),
+        "-s",
+        "output",
+        "-f",
+        "ppt169",
+        "--only",
+        "native",
+        "--no-compat",
+        "-a",
+        "none",
+        "-t",
+        "none",
+    ]
+    completed = subprocess.run(command, cwd=str(skill_dir), text=True, capture_output=True, check=False)
+    output = "\n".join(part for part in [completed.stdout.strip(), completed.stderr.strip()] if part)
+    if completed.returncode != 0:
+        raise ValueError(f"ppt-master svg_to_pptx failed with exit code {completed.returncode}: {output[-2000:]}")
 
-        accent_bar = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(1.3), Inches(0.76), Inches(0.08))
-        accent_bar.fill.solid()
-        accent_bar.fill.fore_color.rgb = accent
-        accent_bar.line.fill.background()
-
-        add_textbox(slide, Inches(0.8), Inches(1.62), Inches(11.7), Inches(0.9), title, 34, ink, bold=True)
-
-        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(2.55), Inches(11.7), Inches(3.75))
-        card.fill.solid()
-        card.fill.fore_color.rgb = surface
-        card.line.color.rgb = border
-        card.line.width = Pt(1)
-
-        bullet_box = slide.shapes.add_textbox(Inches(1.15), Inches(2.9), Inches(10.95), Inches(2.65))
-        frame = bullet_box.text_frame
-        frame.clear()
-        frame.word_wrap = True
-        for bullet_index, bullet in enumerate(bullets):
-            paragraph = frame.paragraphs[0] if bullet_index == 0 else frame.add_paragraph()
-            paragraph.text = f"- {bullet}"
-            paragraph.font.name = "Aptos"
-            paragraph.font.size = Pt(22)
-            paragraph.font.color.rgb = muted
-            paragraph.space_after = Pt(10)
-
-        source_box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.15), Inches(5.6), Inches(4.6), Inches(0.38))
-        source_box.fill.solid()
-        source_box.fill.fore_color.rgb = RGBColor(230, 247, 245)
-        source_box.line.color.rgb = RGBColor(179, 225, 220)
-        add_textbox(slide, Inches(1.28), Inches(5.68), Inches(4.3), Inches(0.22), f"Sources: {sources}", 11, teal, bold=True)
-
-        add_textbox(slide, Inches(0.8), Inches(6.85), Inches(6.8), Inches(0.25), "Generated from approved TaskFlow context", 12, RGBColor(107, 114, 128))
-
-        notes_frame = slide.notes_slide.notes_text_frame
-        notes_frame.clear()
-        notes_frame.text = notes or "\n".join(bullets)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    prs.save(output_path)
-
-    actual_slide_count = count_pptx_slides(output_path)
-    if actual_slide_count != len(slides):
-        raise ValueError(f"ppt-master rendered {actual_slide_count} slides from {len(slides)} markdown slides.")
+    return output
 
 
 def count_pptx_slides(path: Path) -> int:
@@ -253,23 +232,8 @@ def count_pptx_slides(path: Path) -> int:
         )
 
 
-def build_project(markdown_path: Path, project_dir: Path) -> None:
-    markdown = markdown_path.read_text(encoding="utf-8")
-    svg_dir = project_dir / "svg_output"
-    notes_dir = project_dir / "notes"
-    svg_dir.mkdir(parents=True, exist_ok=True)
-    notes_dir.mkdir(parents=True, exist_ok=True)
-
-    for index, (title, body) in enumerate(split_markdown(markdown), start=1):
-        stem = f"{index:02d}_{re.sub(r'[^a-zA-Z0-9]+', '_', title).strip('_')[:40] or 'slide'}"
-        write_svg_slide(svg_dir / f"{stem}.svg", title, body, index)
-        notes_dir.joinpath(f"{stem}.md").write_text(
-            "\n".join([f"# {title}", "", *body]),
-            encoding="utf-8")
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate a PPTX from TaskFlow Agent markdown.")
+    parser = argparse.ArgumentParser(description="Generate editable PPTX from TaskFlow Agent markdown.")
     parser.add_argument("input_markdown")
     parser.add_argument("output_pptx")
     parser.add_argument("--workdir", default=None)
@@ -278,13 +242,13 @@ def main() -> int:
     skill_dir = Path(__file__).resolve().parent
     markdown_path = Path(args.input_markdown).resolve()
     output_path = Path(args.output_pptx).resolve()
-    project_dir = Path(args.workdir).resolve() if args.workdir else output_path.parent / "ppt-master-project"
+    project_dir = Path(args.workdir).resolve() if args.workdir else output_path.parent / "taskflow_ppt169"
     project_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        build_project(markdown_path, project_dir)
-        build_pptx(markdown_path, output_path)
+        expected_slides = build_project(markdown_path, project_dir)
+        execution_log = run_svg_to_pptx(skill_dir, project_dir, output_path)
     except ValueError as exc:
         sys.stderr.write(f"{exc}\n")
         return 3
@@ -293,6 +257,14 @@ def main() -> int:
         sys.stderr.write(f"ppt-master did not create output: {output_path}\n")
         return 2
 
+    actual_slides = count_pptx_slides(output_path)
+    if actual_slides != expected_slides:
+        sys.stderr.write(f"ppt-master rendered {actual_slides} slides from {expected_slides} markdown slides.\n")
+        return 4
+
+    if execution_log:
+        print(execution_log)
+    print(f"TaskFlow PPT Master generated {actual_slides} editable slides.")
     return 0
 
 

@@ -64,9 +64,11 @@ public class AgentService(
         {
             var attachment = await dbContext.ChannelAttachments
                 .AsNoTracking()
+                .Include(item => item.Message)
                 .FirstOrDefaultAsync(item => item.Id == request.AttachmentId.Value, cancellationToken);
             if (attachment is null
                 || attachment.WorkspaceId != request.WorkspaceId
+                || IsAiGeneratedContent(attachment.Message?.Content)
                 || !await permissionService.CanAccessChannel(userId, attachment.ChannelId))
             {
                 return ApiResponse.Fail<AgentJobResponse>("Attachment not found or access denied.", StatusCodes.Status404NotFound);
@@ -452,5 +454,11 @@ public class AgentService(
         return normalized is "docx" or "pptx" or "patch" or "pull-request"
             ? normalized
             : null;
+    }
+
+    private static bool IsAiGeneratedContent(string? content)
+    {
+        return !string.IsNullOrWhiteSpace(content)
+            && content.StartsWith(IAiCommandService.ChannelAiMessagePrefix, StringComparison.Ordinal);
     }
 }

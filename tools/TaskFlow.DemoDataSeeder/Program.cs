@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Data.DemoData;
 using TaskFlow.Api.Models;
+using TaskFlow.Api.Services.Interfaces;
 
 var connectionString = Environment.GetEnvironmentVariable("TASKFLOW_AZURE_SQL_CONNECTION_STRING");
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -33,6 +34,15 @@ try
         return 1;
     }
 
+    if (args.Contains("--clear-channel-ai", StringComparer.OrdinalIgnoreCase))
+    {
+        await using var cleanupTransaction = await dbContext.Database.BeginTransactionAsync();
+        var deleted = await ClearChannelAiContentAsync(dbContext);
+        await cleanupTransaction.CommitAsync();
+        Console.WriteLine($"Deleted {deleted.MessageCount} AI channel messages and {deleted.AttachmentCount} generated attachments.");
+        return 0;
+    }
+
     await using var transaction = await dbContext.Database.BeginTransactionAsync();
 
     var userIds = await SeedUsersAsync(dbContext);
@@ -60,6 +70,43 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"Demo data seeding failed: {ex.Message}");
     return 1;
+}
+
+static async Task<CleanupResult> ClearChannelAiContentAsync(AppDbContext dbContext)
+{
+    var aiMessageIds = await dbContext.Messages
+        .Where(message => message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix))
+        .Select(message => message.Id)
+        .ToArrayAsync();
+
+    var generatedAttachments = await dbContext.ChannelAttachments
+        .Include(attachment => attachment.Blob)
+        .Where(attachment =>
+            attachment.Summary.StartsWith("AI-generated ")
+            || (attachment.MessageId.HasValue && aiMessageIds.Contains(attachment.MessageId.Value)))
+        .ToListAsync();
+    var generatedAttachmentIds = generatedAttachments.Select(attachment => attachment.Id).ToArray();
+
+    if (generatedAttachmentIds.Length > 0)
+    {
+        var generatedKnowledgeChunks = await dbContext.ChannelKnowledgeChunks
+            .Where(chunk => chunk.AttachmentId.HasValue && generatedAttachmentIds.Contains(chunk.AttachmentId.Value))
+            .ToListAsync();
+        dbContext.ChannelKnowledgeChunks.RemoveRange(generatedKnowledgeChunks);
+        dbContext.ChannelAttachmentBlobs.RemoveRange(generatedAttachments.Select(attachment => attachment.Blob).OfType<ChannelAttachmentBlob>());
+        dbContext.ChannelAttachments.RemoveRange(generatedAttachments);
+    }
+
+    if (aiMessageIds.Length > 0)
+    {
+        var aiMessages = await dbContext.Messages
+            .Where(message => aiMessageIds.Contains(message.Id))
+            .ToListAsync();
+        dbContext.Messages.RemoveRange(aiMessages);
+    }
+
+    await dbContext.SaveChangesAsync();
+    return new CleanupResult(aiMessageIds.Length, generatedAttachments.Count);
 }
 
 static async Task<Dictionary<string, Guid>> SeedUsersAsync(AppDbContext dbContext)
@@ -431,3 +478,5 @@ internal sealed record SeedActivityLog(
     Guid EntityId,
     string Details,
     int HoursAgo);
+
+internal sealed record CleanupResult(int MessageCount, int AttachmentCount);

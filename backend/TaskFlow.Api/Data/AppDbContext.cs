@@ -98,6 +98,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<Message>(entity =>
         {
             entity.Property(message => message.Content).HasMaxLength(4000);
+            entity.Property(message => message.AiArtifactType).HasMaxLength(80);
+            entity.Property(message => message.AiCreatedTaskTitle).HasMaxLength(200);
             entity.HasOne(message => message.Channel)
                 .WithMany(channel => channel.Messages)
                 .HasForeignKey(message => message.ChannelId)
@@ -300,6 +302,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.Property(job => job.ErrorMessage).HasMaxLength(2000);
             entity.Property(job => job.LockedBy).HasMaxLength(120);
             entity.Property(job => job.ArtifactTarget).HasMaxLength(40);
+            entity.Property(job => job.ContextAttachmentIdsJson);
             entity.HasOne(job => job.Workspace)
                 .WithMany()
                 .HasForeignKey(job => job.WorkspaceId)
