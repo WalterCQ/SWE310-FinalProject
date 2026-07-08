@@ -9,17 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@microsoft/signalr": "latest",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "axios": "latest",
+    "lucide-react": "latest",
+    "motion": "^12.42.2",
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "^10.1.0",
     "react-router-dom": "latest",
-    "axios": "latest",
     "recharts": "latest",
-    "lucide-react": "latest",
-    "motion": "^12.42.2",
-    "@microsoft/signalr": "latest"
-  },
-  "devDependencies": {}
+    "remark-gfm": "^4.0.1",
+    "vite": "latest"
+  }
 }

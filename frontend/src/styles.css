@@ -1166,6 +1166,43 @@ tr.target-highlight td { background: #e8f7f5; }
   border: 0;
   background: transparent;
 }
+.markdown-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 6px 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.markdown-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.45;
+  background: #fff;
+  color: var(--ink);
+}
+.markdown-table-wrap th,
+.markdown-table-wrap td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  text-align: left;
+}
+.markdown-table-wrap th:last-child,
+.markdown-table-wrap td:last-child {
+  border-right: none;
+}
+.markdown-table-wrap tr:last-child td {
+  border-bottom: none;
+}
+.markdown-table-wrap th {
+  background: #f8f9fa;
+  font-weight: 700;
+  color: var(--ink);
+}
+.markdown-table-wrap tr:nth-child(even) {
+  background: #fafbfc;
+}
 .message-time { margin-left: 5px; }
 .message-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
 .message-sources span { color: var(--muted); font-size: 12px; font-weight: 850; }

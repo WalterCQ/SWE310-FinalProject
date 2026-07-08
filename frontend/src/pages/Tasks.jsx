@@ -159,7 +159,7 @@ export default function Tasks() {
 
     if (nextSearch !== search) setSearch(nextSearch);
     if (nextProjectId && nextProjectId !== selectedProjectId) setSelectedProjectId(nextProjectId);
-  }, [searchParams, search, selectedProjectId]);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const nextParams = {};
