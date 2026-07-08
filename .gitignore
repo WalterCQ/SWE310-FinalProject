@@ -3,29 +3,51 @@ bin/
 obj/
 frontend/dist/
 frontend/node_modules/
+backend/**/bin/
+backend/**/obj/
+tools/**/bin/
+tools/**/obj/
 
-# User-specific IDE files
+# User-specific IDE files and OS files
 .vs/
 .vscode/
 *.user
 *.suo
+.DS_Store
+Thumbs.db
 
-# Local environment and secrets
+# Local environment, secrets, logs, and temporary files
 .env
 .env.*
 secrets.json
 appsettings.Local.json
 appsettings.*.Local.json
 appsettings.Development.json
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Logs and temporary files
 *.log
 *.tmp
 *.swp
 
 # Dependency directories
 node_modules/
+
+# 作业无关，建议不上传
+artifacts/
+logs.zip
+logs_extracted/
+presentation/
+*.pptx
+*.pdf
+demo_video.mp4
+
+# AI 功能不需要的工具资料，建议不上传
+tools/agent-skills/ppt-master/references/
+tools/agent-skills/ppt-master/workflows/
+tools/agent-skills/ppt-master/templates/
+tools/agent-skills/ppt-master/scripts/source_to_md/
+tools/agent-skills/ppt-master/scripts/docs/
+tools/agent-skills/ppt-master/scripts/confirm_ui/
+tools/agent-skills/ppt-master/scripts/svg_editor/
+tools/agent-skills/ppt-master/scripts/image_gen.py
+tools/agent-skills/ppt-master/scripts/notes_to_audio.py
+tools/agent-skills/ppt-master/scripts/pptx_intake.py
+tools/agent-skills/md-to-docx/
