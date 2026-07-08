@@ -16,7 +16,7 @@ The following credentials can be used for evaluation and grading on both the liv
 - **Hosted Azure Web API Swagger**: [Swagger UI](https://taskflow-connect-06221341-feb9.azurewebsites.net/swagger/index.html)
 - **OpenAPI Document JSON**: [OpenAPI JSON](https://taskflow-connect-06221341-feb9.azurewebsites.net/swagger/v1/swagger.json)
 - **GitHub Repository**: [WalterCQ/SWE310-FinalProject](https://github.com/WalterCQ/SWE310-FinalProject)
-- **🎬 Demo Video Link**: [INSERT_YOUR_DEMO_VIDEO_LINK_HERE] *(Please replace with your YouTube unlisted or Google Drive link before final Moodle submission)*
+- **🎬 Demo Video Link**: [Google Drive Demo Video](https://drive.google.com/file/d/14ktPkSDiBMY9mMcM8AtcEXToi9LFh3Tk/view?usp=sharing)
 
 ---
 
