@@ -7,8 +7,8 @@ RUN dotnet restore backend/TaskFlow.Api/TaskFlow.Api.csproj \
     && dotnet restore backend/TaskFlow.AgentWorker/TaskFlow.AgentWorker.csproj
 
 COPY . .
-RUN dotnet publish backend/TaskFlow.Api/TaskFlow.Api.csproj --configuration Release --no-restore --output /out/api \
-    && dotnet publish backend/TaskFlow.AgentWorker/TaskFlow.AgentWorker.csproj --configuration Release --no-restore --output /out/worker
+RUN dotnet publish backend/TaskFlow.Api/TaskFlow.Api.csproj --configuration Release --no-restore --output /out/api /p:ErrorOnDuplicatePublishOutputFiles=false \
+    && dotnet publish backend/TaskFlow.AgentWorker/TaskFlow.AgentWorker.csproj --configuration Release --no-restore --output /out/worker /p:ErrorOnDuplicatePublishOutputFiles=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
