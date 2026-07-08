@@ -207,7 +207,7 @@ public class AiProviderService(
             return ApiResponse.Ok(new AiProviderRuntime
             {
                 ProviderName = credential.ProviderName,
-                BaseUrl = credential.BaseUrl ?? "https://api.openai.com/v1",
+                BaseUrl = string.IsNullOrWhiteSpace(credential.BaseUrl) ? ResolveDefaultBaseUrl(credential.ProviderName) : credential.BaseUrl,
                 Model = credential.Model,
                 ApiKey = apiKey,
                 SupportsToolCalls = credential.SupportsToolCalls
@@ -299,7 +299,7 @@ public class AiProviderService(
 
     private string ResolveDefaultBaseUrl(string providerName)
     {
-        if (providerName.Equals("OpenAI", StringComparison.OrdinalIgnoreCase))
+        if (providerName.Contains("OpenAI", StringComparison.OrdinalIgnoreCase))
         {
             return "https://api.openai.com/v1";
         }
@@ -320,9 +320,19 @@ public class AiProviderService(
             return "https://models.github.ai/inference";
         }
 
-        return configuration["AI:BaseUrl"]
-            ?? configuration["AI:Endpoint"]
-            ?? "https://api.openai.com/v1";
+        var configuredUrl = configuration["AI:BaseUrl"];
+        if (!string.IsNullOrWhiteSpace(configuredUrl))
+        {
+            return configuredUrl;
+        }
+
+        configuredUrl = configuration["AI:Endpoint"];
+        if (!string.IsNullOrWhiteSpace(configuredUrl))
+        {
+            return configuredUrl;
+        }
+
+        return "https://api.openai.com/v1";
     }
 
     private IReadOnlyCollection<string> AllowedBaseUrls()

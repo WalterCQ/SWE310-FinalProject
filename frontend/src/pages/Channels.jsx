@@ -631,7 +631,11 @@ export default function Channels() {
           setSelectedAttachmentIds(getIndexedContextAttachmentIds(attachmentItems));
         }
       } catch (apiError) {
-        if (active) setAiError(formatApiError(apiError));
+        if (active) {
+          const msg = formatApiError(apiError);
+          const isDecryptError = /decrypt|ai provider secret/i.test(msg);
+          setAiError(isDecryptError ? `${msg} ${t("channel.aiDecryptHelp")}` : msg);
+        }
       } finally {
         if (active) setAttachmentLoading(false);
       }
@@ -1163,11 +1167,11 @@ export default function Channels() {
 
   function buildAiUserMessage(command, attachmentIds = []) {
     const createdAtUtc = new Date().toISOString();
-    const selectedLabels = attachmentIds
-      .map((attachmentId) => contextAttachments.find((attachment) => attachment.id === attachmentId)?.fileName)
+    const selectedContextItems = attachmentIds
+      .map((attachmentId) => contextAttachments.find((attachment) => attachment.id === attachmentId))
       .filter(Boolean);
-    const contextLabel = selectedLabels.length > 0
-      ? selectedLabels.join(" · ")
+    const contextLabel = selectedContextItems.length > 0
+      ? selectedContextItems.map((a) => a.fileName).join(" · ")
       : t("channel.sourceChannel");
 
     return {
@@ -1176,6 +1180,7 @@ export default function Channels() {
       role: "user",
       text: stripAiMentionForDisplay(command),
       contextLabel,
+      contextAttachments: selectedContextItems.length > 0 ? selectedContextItems : null,
       createdAtUtc,
       time: formatDateTime(createdAtUtc),
     };
@@ -1795,7 +1800,22 @@ export default function Channels() {
           {isUser ? (
             <>
               <p>{message.text}</p>
-              <small>{message.contextLabel}</small>
+              {message.contextAttachments?.length > 0 ? (
+                <div className="ai-context-chips">
+                  {message.contextAttachments.map((a) => {
+                    const isPdf = isPdfAttachment(a);
+                    const isImg = a.contentType?.startsWith("image/");
+                    return (
+                      <span key={a.id || a.fileName} className={`ai-context-chip ${isPdf ? "pdf" : isImg ? "img" : ""}`}>
+                        {isImg ? <Image size={12} /> : <FileText size={12} />}
+                        <span className="ai-context-chip-name">{a.fileName}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <small>{message.contextLabel}</small>
+              )}
             </>
           ) : (
             <>

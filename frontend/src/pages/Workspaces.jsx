@@ -14,13 +14,35 @@ import { usePageRoleContext } from "../pageRoleContext.jsx";
 
 const colors = ["amber", "green", "red", "yellow"];
 const blankForm = { name: "", description: "" };
+const aiProviderPresets = {
+  SiliconFlow: {
+    baseUrl: "https://api.siliconflow.cn/v1",
+    model: "deepseek-ai/DeepSeek-V4-Flash",
+    supportsToolCalls: true,
+  },
+  GoogleAIStudio: {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-3.5-flash",
+    supportsToolCalls: true,
+  },
+};
+const aiProviderOptions = Object.keys(aiProviderPresets);
 const blankAiProviderForm = {
-  providerName: "OpenAICompatible",
-  baseUrl: "",
-  model: "deepseek-ai/DeepSeek-V4-Flash",
+  providerName: "SiliconFlow",
+  baseUrl: aiProviderPresets.SiliconFlow.baseUrl,
+  model: aiProviderPresets.SiliconFlow.model,
   apiKey: "",
   supportsToolCalls: true,
 };
+function normalizeProviderName(name) {
+  if (aiProviderPresets[name]) return name;
+  const lower = (name || "").toLowerCase();
+  if (lower.includes("silicon")) return "SiliconFlow";
+  if (lower.includes("google") || lower.includes("gemini")) return "GoogleAIStudio";
+  if (lower.includes("github")) return "GitHubModels";
+  if (lower.includes("openai")) return "OpenAI";
+  return blankAiProviderForm.providerName;
+}
 const GITHUB_SETUP_WORKSPACE_KEY = "taskflow.githubSetupWorkspaceId";
 const roleOptions = [
   { value: "0", labelKey: "enum.workspaceRole.administrator" },
@@ -219,6 +241,18 @@ export default function Workspaces() {
   }
 
   function updateAiProviderField(workspaceId, field, value) {
+    if (field === "providerName" && aiProviderPresets[value]) {
+      const preset = aiProviderPresets[value];
+      updateAiProviderState(workspaceId, {
+        providerName: value,
+        baseUrl: preset.baseUrl,
+        model: preset.model,
+        supportsToolCalls: preset.supportsToolCalls,
+        error: "",
+        message: "",
+      });
+      return;
+    }
     updateAiProviderState(workspaceId, { [field]: value, error: "", message: "" });
   }
 
@@ -243,10 +277,12 @@ export default function Workspaces() {
 
     try {
       const provider = await workspacesApi.getAiProvider(workspaceId);
+      const providerName = normalizeProviderName(provider.providerName);
+      const preset = aiProviderPresets[providerName] || {};
       updateAiProviderState(workspaceId, {
-        providerName: provider.providerName || blankAiProviderForm.providerName,
-        baseUrl: provider.baseUrl || "",
-        model: provider.model || blankAiProviderForm.model,
+        providerName,
+        baseUrl: provider.baseUrl || preset.baseUrl || "",
+        model: provider.model || preset.model || blankAiProviderForm.model,
         apiKey: "",
         supportsToolCalls: Boolean(provider.supportsToolCalls),
         hasProvider: true,
@@ -284,19 +320,24 @@ export default function Workspaces() {
 
     updateAiProviderState(workspaceId, { saving: true, error: "", message: "" });
 
+    const providerName = state.providerName || blankAiProviderForm.providerName;
+    const preset = aiProviderPresets[providerName] || {};
+
     try {
       const savedProvider = await workspacesApi.saveAiProvider(workspaceId, {
-        providerName: (state.providerName || blankAiProviderForm.providerName).trim(),
-        baseUrl: state.baseUrl.trim() || null,
-        model: (state.model || blankAiProviderForm.model).trim(),
+        providerName: providerName.trim(),
+        baseUrl: (state.baseUrl || preset.baseUrl || "").trim(),
+        model: (state.model || preset.model || "").trim(),
         apiKey: state.apiKey.trim() || null,
         supportsToolCalls: state.supportsToolCalls,
       });
 
+      const savedProviderName = normalizeProviderName(savedProvider.providerName || state.providerName);
+      const savedPreset = aiProviderPresets[savedProviderName] || {};
       updateAiProviderState(workspaceId, {
-        providerName: savedProvider.providerName || (state.providerName || blankAiProviderForm.providerName).trim(),
-        baseUrl: savedProvider.baseUrl || "",
-        model: savedProvider.model || (state.model || blankAiProviderForm.model).trim(),
+        providerName: savedProviderName,
+        baseUrl: savedProvider.baseUrl || savedPreset.baseUrl || "",
+        model: savedProvider.model || savedPreset.model || blankAiProviderForm.model,
         apiKey: "",
         supportsToolCalls: Boolean(savedProvider.supportsToolCalls),
         hasProvider: true,
@@ -778,7 +819,22 @@ export default function Workspaces() {
                         </div>
                         <p className="muted-small">{t("workspace.channelRagHelp")}</p>
 
-                        <div className="ai-key-field">
+                        <div className="ai-provider-fields">
+                          <label>
+                            {t("workspace.provider")}
+                            <select
+                              value={aiProviderState.providerName}
+                              onChange={(event) => updateAiProviderField(workspace.id, "providerName", event.target.value)}
+                              disabled={aiProviderBusy}
+                            >
+                              {aiProviderOptions.map((key) => (
+                                <option key={key} value={key}>{t(`workspace.providerLabel.${key}`)}</option>
+                              ))}
+                            </select>
+                          </label>
+
+
+
                           <label>
                             {t("workspace.apiKey")}
                             <input

@@ -159,7 +159,8 @@ export const channelMessages = {
     "channel.deleteFile": "Delete file",
     "channel.attachmentType.pdf": "PDF",
     "channel.attachmentType.image": "Image",
-    "channel.attachmentType.file": "File"
+    "channel.attachmentType.file": "File",
+    "channel.aiDecryptHelp": "Please go to Workspace Settings and re-save the AI provider API key."
   },
   "zh-CN": {
     "channel.eyebrow": "频道",
@@ -321,7 +322,8 @@ export const channelMessages = {
     "channel.deleteFile": "删除文件",
     "channel.attachmentType.pdf": "PDF",
     "channel.attachmentType.image": "图片",
-    "channel.attachmentType.file": "文件"
+    "channel.attachmentType.file": "文件",
+    "channel.aiDecryptHelp": "请前往工作区设置，重新保存 AI 提供商 API Key。"
   },
   "tg-Cyrl-TJ": {
     "channel.eyebrow": "Каналҳо",
@@ -483,6 +485,7 @@ export const channelMessages = {
     "channel.deleteFile": "Нест кардани файл",
     "channel.attachmentType.pdf": "PDF",
     "channel.attachmentType.image": "Тасвир",
-    "channel.attachmentType.file": "Файл"
+    "channel.attachmentType.file": "Файл",
+    "channel.aiDecryptHelp": "Лутфан ба танзимоти фазои корӣ гузаред ва API key-и провайдери AI-ро дубора нигоҳ доред."
   }
 };

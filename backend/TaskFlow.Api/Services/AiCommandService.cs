@@ -1529,7 +1529,8 @@ public class AiCommandService(
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new AiProviderException($"AI provider error {(int)response.StatusCode}: {TrimProviderError(body, provider.ApiKey)}");
+            var requestedModel = payload.TryGetValue("model", out var m) ? m?.ToString() : "unknown";
+            throw new AiProviderException($"AI provider error {(int)response.StatusCode} (Model: '{requestedModel}', Url: '{provider.BaseUrl}'): {TrimProviderError(body, provider.ApiKey)}");
         }
 
         using var document = JsonDocument.Parse(body);
@@ -1998,7 +1999,17 @@ public class AiCommandService(
 
     private string ResolveMainModel(AiProviderRuntime provider)
     {
-        if (IsGeminiProvider(provider) || IsGitHubModelsProvider(provider))
+        if (IsGeminiProvider(provider))
+        {
+            return "gemini-3.5-flash";
+        }
+
+        if (IsSiliconFlowProvider(provider))
+        {
+            return "deepseek-ai/DeepSeek-V4-Flash";
+        }
+
+        if (IsGitHubModelsProvider(provider))
         {
             return provider.Model;
         }
@@ -2008,7 +2019,17 @@ public class AiCommandService(
 
     private string ResolveProModel(AiProviderRuntime provider)
     {
-        if (IsGeminiProvider(provider) || IsGitHubModelsProvider(provider))
+        if (IsGeminiProvider(provider))
+        {
+            return "gemini-3.5-flash";
+        }
+
+        if (IsSiliconFlowProvider(provider))
+        {
+            return "deepseek-ai/DeepSeek-V4-Pro";
+        }
+
+        if (IsGitHubModelsProvider(provider))
         {
             return provider.Model;
         }
@@ -2018,7 +2039,17 @@ public class AiCommandService(
 
     private string ResolveVisionModel(AiProviderRuntime provider)
     {
-        if (IsGeminiProvider(provider) || IsGitHubModelsProvider(provider))
+        if (IsGeminiProvider(provider))
+        {
+            return "gemini-3.5-flash";
+        }
+
+        if (IsSiliconFlowProvider(provider))
+        {
+            return "Qwen/Qwen3.6-27B";
+        }
+
+        if (IsGitHubModelsProvider(provider))
         {
             return provider.Model;
         }
@@ -2052,6 +2083,12 @@ public class AiCommandService(
     {
         return provider.ProviderName.Contains("GitHub", StringComparison.OrdinalIgnoreCase)
             || provider.BaseUrl.Contains("models.github.ai", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSiliconFlowProvider(AiProviderRuntime provider)
+    {
+        return provider.ProviderName.Contains("Silicon", StringComparison.OrdinalIgnoreCase)
+            || provider.BaseUrl.Contains("api.siliconflow.cn", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string TrimProviderError(string body, string apiKey)
@@ -2142,8 +2179,9 @@ public class AiCommandService(
         }
         catch (Exception ex)
         {
+            var model = ResolveMainModel(provider);
             return ApiResponse.Fail<AiResponse>(
-                $"AI provider request failed: {RedactSecret(ex.Message, provider.ApiKey)}",
+                $"AI provider request failed for model '{model}' at '{provider.BaseUrl}': {RedactSecret(ex.Message, provider.ApiKey)}",
                 StatusCodes.Status502BadGateway);
         }
     }

@@ -2653,14 +2653,19 @@ tr.target-highlight td { background: #e8f7f5; }
   font-size: 12px;
   font-weight: 750;
 }
-.ai-key-field label {
+.ai-provider-fields {
+  display: grid;
+  gap: 10px;
+}
+.ai-provider-fields label {
   display: grid;
   gap: 5px;
   color: var(--ink);
   font-size: 12px;
   font-weight: 850;
 }
-.ai-key-field input {
+.ai-provider-fields input,
+.ai-provider-fields select {
   min-width: 0;
   width: 100%;
   border: 1px solid var(--line);
@@ -2670,6 +2675,10 @@ tr.target-highlight td { background: #e8f7f5; }
   padding: 7px 8px;
   outline: 0;
   font-size: 12px;
+}
+.ai-provider-fields .readonly-input {
+  background: var(--bg);
+  color: var(--muted);
 }
 
 .workspace-settings-grid {
@@ -3021,6 +3030,40 @@ tr.target-highlight td { background: #e8f7f5; }
   opacity: .72;
   font-size: 11px;
   font-weight: 750;
+}
+
+.ai-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.ai-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  padding: 2px 8px 2px 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .14);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  opacity: .85;
+}
+.ai-context-chip svg {
+  flex-shrink: 0;
+}
+.ai-context-chip.pdf {
+  background: rgba(239, 68, 68, .18);
+}
+.ai-context-chip.img {
+  background: rgba(7, 153, 141, .18);
+}
+.ai-context-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-chat-bubble .markdown-content {
