@@ -348,7 +348,7 @@ public class AiCommandService(
             var prompt = isTaskCommand
                 ? BuildChannelTaskSuggestionPrompt(channel.Name, command, context.RecentMessages, context.RetrievedContext)
                 : BuildChannelAiPrompt(channel.Name, artifactType, command, context.RecentMessages, context.RetrievedContext);
-            var model = ShouldUseProModel(command) ? ResolveProModel(provider) : ResolveMainModel(provider);
+            var model = (request.UseProModel ?? ShouldUseProModel(command)) ? ResolveProModel(provider) : ResolveMainModel(provider);
             var result = await InvokeChatCompletionAsync(
                 model,
                 "You are TaskFlow AI, a channel member inside a project collaboration app. Use only the provided accessible context.",

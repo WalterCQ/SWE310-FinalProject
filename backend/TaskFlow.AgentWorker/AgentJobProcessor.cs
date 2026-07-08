@@ -12,6 +12,7 @@ using TaskFlow.Api.DTOs.GitHub;
 using TaskFlow.Api.DTOs.Notifications;
 using TaskFlow.Api.DTOs.Tasks;
 using TaskFlow.Api.Models;
+using Microsoft.Extensions.Configuration;
 using TaskFlow.Api.Services;
 using TaskFlow.Api.Services.Interfaces;
 
@@ -30,6 +31,7 @@ public class AgentJobProcessor(
     IDataProtectionProvider dataProtectionProvider,
     IHttpClientFactory httpClientFactory,
     AgentSkillRegistry skillRegistry,
+    IConfiguration configuration,
     ILogger<AgentJobProcessor> logger)
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
@@ -1766,6 +1768,7 @@ public class AgentJobProcessor(
 
     private async Task<AiProviderRuntime> ResolveJobProviderRuntimeAsync(AgentJob job, CancellationToken cancellationToken)
     {
+        AiProviderRuntime runtime;
         if (!job.ProviderCredentialId.HasValue)
         {
             var workspaceProviderResult = await aiProviderService.ResolveWorkspaceProviderAsync(job.WorkspaceId, cancellationToken);
@@ -1774,27 +1777,65 @@ public class AgentJobProcessor(
                 throw new InvalidOperationException(workspaceProviderResult.Message);
             }
 
-            return workspaceProviderResult.Data;
+            runtime = workspaceProviderResult.Data;
+        }
+        else
+        {
+            var credential = await dbContext.AiProviderCredentials
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.Id == job.ProviderCredentialId.Value && item.UserId == job.UserId, cancellationToken);
+            if (credential is null)
+            {
+                throw new InvalidOperationException("Configured provider was not found for this user.");
+            }
+
+            runtime = new AiProviderRuntime
+            {
+                ProviderName = credential.ProviderName,
+                BaseUrl = string.IsNullOrWhiteSpace(credential.BaseUrl)
+                    ? "https://api.openai.com/v1"
+                    : credential.BaseUrl.TrimEnd('/'),
+                Model = credential.Model,
+                ApiKey = AiProviderService.Unprotect(dataProtectionProvider, credential.EncryptedApiKey),
+                SupportsToolCalls = credential.SupportsToolCalls
+            };
         }
 
-        var credential = await dbContext.AiProviderCredentials
-            .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.Id == job.ProviderCredentialId.Value && item.UserId == job.UserId, cancellationToken);
-        if (credential is null)
+        if (IsProJobTarget(job.ArtifactTarget))
         {
-            throw new InvalidOperationException("Configured provider was not found for this user.");
+            runtime.Model = ResolveProModel(runtime);
         }
 
-        return new AiProviderRuntime
+        return runtime;
+    }
+
+    private static bool IsProJobTarget(string? target)
+    {
+        return target is "docx" or "pptx" or "pull-request" or "patch";
+    }
+
+    private string ResolveProModel(AiProviderRuntime provider)
+    {
+        if (provider.ProviderName.Contains("Google", StringComparison.OrdinalIgnoreCase)
+            || provider.ProviderName.Contains("Gemini", StringComparison.OrdinalIgnoreCase)
+            || (provider.BaseUrl?.Contains("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase) ?? false))
         {
-            ProviderName = credential.ProviderName,
-            BaseUrl = string.IsNullOrWhiteSpace(credential.BaseUrl)
-                ? "https://api.openai.com/v1"
-                : credential.BaseUrl.TrimEnd('/'),
-            Model = credential.Model,
-            ApiKey = AiProviderService.Unprotect(dataProtectionProvider, credential.EncryptedApiKey),
-            SupportsToolCalls = credential.SupportsToolCalls
-        };
+            return "gemini-3.5-flash";
+        }
+
+        if (provider.ProviderName.Contains("Silicon", StringComparison.OrdinalIgnoreCase)
+            || (provider.BaseUrl?.Contains("api.siliconflow.cn", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            return "deepseek-ai/DeepSeek-V4-Pro";
+        }
+
+        if (provider.ProviderName.Contains("GitHub", StringComparison.OrdinalIgnoreCase)
+            || (provider.BaseUrl?.Contains("models.github.ai", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            return provider.Model;
+        }
+
+        return configuration["AI:ProModel"] ?? configuration["AI:MainModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 
     private async Task<string?> RequestPlanNotesAsync(

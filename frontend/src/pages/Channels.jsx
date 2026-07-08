@@ -1208,7 +1208,7 @@ export default function Channels() {
     };
   }
 
-  async function runAiCommand(command, attachmentIds = selectedContextAttachmentIds) {
+  async function runAiCommand(command, attachmentIds = selectedContextAttachmentIds, useProModel = false) {
     if (!activeChannelId || !command.trim()) return null;
 
     openAiPanel();
@@ -1222,6 +1222,7 @@ export default function Channels() {
       const response = await aiApi.channelCommand(activeChannelId, {
         command: command.trim(),
         attachmentIds: nextAttachmentIds,
+        useProModel: useProModel,
       });
       const aiMessage = buildAiPreviewMessage(response);
       setAiMessages((current) => [...current.filter((message) => message.id !== aiMessage.id), aiMessage]);
@@ -1352,7 +1353,7 @@ export default function Channels() {
       return;
     }
 
-    const response = await runAiCommand(command, selectedContextAttachmentIds);
+    const response = await runAiCommand(command, selectedContextAttachmentIds, Boolean(selectedAiAction));
     if (response) {
       setAiDraft("");
       setSelectedAiActionKey("");

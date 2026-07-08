@@ -64,6 +64,8 @@ public class AiChannelCommandRequest
     public Guid? AttachmentId { get; set; }
 
     public IReadOnlyCollection<Guid>? AttachmentIds { get; set; }
+
+    public bool? UseProModel { get; set; }
 }
 
 public class AiChannelCommandResponse
