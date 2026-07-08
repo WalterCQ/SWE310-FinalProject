@@ -36,6 +36,8 @@ import {
   channels as channelsApi,
   formatApiError,
   messages as messagesApi,
+  projects as projectsApi,
+  tasks as tasksApi,
   workspaces as workspacesApi,
 } from "../api/taskflowApi.js";
 import {
@@ -62,6 +64,13 @@ function normalizeRealtimeMessage(message) {
     isDeleted: message?.isDeleted ?? message?.IsDeleted,
     createdAtUtc: message?.createdAtUtc ?? message?.CreatedAtUtc,
     editedAtUtc: message?.editedAtUtc ?? message?.EditedAtUtc,
+    aiArtifactType: message?.aiArtifactType ?? message?.AiArtifactType,
+    agentJobId: message?.agentJobId ?? message?.AgentJobId,
+    requiresApproval: message?.requiresApproval ?? message?.RequiresApproval,
+    sources: message?.sources ?? message?.Sources ?? [],
+    suggestedTasks: message?.suggestedTasks ?? message?.SuggestedTasks ?? [],
+    createdTaskId: message?.createdTaskId ?? message?.CreatedTaskId,
+    createdTaskTitle: message?.createdTaskTitle ?? message?.CreatedTaskTitle,
     attachments: message?.attachments ?? message?.Attachments ?? [],
   };
 }
@@ -109,12 +118,18 @@ function normalizeAttachment(attachment) {
   return mapAttachment(attachment);
 }
 
-function selectContextAttachmentId(attachmentItems, currentId = "") {
-  if (attachmentItems.some((attachment) => attachment.id === currentId && attachment.isAiIndexed)) {
-    return currentId;
-  }
+function getIndexedContextAttachmentIds(attachmentItems) {
+  return attachmentItems
+    .filter((attachment) => attachment.id && attachment.isAiIndexed)
+    .map((attachment) => attachment.id);
+}
 
-  return attachmentItems.find((attachment) => attachment.isAiIndexed)?.id || currentId || "";
+function isAiGeneratedAttachment(attachment, aiGeneratedAttachmentIds = new Set()) {
+  if (!attachment) return false;
+  if (attachment.id && aiGeneratedAttachmentIds.has(attachment.id)) return true;
+
+  const summary = String(attachment.summary || "").trim().toLowerCase();
+  return summary.startsWith("ai-generated ");
 }
 
 function isPdfAttachment(attachment) {
@@ -224,6 +239,11 @@ function formatAgentJobId(jobId) {
   return jobId ? String(jobId).slice(0, 8) : "";
 }
 
+function isProjectArchived(project) {
+  const status = String(project?.status ?? "").trim().toLowerCase();
+  return status === "3" || status === "archived";
+}
+
 const blankChannelForm = { name: "", description: "", isPrivate: false };
 const AI_PANEL_OPEN_KEY = "taskflow.aiPanelOpen";
 const AI_MESSAGES_STORAGE_KEY = "taskflow.channelAiMessages";
@@ -233,7 +253,14 @@ function readStoredAiMessages() {
 
   try {
     const parsed = JSON.parse(window.sessionStorage.getItem(AI_MESSAGES_STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter((message) =>
+      message
+        && (message.role === "user" || message.role === "assistant")
+        && message.channelId
+        && message.id
+    );
   } catch {
     return [];
   }
@@ -248,6 +275,7 @@ export default function Channels() {
   const { t } = useI18n();
   const { setContextRole } = usePageRoleContext();
   const [searchParams] = useSearchParams();
+  const selectedWorkspaceId = searchParams.get("workspaceId") || "";
   const selectedChannelId = searchParams.get("channelId") || "";
   const currentUserId = localStorage.getItem("userId") || "";
   const [workspaceId, setWorkspaceId] = useState("");
@@ -267,26 +295,31 @@ export default function Channels() {
   const [messages, setMessages] = useState([]);
   const [aiMessages, setAiMessages] = useState(readStoredAiMessages);
   const [attachments, setAttachments] = useState([]);
-  const [selectedAttachmentId, setSelectedAttachmentId] = useState("");
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [messageLoading, setMessageLoading] = useState(false);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
-  const [reindexingAttachmentId, setReindexingAttachmentId] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [taskProjects, setTaskProjects] = useState([]);
+  const [taskProjectId, setTaskProjectId] = useState("");
   const [agentJobsById, setAgentJobsById] = useState({});
   const [agentJobLoadingIds, setAgentJobLoadingIds] = useState({});
   const [agentJobErrors, setAgentJobErrors] = useState({});
   const [agentApprovalActionIds, setAgentApprovalActionIds] = useState({});
+  const [aiShareActionIds, setAiShareActionIds] = useState({});
+  const [aiTaskActionIds, setAiTaskActionIds] = useState({});
   const [loadError, setLoadError] = useState("");
   const [chatError, setChatError] = useState("");
   const [aiError, setAiError] = useState("");
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(() => {
     return localStorage.getItem(AI_PANEL_OPEN_KEY) === "true";
   });
-  const [selectedAiMessageId, setSelectedAiMessageId] = useState("");
+  const [aiDraft, setAiDraft] = useState("");
+  const [selectedAiActionKey, setSelectedAiActionKey] = useState("");
+  const [isAiToolMenuOpen, setIsAiToolMenuOpen] = useState(false);
   const [isMessageListAtBottom, setIsMessageListAtBottom] = useState(true);
   const [unseenMessages, setUnseenMessages] = useState(0);
   const [connection, setConnection] = useState(null);
@@ -295,6 +328,8 @@ export default function Channels() {
   const activeChannelRef = useRef("");
   const messageListRef = useRef(null);
   const messageEndRef = useRef(null);
+  const aiThreadEndRef = useRef(null);
+  const aiInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const channelNameRef = useRef(null);
   const typingClearTimerRef = useRef(null);
@@ -317,7 +352,6 @@ export default function Channels() {
           command: t("channel.commandSummary"),
           icon: Sparkles,
           output: t("channel.outputChat"),
-          approval: t("channel.approvalNo"),
         },
         {
           key: "requirements",
@@ -326,7 +360,6 @@ export default function Channels() {
           command: t("channel.commandRequirements"),
           icon: ClipboardCheck,
           output: t("channel.outputChat"),
-          approval: t("channel.approvalNo"),
         },
       ],
     },
@@ -341,7 +374,6 @@ export default function Channels() {
           command: t("channel.commandTasks"),
           icon: ListTodo,
           output: t("channel.outputTasks"),
-          approval: t("channel.approvalYes"),
         },
         {
           key: "report",
@@ -350,7 +382,6 @@ export default function Channels() {
           command: t("channel.commandReport"),
           icon: FileText,
           output: t("channel.outputDocx"),
-          approval: t("channel.approvalYes"),
           requiresIndexedAttachment: true,
         },
         {
@@ -360,7 +391,6 @@ export default function Channels() {
           command: t("channel.commandPpt"),
           icon: Layers3,
           output: t("channel.outputPptx"),
-          approval: t("channel.approvalYes"),
           requiresIndexedAttachment: true,
         },
       ],
@@ -376,50 +406,47 @@ export default function Channels() {
           command: t("channel.commandCode"),
           icon: Code2,
           output: t("channel.outputCodePlan"),
-          approval: t("channel.approvalYes"),
           requiresIndexedAttachment: true,
         },
       ],
     },
   ];
+  const aiActions = aiActionGroups.flatMap((group) => group.actions);
+  const selectedAiAction = aiActions.find((action) => action.key === selectedAiActionKey) || null;
   const activeChannel = channels.find((channel) => channel.id === activeChannelId);
-  const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId);
-  const selectedAttachmentIndexed = Boolean(selectedAttachment?.isAiIndexed);
-  const selectedAttachmentFailed = Boolean(selectedAttachment && !selectedAttachment.isAiIndexed);
+  const connectionLabel = t(`channel.${connectionStatus}`);
+  const isConnected = connectionStatus === "connected";
+  const activeAiMessages = aiMessages
+    .filter((message) => message.channelId === activeChannelId)
+    .sort((left, right) => getMessageTimestamp(left) - getMessageTimestamp(right));
+  const combinedMessages = [...messages].sort((left, right) => getMessageTimestamp(left) - getMessageTimestamp(right));
+  const aiGeneratedAttachmentIds = new Set(
+    combinedMessages
+      .filter((message) => message.isAi)
+      .flatMap((message) => asArray(message.attachments))
+      .map((attachment) => attachment.id)
+      .filter(Boolean)
+  );
+  const contextAttachments = attachments.filter((attachment) => !isAiGeneratedAttachment(attachment, aiGeneratedAttachmentIds));
+  const indexedContextAttachmentIds = getIndexedContextAttachmentIds(contextAttachments);
+  const indexedContextAttachmentIdSet = new Set(indexedContextAttachmentIds);
+  const selectedContextAttachmentIds = selectedAttachmentIds.filter((id) => indexedContextAttachmentIdSet.has(id));
+  const selectedContextHasIndexedAttachment = selectedContextAttachmentIds.length > 0;
+  const selectedContextCount = selectedContextAttachmentIds.length;
   const recentChannelOutputs = messages
     .filter((message) => message.channelId === activeChannelId && message.isAi)
     .flatMap((message) => asArray(message.attachments))
     .sort((left, right) => new Date(right.createdAtUtc || 0).getTime() - new Date(left.createdAtUtc || 0).getTime())
     .slice(0, 6);
-  const connectionLabel = t(`channel.${connectionStatus}`);
-  const isConnected = connectionStatus === "connected";
-  const activeAiMessages = aiMessages.filter((message) => message.channelId === activeChannelId);
-  const messageIds = new Set(messages.map((message) => message.id));
-  const aiDetailsById = new Map(activeAiMessages.map((message) => [message.id, message]));
-  const mergedMessages = messages.map((message) => {
-    const details = aiDetailsById.get(message.id);
-    if (!message.isAi || !details) return message;
-
-    return {
-      ...message,
-      ...details,
-      attachments: message.attachments,
-      text: message.text || details.text,
-      time: message.time || details.time,
-      createdAtUtc: message.createdAtUtc || details.createdAtUtc,
-    };
-  });
-  const combinedMessages = [
-    ...mergedMessages,
-    ...activeAiMessages.filter((message) => !messageIds.has(message.id)),
-  ].sort((left, right) => getMessageTimestamp(left) - getMessageTimestamp(right));
-  const selectedAiMessage = combinedMessages.find((message) => message.id === selectedAiMessageId && message.isAi) || null;
+  const canSubmitAiPrompt = Boolean(activeChannel && (aiDraft.trim() || selectedAiAction) && !aiLoading);
+  const draftContent = draft.trim();
+  const isDraftAiRequest = isAiMention(draftContent) || Boolean(selectedFile && !draftContent);
   const canSubmit = Boolean(
     activeChannel
-      && (draft.trim() || selectedFile)
+      && (draftContent || selectedFile)
       && !uploadingAttachment
       && !aiLoading
-      && (selectedFile || isConnected)
+      && (selectedFile || isConnected || isDraftAiRequest)
   );
 
   function isCurrentUser(userId) {
@@ -457,7 +484,8 @@ export default function Channels() {
 
       try {
         const workspaceItems = asArray(await workspacesApi.list()).map(mapWorkspace);
-        const workspace = selectPrimaryWorkspace(workspaceItems);
+        const workspace = workspaceItems.find((item) => item.id === selectedWorkspaceId)
+          || selectPrimaryWorkspace(workspaceItems);
 
         if (!workspace) {
           if (active) {
@@ -503,7 +531,7 @@ export default function Channels() {
     return () => {
       active = false;
     };
-  }, [selectedChannelId]);
+  }, [selectedChannelId, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedChannelId || channels.length === 0) return;
@@ -511,6 +539,48 @@ export default function Channels() {
       setActiveChannelId(selectedChannelId);
     }
   }, [selectedChannelId, channels]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTaskProjects() {
+      if (!workspaceId) {
+        setTaskProjects([]);
+        setTaskProjectId("");
+        return;
+      }
+
+      try {
+        const projectItems = asArray(await projectsApi.listByWorkspace(workspaceId))
+          .filter((project) => project?.id && !isProjectArchived(project))
+          .sort((left, right) => {
+            const leftActive = String(left.status ?? "").toLowerCase() === "active" || Number(left.status) === 1;
+            const rightActive = String(right.status ?? "").toLowerCase() === "active" || Number(right.status) === 1;
+            if (leftActive !== rightActive) return leftActive ? -1 : 1;
+            return new Date(right.updatedAtUtc || 0).getTime() - new Date(left.updatedAtUtc || 0).getTime();
+          });
+        if (!active) return;
+
+        setTaskProjects(projectItems);
+        setTaskProjectId((current) => (
+          projectItems.some((project) => project.id === current)
+            ? current
+            : projectItems[0]?.id || ""
+        ));
+      } catch {
+        if (active) {
+          setTaskProjects([]);
+          setTaskProjectId("");
+        }
+      }
+    }
+
+    loadTaskProjects();
+
+    return () => {
+      active = false;
+    };
+  }, [workspaceId]);
 
   useEffect(() => {
     let active = true;
@@ -547,7 +617,7 @@ export default function Channels() {
     async function loadAttachments() {
       if (!activeChannelId) {
         setAttachments([]);
-        setSelectedAttachmentId("");
+        setSelectedAttachmentIds([]);
         return;
       }
 
@@ -558,9 +628,7 @@ export default function Channels() {
         const attachmentItems = asArray(await aiApi.channelAttachments(activeChannelId)).map(normalizeAttachment);
         if (active) {
           setAttachments(attachmentItems);
-          setSelectedAttachmentId((current) =>
-            selectContextAttachmentId(attachmentItems, current)
-          );
+          setSelectedAttachmentIds(getIndexedContextAttachmentIds(attachmentItems));
         }
       } catch (apiError) {
         if (active) setAiError(formatApiError(apiError));
@@ -731,12 +799,30 @@ export default function Channels() {
   }
 
   function openAiMessage(message) {
-    setSelectedAiMessageId(message.id);
+    if (message?.id) {
+      const createdAtUtc = message.createdAtUtc || new Date().toISOString();
+      const aiMessage = {
+        ...message,
+        id: `channel-${message.id}`,
+        channelId: message.channelId || activeChannelId,
+        role: "assistant",
+        createdAtUtc,
+        time: formatDateTime(createdAtUtc),
+        sharedToChannel: true,
+        sharedMessageId: message.id,
+      };
+      setAiMessages((current) => (
+        current.some((item) => item.id === aiMessage.id)
+          ? current
+          : [...current, aiMessage]
+      ));
+    }
     openAiPanel();
   }
 
   function closeAiPanel() {
     setIsAiPanelOpen(false);
+    setIsAiToolMenuOpen(false);
     localStorage.setItem(AI_PANEL_OPEN_KEY, "false");
   }
 
@@ -795,7 +881,7 @@ export default function Channels() {
   }, [activeChannelId]);
 
   useEffect(() => {
-    const messageCount = combinedMessages.length + (aiLoading ? 1 : 0);
+    const messageCount = combinedMessages.length;
     const previousCount = previousMessageCountRef.current;
     const hasNewMessages = messageCount > previousCount;
     previousMessageCountRef.current = messageCount;
@@ -813,11 +899,11 @@ export default function Channels() {
     if (hasNewMessages) {
       setUnseenMessages((current) => current + (messageCount - previousCount));
     }
-  }, [activeChannel, activeChannelId, aiLoading, combinedMessages.length, isMessageListAtBottom]);
+  }, [activeChannel, activeChannelId, combinedMessages.length, isMessageListAtBottom]);
 
   useEffect(() => {
     const activeJobIds = aiMessages
-      .filter((message) => message.channelId === activeChannelId && message.agentJobId)
+      .filter((message) => message.channelId === activeChannelId && message.role === "assistant" && message.agentJobId)
       .map((message) => message.agentJobId)
       .filter((jobId, index, allJobIds) => allJobIds.indexOf(jobId) === index)
       .filter((jobId) => isAgentJobActive(agentJobsById[jobId]));
@@ -834,6 +920,13 @@ export default function Channels() {
 
     return () => window.clearInterval(refreshTimer);
   }, [activeChannelId, agentJobsById, aiMessages]);
+
+  useEffect(() => {
+    if (!isAiPanelOpen) return;
+    requestAnimationFrame(() => {
+      aiThreadEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    });
+  }, [activeAiMessages.length, aiLoading, isAiPanelOpen]);
 
   function notifyTyping(nextValue) {
     if (!connection || !activeChannelId || connection.state !== chatConnectionState.connected) return;
@@ -974,7 +1067,9 @@ export default function Channels() {
       formData.append("file", selectedFile);
       const attachment = normalizeAttachment(await aiApi.uploadChannelAttachment(activeChannelId, formData));
       setAttachments((current) => [attachment, ...current.filter((item) => item.id !== attachment.id)]);
-      setSelectedAttachmentId(attachment.id);
+      if (attachment.id && attachment.isAiIndexed) {
+        setSelectedAttachmentIds((current) => [...new Set([attachment.id, ...current])]);
+      }
       clearSelectedFile();
       return attachment;
     } catch (apiError) {
@@ -1002,7 +1097,9 @@ export default function Channels() {
       setMessages((currentMessages) => mergeMessage(currentMessages, createdMessage));
       if (uploadedAttachment.id) {
         setAttachments((current) => [uploadedAttachment, ...current.filter((item) => item.id !== uploadedAttachment.id)]);
-        setSelectedAttachmentId(uploadedAttachment.id);
+        if (uploadedAttachment.isAiIndexed) {
+          setSelectedAttachmentIds((current) => [...new Set([uploadedAttachment.id, ...current])]);
+        }
       }
 
       setDraft("");
@@ -1041,103 +1138,88 @@ export default function Channels() {
     }
   }
 
-  async function deleteAttachment(attachmentId) {
-    if (!activeChannelId || !attachmentId) return;
+  async function refreshCurrentChannelData() {
+    if (!activeChannelId) return;
 
-    setChatError("");
-    setAiError("");
-
-    try {
-      await channelsApi.removeAttachment(activeChannelId, attachmentId);
-      setAttachments((current) => current.filter((item) => item.id !== attachmentId));
-      if (selectedAttachmentId === attachmentId) {
-        setSelectedAttachmentId("");
-      }
-    } catch (apiError) {
-      setAiError(formatApiError(apiError));
-    }
+    const [messageItems, attachmentItems] = await Promise.all([
+      messagesApi.listByChannel(activeChannelId),
+      aiApi.channelAttachments(activeChannelId),
+    ]);
+    setMessages(asArray(messageItems).map(mapMessage));
+    const normalizedAttachments = asArray(attachmentItems).map(normalizeAttachment);
+    setAttachments(normalizedAttachments);
+    setSelectedAttachmentIds((current) => {
+      const indexedIds = new Set(getIndexedContextAttachmentIds(normalizedAttachments));
+      return current.filter((id) => indexedIds.has(id));
+    });
   }
 
-  async function reindexAttachment(attachmentId) {
-    if (!activeChannelId || !attachmentId || reindexingAttachmentId) return;
-
-    setReindexingAttachmentId(attachmentId);
-    setAiError("");
-
-    try {
-      const attachment = normalizeAttachment(await aiApi.reindexChannelAttachment(activeChannelId, attachmentId));
-      setAttachments((current) => {
-        const hasAttachment = current.some((item) => item.id === attachment.id);
-        return hasAttachment
-          ? current.map((item) => (item.id === attachment.id ? attachment : item))
-          : [attachment, ...current];
-      });
-      setSelectedAttachmentId(attachment.id);
-    } catch (apiError) {
-      setAiError(formatApiError(apiError));
-    } finally {
-      setReindexingAttachmentId("");
-    }
+  function stripAiMentionForDisplay(command) {
+    const trimmed = String(command || "").trim();
+    return trimmed
+      .replace(/^@?\s*TaskFlow\s+AI\b\s*[:,：-]?/i, "")
+      .trim() || trimmed;
   }
 
-  async function runAiCommand(command, attachmentId = "") {
+  function buildAiUserMessage(command, attachmentIds = []) {
+    const createdAtUtc = new Date().toISOString();
+    const selectedLabels = attachmentIds
+      .map((attachmentId) => contextAttachments.find((attachment) => attachment.id === attachmentId)?.fileName)
+      .filter(Boolean);
+    const contextLabel = selectedLabels.length > 0
+      ? selectedLabels.join(" · ")
+      : t("channel.sourceChannel");
+
+    return {
+      id: `ai-user-${activeChannelId}-${Date.now()}`,
+      channelId: activeChannelId,
+      role: "user",
+      text: stripAiMentionForDisplay(command),
+      contextLabel,
+      createdAtUtc,
+      time: formatDateTime(createdAtUtc),
+    };
+  }
+
+  function buildAiPreviewMessage(response) {
+    const createdAtUtc = response?.createdAtUtc || new Date().toISOString();
+    return {
+      id: response?.messageId || `ai-assistant-${activeChannelId}-${Date.now()}`,
+      channelId: activeChannelId,
+      role: "assistant",
+      sender: t("channel.aiMember"),
+      text: response?.result || t("channel.aiEmpty"),
+      createdAtUtc,
+      time: formatDateTime(createdAtUtc),
+      isAi: true,
+      artifactType: response?.artifactType || "answer",
+      sources: response?.sources || [],
+      suggestedTasks: response?.suggestedTasks || [],
+      createdTaskTitle: response?.createdTaskTitle || "",
+      agentJobId: response?.agentJobId || "",
+      requiresApproval: Boolean(response?.requiresApproval),
+      sharedToChannel: Boolean(response?.sharedToChannel),
+      sharedMessageId: response?.sharedToChannel ? response?.messageId || "" : "",
+    };
+  }
+
+  async function runAiCommand(command, attachmentIds = selectedContextAttachmentIds) {
     if (!activeChannelId || !command.trim()) return null;
 
-    forceScrollToBottomRef.current = true;
+    openAiPanel();
     setAiLoading(true);
     setAiError("");
+    const nextAttachmentIds = Array.isArray(attachmentIds) ? attachmentIds : [];
+    const userMessage = buildAiUserMessage(command, nextAttachmentIds);
+    setAiMessages((current) => [...current, userMessage]);
 
     try {
       const response = await aiApi.channelCommand(activeChannelId, {
         command: command.trim(),
-        attachmentId: attachmentId || null,
+        attachmentIds: nextAttachmentIds,
       });
-      if (response?.sharedToChannel) {
-        const messageItems = asArray(await messagesApi.listByChannel(activeChannelId)).map(mapMessage);
-        setMessages(messageItems);
-        if (response?.messageId) {
-          const createdAtUtc = response?.createdAtUtc || new Date().toISOString();
-          const aiMessage = {
-            id: response.messageId,
-            channelId: activeChannelId,
-            sender: t("channel.aiMember"),
-            text: response?.result || t("channel.aiEmpty"),
-            createdAtUtc,
-            time: formatDateTime(createdAtUtc),
-            isAi: true,
-            artifactType: response?.artifactType || "answer",
-            sources: response?.sources || [],
-            suggestedTasks: response?.suggestedTasks || [],
-            createdTaskTitle: response?.createdTaskTitle || "",
-            agentJobId: response?.agentJobId || "",
-            requiresApproval: Boolean(response?.requiresApproval),
-          };
-          setAiMessages((current) => [...current.filter((message) => message.id !== aiMessage.id), aiMessage]);
-          setSelectedAiMessageId(aiMessage.id);
-        }
-        const attachmentItems = asArray(await aiApi.channelAttachments(activeChannelId)).map(normalizeAttachment);
-        setAttachments(attachmentItems);
-        setSelectedAttachmentId((current) => selectContextAttachmentId(attachmentItems, current));
-        return response;
-      }
-
-      const createdAtUtc = response?.createdAtUtc || new Date().toISOString();
-      const aiMessage = {
-        id: `ai-${activeChannelId}-${Date.now()}`,
-        channelId: activeChannelId,
-        sender: t("channel.aiMember"),
-        text: response?.result || t("channel.aiEmpty"),
-        createdAtUtc,
-        time: formatDateTime(createdAtUtc),
-        isAi: true,
-        artifactType: response?.artifactType || "answer",
-        sources: response?.sources || [],
-        suggestedTasks: response?.suggestedTasks || [],
-        createdTaskTitle: response?.createdTaskTitle || "",
-        agentJobId: response?.agentJobId || "",
-        requiresApproval: Boolean(response?.requiresApproval),
-      };
-      setAiMessages((current) => [...current, aiMessage]);
+      const aiMessage = buildAiPreviewMessage(response);
+      setAiMessages((current) => [...current.filter((message) => message.id !== aiMessage.id), aiMessage]);
       if (response?.agentJobId) {
         loadAgentJob(response.agentJobId, { silent: true });
       }
@@ -1147,6 +1229,129 @@ export default function Channels() {
       return null;
     } finally {
       setAiLoading(false);
+    }
+  }
+
+  function dismissAiPreview(messageId) {
+    setAiMessages((current) => current.filter((message) => message.id !== messageId));
+  }
+
+  async function shareAiPreview(message) {
+    if (!activeChannelId || !message?.id || message.sharedToChannel) return;
+
+    const actionId = `share-${message.id}`;
+    setAiShareActionIds((current) => ({ ...current, [actionId]: true }));
+    setAiError("");
+
+    try {
+      const response = await aiApi.shareChannelResult(activeChannelId, {
+        result: message.text,
+        artifactType: message.artifactType || "answer",
+        agentJobId: message.agentJobId || null,
+        requiresApproval: Boolean(message.requiresApproval),
+        sources: asArray(message.sources),
+        suggestedTasks: asArray(message.suggestedTasks),
+      });
+      const sharedMessageId = response?.messageId || "";
+      setAiMessages((current) => current.map((item) => (
+        item.id === message.id
+          ? {
+              ...item,
+              sharedToChannel: true,
+              sharedMessageId,
+              sentToChannelAtUtc: response?.createdAtUtc || new Date().toISOString(),
+            }
+          : item
+      )));
+      await refreshCurrentChannelData();
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+    } finally {
+      setAiShareActionIds((current) => {
+        const next = { ...current };
+        delete next[actionId];
+        return next;
+      });
+    }
+  }
+
+  async function createSuggestedTask(taskTitle, message) {
+    const title = String(taskTitle || "").trim();
+    if (!title || !message?.id) return;
+    if (!taskProjectId) {
+      setAiError(t("channel.selectTaskProject"));
+      return;
+    }
+
+    const actionId = `task-${message.id}-${title}`;
+    setAiTaskActionIds((current) => ({ ...current, [actionId]: true }));
+    setAiError("");
+
+    try {
+      await tasksApi.create(taskProjectId, {
+        title,
+        description: [
+          activeChannel ? `Created from TaskFlow AI in #${activeChannel.name}.` : "Created from TaskFlow AI.",
+          "",
+          String(message.text || "").slice(0, 1800),
+        ].join("\n"),
+        priority: 1,
+        assigneeId: null,
+        deadlineUtc: null,
+      });
+      setAiMessages((current) => current.map((item) => {
+        if (item.id !== message.id) return item;
+        const createdTaskTitles = [...new Set([...asArray(item.createdTaskTitles), title])];
+        return {
+          ...item,
+          createdTaskTitle: title,
+          createdTaskTitles,
+        };
+      }));
+    } catch (apiError) {
+      setAiError(formatApiError(apiError));
+    } finally {
+      setAiTaskActionIds((current) => {
+        const next = { ...current };
+        delete next[actionId];
+        return next;
+      });
+    }
+  }
+
+  function selectAiAction(action) {
+    setSelectedAiActionKey(action.key);
+    setIsAiToolMenuOpen(false);
+    setAiError("");
+    requestAnimationFrame(() => aiInputRef.current?.focus());
+  }
+
+  function clearSelectedAiAction() {
+    setSelectedAiActionKey("");
+    requestAnimationFrame(() => aiInputRef.current?.focus());
+  }
+
+  function buildAiPanelCommand() {
+    const customPrompt = aiDraft.trim();
+    if (!selectedAiAction) return customPrompt;
+    if (!customPrompt) return selectedAiAction.command;
+    return `${selectedAiAction.command}\n\n${t("channel.aiCustomInstructionPrefix")} ${customPrompt}`;
+  }
+
+  async function submitAiPanelCommand(event) {
+    event.preventDefault();
+    const command = buildAiPanelCommand();
+    if (!command || !activeChannel || aiLoading) return;
+    if (selectedAiAction && isAiActionDisabled(selectedAiAction)) {
+      setAiError(getAiActionDisabledReason(selectedAiAction));
+      return;
+    }
+
+    const response = await runAiCommand(command, selectedContextAttachmentIds);
+    if (response) {
+      setAiDraft("");
+      setSelectedAiActionKey("");
+      setIsAiToolMenuOpen(false);
     }
   }
 
@@ -1160,8 +1365,27 @@ export default function Channels() {
 
     let uploadedAttachment = null;
     try {
+      if (isAiMention(content) || (selectedFile && !content)) {
+        if (selectedFile) {
+          uploadedAttachment = await uploadSelectedAttachment();
+        }
+
+        const attachmentIds = uploadedAttachment?.id && uploadedAttachment.isAiIndexed
+          ? [...new Set([uploadedAttachment.id, ...selectedContextAttachmentIds])]
+          : selectedContextAttachmentIds;
+        const response = await runAiCommand(content || t("channel.commandAttachment"), attachmentIds);
+        if (response) {
+          setDraft("");
+          clearTimeout(typingStopTimerRef.current);
+          if (connection?.state === chatConnectionState.connected) {
+            await connection.invoke("StopTyping", activeChannelId);
+          }
+        }
+        return;
+      }
+
       if (selectedFile) {
-        uploadedAttachment = await sendSelectedAttachmentMessage(content);
+        await sendSelectedAttachmentMessage(content);
       } else if (content) {
         if (!connection || connection.state !== chatConnectionState.connected) {
           setChatError(t("channel.readyError"));
@@ -1173,11 +1397,6 @@ export default function Channels() {
         setDraft("");
         clearTimeout(typingStopTimerRef.current);
         await connection.invoke("StopTyping", activeChannelId);
-      }
-
-      if (isAiMention(content) || (!content && uploadedAttachment)) {
-        const command = content || t("channel.commandAttachment");
-        await runAiCommand(command, uploadedAttachment?.id || selectedAttachmentId);
       }
     } catch (error) {
       if (error?.errors || error?.statusCode) {
@@ -1423,55 +1642,112 @@ export default function Channels() {
   function isAiActionDisabled(action) {
     return !activeChannel
       || aiLoading
-      || Boolean(action.requiresIndexedAttachment && selectedAttachmentFailed);
+      || Boolean(action.requiresIndexedAttachment && !selectedContextHasIndexedAttachment);
   }
 
   function getAiActionDisabledReason(action) {
-    if (!action.requiresIndexedAttachment || !selectedAttachmentFailed) return "";
+    if (!action.requiresIndexedAttachment || selectedContextHasIndexedAttachment) return "";
     return t("channel.actionNeedsIndexedAttachment");
   }
 
-  function renderSourceReadiness() {
-    if (!selectedAttachment) {
-      return (
-        <div className="source-readiness-card empty">
-          <strong>{t("channel.noSelectedContext")}</strong>
-          <p>{t("channel.sourceChannelFallback")}</p>
-        </div>
-      );
-    }
+  function getAttachmentMeta(attachment) {
+    return [
+      getAttachmentLabel(attachment, t),
+      formatFileSize(attachment.sizeBytes),
+      attachment.time,
+    ].filter(Boolean).join(" · ");
+  }
 
-    const isImage = selectedAttachment.contentType.startsWith("image/");
-    const statusKey = selectedAttachmentIndexed ? "ready" : "blocked";
-    const summary = selectedAttachment.summary || (selectedAttachmentIndexed
-      ? t("channel.sourceReadyNoSummary")
-      : t("channel.sourceNotIndexed"));
-    const isReindexingSelectedAttachment = reindexingAttachmentId === selectedAttachment.id;
+  function renderContextAttachmentCard(attachment) {
+    const isImage = attachment.contentType.startsWith("image/");
+    const isIndexed = Boolean(attachment.isAiIndexed);
+    const isSelected = isIndexed && selectedContextAttachmentIds.includes(attachment.id);
+    const statusKey = isIndexed ? "ready" : "blocked";
+    const typeKey = isPdfAttachment(attachment)
+      ? "pdf"
+      : isImage
+        ? "image"
+        : "file";
 
     return (
-      <div className={`source-readiness-card ${statusKey}`}>
-        <div className="source-readiness-main">
-          {isImage ? <Image size={17} /> : <FileText size={17} />}
-          <span>
-            <strong>{selectedAttachment.fileName}</strong>
-            <small>{getAttachmentLabel(selectedAttachment, t)} · {formatFileSize(selectedAttachment.sizeBytes)}</small>
-          </span>
-        </div>
-        <div className={`source-readiness-status ${statusKey}`}>
-          {selectedAttachmentIndexed ? t("channel.sourceReady") : t("channel.sourceBlocked")}
-        </div>
-        <p>{summary}</p>
-        {!selectedAttachmentIndexed && (
-          <button
-            type="button"
-            className="source-reindex-button"
-            onClick={() => reindexAttachment(selectedAttachment.id)}
-            disabled={Boolean(reindexingAttachmentId)}
-          >
-            <RefreshCw size={14} />
-            {isReindexingSelectedAttachment ? t("channel.sourceIndexing") : t("channel.retryIndex")}
-          </button>
-        )}
+      <div
+        key={attachment.id}
+        className={`source-readiness-card context-attachment-card ${statusKey} content-${typeKey} ${isSelected ? "selected" : ""}`}
+      >
+        <button
+          type="button"
+          className="source-context-select"
+          onClick={() => {
+            if (isIndexed) {
+              setSelectedAttachmentIds((current) => (
+                current.includes(attachment.id)
+                  ? current.filter((id) => id !== attachment.id)
+                  : [...current, attachment.id]
+              ));
+            }
+          }}
+          disabled={!isIndexed}
+          aria-pressed={isSelected}
+          title={`${attachment.fileName} · ${getAttachmentMeta(attachment)}`}
+        >
+          <div className="source-readiness-main">
+            {isImage ? <Image size={17} /> : <FileText size={17} />}
+            <span>
+              <strong>{attachment.fileName}</strong>
+              <small>{getAttachmentLabel(attachment, t)} · {formatFileSize(attachment.sizeBytes)}</small>
+            </span>
+          </div>
+          <div className={`source-readiness-status ${statusKey}`}>
+            {isIndexed ? t("channel.sourceReady") : t("channel.sourceBlocked")}
+          </div>
+        </button>
+      </div>
+    );
+  }
+
+  function renderAiCommandButton(action) {
+    const Icon = action.icon;
+    const disabledReason = getAiActionDisabledReason(action);
+    const isSelected = selectedAiAction?.key === action.key;
+    return (
+      <button
+        key={action.key}
+        type="button"
+        className={`ai-command-card ai-prompt-chip ai-command-card-${action.tone || action.key} ${isSelected ? "selected" : ""}`}
+        data-ai-action={action.key}
+        onClick={() => selectAiAction(action)}
+        disabled={isAiActionDisabled(action)}
+        aria-pressed={isSelected}
+        title={disabledReason || action.label}
+      >
+        <span className="ai-command-icon"><Icon size={15} /></span>
+        <span className="ai-command-copy">
+          <strong>{action.label}</strong>
+          <small>{action.output}</small>
+          {disabledReason && <em>{disabledReason}</em>}
+        </span>
+      </button>
+    );
+  }
+
+  function renderSelectedAiActionChip() {
+    if (!selectedAiAction) return null;
+    const Icon = selectedAiAction.icon;
+    return (
+      <div className={`ai-selected-function-chip ai-command-card-${selectedAiAction.tone || selectedAiAction.key}`}>
+        <span className="ai-command-icon" aria-hidden="true"><Icon size={15} /></span>
+        <span className="ai-selected-function-copy">
+          <strong>{selectedAiAction.label}</strong>
+          <small>{selectedAiAction.output}</small>
+        </span>
+        <button
+          type="button"
+          onClick={clearSelectedAiAction}
+          aria-label={t("channel.clearAiFunction", { name: selectedAiAction.label })}
+          title={t("channel.clearAiFunction", { name: selectedAiAction.label })}
+        >
+          <X size={14} />
+        </button>
       </div>
     );
   }
@@ -1496,6 +1772,112 @@ export default function Channels() {
           {sourceCount > 0 ? t("channel.aiSourceCount", { count: sourceCount }) : t("channel.noAiSources")}
         </span>
       </button>
+    );
+  }
+
+  function renderAiConversationMessage(message) {
+    const isUser = message.role === "user";
+    const shareActionId = `share-${message.id}`;
+    const isSharing = Boolean(aiShareActionIds[shareActionId]);
+    const isShared = Boolean(message.sharedToChannel || message.sharedMessageId);
+    const suggestedTaskTitles = asArray(message.suggestedTasks);
+    const createdTaskTitles = asArray(message.createdTaskTitles);
+
+    return (
+      <div
+        key={message.id}
+        className={`ai-chat-row ${isUser ? "user" : "assistant"}`}
+      >
+        {!isUser && (
+          <span className="ai-chat-avatar" aria-hidden="true"><Bot size={16} /></span>
+        )}
+        <div className="ai-chat-bubble">
+          {isUser ? (
+            <>
+              <p>{message.text}</p>
+              <small>{message.contextLabel}</small>
+            </>
+          ) : (
+            <>
+              <MarkdownContent>{message.text}</MarkdownContent>
+              {suggestedTaskTitles.length > 0 && (
+                <div className="ai-suggested-task-list">
+                  <div className="ai-suggested-task-header">
+                    <strong>{t("channel.suggestedTasks")}</strong>
+                    {taskProjects.length > 0 && (
+                      <select
+                        aria-label={t("channel.taskProject")}
+                        value={taskProjectId}
+                        onChange={(event) => setTaskProjectId(event.target.value)}
+                      >
+                        {taskProjects.map((project) => (
+                          <option key={project.id} value={project.id}>{project.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  {suggestedTaskTitles.map((taskTitle) => {
+                    const actionId = `task-${message.id}-${taskTitle}`;
+                    const isCreatingTask = Boolean(aiTaskActionIds[actionId]);
+                    const isCreatedTask = createdTaskTitles.includes(taskTitle) || message.createdTaskTitle === taskTitle;
+                    return (
+                      <div className="ai-suggested-task-item" key={taskTitle}>
+                        <small>{taskTitle}</small>
+                        <button
+                          type="button"
+                          className="secondary-button compact"
+                          onClick={() => createSuggestedTask(taskTitle, message)}
+                          disabled={!taskProjectId || isCreatingTask || isCreatedTask}
+                        >
+                          <ListTodo size={13} />
+                          {isCreatedTask
+                            ? t("channel.taskCreated")
+                            : isCreatingTask
+                              ? t("channel.creatingTask")
+                              : t("channel.createTask")}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {asArray(message.sources).length > 0 && (
+                <div className="message-sources expanded">
+                  <span>{t("channel.sources")}</span>
+                  {asArray(message.sources).map((source) => <small key={source}>{source}</small>)}
+                </div>
+              )}
+              {message.agentJobId && renderAgentJobPanel(message)}
+              <div className="ai-review-actions" aria-label={t("channel.reviewAiOutput")}>
+                {isShared ? (
+                  <span className="ai-review-status">
+                    <ClipboardCheck size={13} /> {t("channel.sentToChannel")}
+                  </span>
+                ) : (
+                  <>
+                    <button
+                      className="primary-button compact"
+                      type="button"
+                      onClick={() => shareAiPreview(message)}
+                      disabled={isSharing}
+                    >
+                      {isSharing ? <RefreshCw size={13} /> : <Send size={13} />} {isSharing ? t("channel.sendingToChannel") : t("channel.sendToChannel")}
+                    </button>
+                    <button
+                      className="secondary-button compact"
+                      type="button"
+                      onClick={() => dismissAiPreview(message.id)}
+                      disabled={isSharing}
+                    >
+                      <X size={13} /> {t("channel.doNotSend")}
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -1714,15 +2096,6 @@ export default function Channels() {
                   </div>
                 </div>
               ))}
-              {aiLoading && (
-                <div className="message-row ai-message-row">
-                  <div className="message-avatar" aria-hidden="true"><Bot size={17} /></div>
-                  <div className="message-body">
-                    <strong>{t("channel.aiMember")}</strong>
-                    <p>{t("channel.aiThinking")}</p>
-                  </div>
-                </div>
-              )}
               <div ref={messageEndRef} />
             </div>
 
@@ -1808,22 +2181,15 @@ export default function Channels() {
                 onClick={closeAiPanel}
                 type="button"
               />
-              <aside id="channel-ai-drawer" className="panel channel-inspector channel-drawer" aria-label={t("channel.aiPanel")}>
-                <div className="drawer-title-row">
-                  <div className="ai-member-card">
-                    <div className="ai-member-icon"><Bot size={19} /></div>
-                    <div>
-                      <strong>{t("channel.aiMember")}</strong>
-                      <p>{activeChannel ? `#${activeChannel.name}` : t("channel.selectChannel")}</p>
-                    </div>
-                  </div>
-                  <div className="ai-workbench-status" aria-label={t("channel.aiWorkbenchStatus")}>
-                    <span className={selectedAttachmentIndexed ? "ready" : "neutral"}>
-                      {selectedAttachment
-                        ? (selectedAttachmentIndexed ? t("channel.sourceReady") : t("channel.sourceBlocked"))
-                        : t("channel.sourceChannel")}
-                    </span>
-                    <span>{t("channel.recentOutputCount", { count: recentChannelOutputs.length })}</span>
+              <aside
+                id="channel-ai-drawer"
+                className="panel channel-inspector channel-drawer compact-ai-drawer"
+                aria-label={t("channel.aiPanel")}
+              >
+                <div className="drawer-title-row ai-drawer-title-row">
+                  <div>
+                    <p className="drawer-kicker">{activeChannel ? `# ${activeChannel.name}` : t("channel.selectChannel")}</p>
+                    <h3>{t("channel.aiMember")}</h3>
                   </div>
                   <button
                     aria-label={t("channel.hideAiPanel")}
@@ -1836,150 +2202,135 @@ export default function Channels() {
                   </button>
                 </div>
 
-                <div className="ai-workbench-intro">
-                  <strong>{t("channel.aiWorkbenchTitle")}</strong>
-                  <p>{t("channel.aiMemberHelp")}</p>
-                </div>
-
-                {selectedAiMessage && (
-                  <div className="inspector-section ai-response-section">
-                    <div className="inspector-heading">
-                      <strong>{t("channel.fullAiResponse")}</strong>
-                      <span>{asArray(selectedAiMessage.sources).length}</span>
+                <div className="ai-drawer-body ai-chat-body">
+                  {activeAiMessages.length === 0 && !aiLoading ? (
+                    <div className="ai-empty-state">
+                      <h3>{t("channel.aiStartTitle")}</h3>
+                      <p>{t("channel.aiStartHelp")}</p>
                     </div>
-                    <div className="ai-response-detail">
-                      <MarkdownContent>{selectedAiMessage.text}</MarkdownContent>
-                      {asArray(selectedAiMessage.sources).length > 0 && (
-                        <div className="message-sources expanded">
-                          <span>{t("channel.sources")}</span>
-                          {asArray(selectedAiMessage.sources).map((source) => <small key={source}>{source}</small>)}
+                  ) : (
+                    <div className="ai-chat-thread">
+                      {activeAiMessages.map(renderAiConversationMessage)}
+                      {aiLoading && (
+                        <div className="ai-chat-row assistant" role="status">
+                          <span className="ai-chat-avatar" aria-hidden="true"><Bot size={16} /></span>
+                          <div className="ai-chat-bubble thinking">
+                            <RefreshCw size={15} /> {t("channel.aiThinking")}
+                          </div>
                         </div>
                       )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="ai-action-groups">
-                  {aiActionGroups.map((group) => (
-                    <section className="ai-action-group" key={group.key}>
-                      <div className="inspector-heading">
-                        <strong>{group.label}</strong>
-                      </div>
-                      <div className="ai-command-card-grid">
-                        {group.actions.map((action) => {
-                          const Icon = action.icon;
-                          const disabledReason = getAiActionDisabledReason(action);
-                          return (
-                            <button
-                              key={action.key}
-                              type="button"
-                              className={`ai-command-card ai-command-card-${action.tone || action.key}`}
-                              data-ai-action={action.key}
-                              onClick={() => runAiCommand(action.command, selectedAttachmentId)}
-                              disabled={isAiActionDisabled(action)}
-                              title={disabledReason || action.label}
-                            >
-                              <span className="ai-command-icon"><Icon size={16} /></span>
-                              <span className="ai-command-copy">
-                                <strong>{action.label}</strong>
-                                <small>{action.output} · {action.approval}</small>
-                                {disabledReason && <em>{disabledReason}</em>}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
-                </div>
-
-                <div className="inspector-section source-readiness-section">
-                  <div className="inspector-heading">
-                    <strong>{t("channel.sourceReadiness")}</strong>
-                  </div>
-                  {renderSourceReadiness()}
-                </div>
-
-                <div className="inspector-section recent-output-section">
-                  <div className="inspector-heading">
-                    <strong>{t("channel.recentOutputs")}</strong>
-                    <span>{recentChannelOutputs.length}</span>
-                  </div>
-                  {recentChannelOutputs.length === 0 ? (
-                    <p className="muted-small">{t("channel.noRecentOutputs")}</p>
-                  ) : (
-                    <div className="recent-output-list">
-                      {recentChannelOutputs.map((artifact) => (
-                        <button
-                          className="recent-output-item"
-                          type="button"
-                          key={artifact.id}
-                          onClick={() => downloadAttachment(artifact)}
-                        >
-                          <FileText size={15} />
-                          <span>
-                            <strong>{artifact.fileName}</strong>
-                            <small>{artifact.contentType || formatFileSize(artifact.sizeBytes)}</small>
-                          </span>
-                          <Download size={14} />
-                        </button>
-                      ))}
+                      <div ref={aiThreadEndRef} />
                     </div>
                   )}
                 </div>
 
-                <div className="inspector-section attachment-context-section">
-                  <div className="inspector-heading">
-                    <strong>{t("channel.attachments")}</strong>
-                    <span>{attachments.length}</span>
-                  </div>
-                  {attachmentLoading && <p className="muted-small">{t("channel.loadingAttachments")}</p>}
-                  {!attachmentLoading && attachments.length === 0 && <p className="muted-small">{t("channel.noAttachments")}</p>}
-                  <div className="attachment-list polished-attachment-list">
-                    {attachments.map((attachment) => {
-                      const isImage = attachment.contentType.startsWith("image/");
-                      const isPdf = isPdfAttachment(attachment);
-                      const isSelected = attachment.id === selectedAttachmentId;
-                      const attachmentMeta = `${getAttachmentLabel(attachment, t)} · ${formatFileSize(attachment.sizeBytes)} · ${attachment.time}`;
-                      return (
-                        <div
-                          key={attachment.id}
-                          className={`attachment-item ai-attachment-card ${isSelected ? "selected" : ""}`}
-                        >
-                          <button
-                            type="button"
-                            className="attachment-select-button"
-                            onClick={() => setSelectedAttachmentId(attachment.id)}
-                            aria-label={`${attachment.fileName} · ${attachmentMeta}`}
-                            aria-pressed={isSelected}
-                            title={`${attachment.fileName} · ${attachmentMeta}`}
-                          >
-                            <span className={`attachment-file-badge ${isPdf ? "pdf" : ""} ${isImage ? "image" : ""}`} aria-hidden="true">
-                              {isImage ? <Image size={16} /> : <FileText size={16} />}
-                            </span>
-                            <span className="attachment-copy">
-                              <strong title={attachment.fileName}>{attachment.fileName}</strong>
-                              <small title={attachmentMeta}>{attachmentMeta}</small>
-                            </span>
-                            {isSelected && <em className="selected-attachment-label">Selected</em>}
-                          </button>
-                          <button
-                            type="button"
-                            className="delete-attachment-button polished-delete-button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteAttachment(attachment.id);
-                            }}
-                            aria-label={t("channel.deleteFile")}
-                            title={t("channel.deleteFile")}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                <form className="ai-command-panel" onSubmit={submitAiPanelCommand}>
+                  {aiError && <div className="ai-panel-error" role="alert">{aiError}</div>}
+                  {isAiToolMenuOpen && (
+                    <div className="ai-tool-menu" aria-label={t("channel.aiToolMenuTitle")}>
+                      <div className="ai-tool-menu-scroll">
+                        <p className="ai-tool-menu-title">{t("channel.aiToolMenuTitle")}</p>
+
+                        <div className="ai-tool-section ai-function-section">
+                          <div className="ai-tool-section-heading">
+                            <strong>{t("channel.quickPrompts")}</strong>
+                            <span>{aiActions.length}</span>
+                          </div>
+                          <div className="ai-command-card-grid ai-function-grid">
+                            {aiActions.map(renderAiCommandButton)}
+                          </div>
                         </div>
-                      );
-                    })}
+
+                        <details className="ai-secondary-disclosure recent-output-section">
+                          <summary>
+                            <span>{t("channel.recentOutputs")}</span>
+                            <small>{recentChannelOutputs.length}</small>
+                          </summary>
+                          {recentChannelOutputs.length === 0 ? (
+                            <p className="muted-small">{t("channel.noRecentOutputs")}</p>
+                          ) : (
+                            <div className="recent-output-list">
+                              {recentChannelOutputs.map((artifact) => (
+                                <button
+                                  className="recent-output-item"
+                                  type="button"
+                                  key={artifact.id}
+                                  onClick={() => downloadAttachment(artifact)}
+                                >
+                                  <FileText size={15} />
+                                  <span>
+                                    <strong>{artifact.fileName}</strong>
+                                    <small>{artifact.contentType || formatFileSize(artifact.sizeBytes)}</small>
+                                  </span>
+                                  <Download size={14} />
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </details>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="ai-command-stack">
+                    <div className="ai-selected-context-strip">
+                      <div className="ai-tool-section-heading">
+                        <strong>{t("channel.selectedContext")}</strong>
+                        <span>{selectedContextCount}</span>
+                      </div>
+                      {attachmentLoading && <p className="muted-small">{t("channel.loadingAttachments")}</p>}
+                      {!attachmentLoading && contextAttachments.length === 0 && (
+                        <p className="muted-small">{t("channel.noAttachments")}</p>
+                      )}
+                      {!attachmentLoading && (
+                        <div className="ai-visible-context-list">
+                          {contextAttachments.map(renderContextAttachmentCard)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="ai-command-input-shell">
+                      {renderSelectedAiActionChip()}
+                      <textarea
+                        ref={aiInputRef}
+                        aria-label={t("channel.aiInputPlaceholder")}
+                        value={aiDraft}
+                        onChange={(event) => setAiDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            submitAiPanelCommand(event);
+                          }
+                        }}
+                        placeholder={
+                          selectedAiAction
+                            ? t("channel.aiInputWithFunctionPlaceholder", { name: selectedAiAction.label })
+                            : t("channel.aiInputPlaceholder")
+                        }
+                        rows={3}
+                      />
+                      <div className="ai-command-toolbar">
+                        <button
+                          type="button"
+                          className={`ai-tool-toggle ${isAiToolMenuOpen ? "active" : ""}`}
+                          aria-label={isAiToolMenuOpen ? t("channel.closeAiTools") : t("channel.openAiTools")}
+                          aria-expanded={isAiToolMenuOpen}
+                          onClick={() => setIsAiToolMenuOpen((current) => !current)}
+                        >
+                          <Plus size={22} />
+                        </button>
+                        <button
+                          type="submit"
+                          className="ai-command-submit"
+                          disabled={!canSubmitAiPrompt}
+                          aria-label={t("channel.aiSubmitPrompt")}
+                          title={t("channel.aiSubmitPrompt")}
+                        >
+                          {aiLoading ? <RefreshCw size={18} /> : <Send size={18} />}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </form>
               </aside>
             </>
           )}

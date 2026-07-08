@@ -29,8 +29,9 @@ public class AiContextService(
     public async Task<ApiResponse<AiChannelContext>> BuildChannelContextAsync(
         Guid channelId,
         string query,
-        Guid? attachmentId = null,
-        CancellationToken cancellationToken = default)
+        IReadOnlyCollection<Guid>? attachmentIds = null,
+        CancellationToken cancellationToken = default,
+        bool channelOnly = false)
     {
         var userId = currentUser.GetUserId();
         var channel = await dbContext.Channels
@@ -44,20 +45,27 @@ public class AiContextService(
         var recentMessages = await dbContext.Messages
             .AsNoTracking()
             .Include(message => message.Sender)
-            .Where(message => message.ChannelId == channelId && !message.IsDeleted)
+            .Where(message =>
+                message.ChannelId == channelId
+                && !message.IsDeleted
+                && !message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix))
             .OrderByDescending(message => message.CreatedAtUtc)
             .Take(RecentChannelMessageLimit)
             .ToListAsync(cancellationToken);
         recentMessages.Reverse();
 
         var recentMessageContext = recentMessages.Count == 0
-            ? "No messages in this channel yet."
+            ? "No human-authored messages in this channel yet."
             : string.Join(Environment.NewLine, recentMessages.Select(message =>
                 $"- [{FormatDate(message.CreatedAtUtc)} UTC] {message.Sender!.Name}: {message.Content}"));
 
         var snippets = new List<ContextSnippet>();
-        snippets.AddRange(await BuildWorkspaceMessageSnippetsAsync(channel.WorkspaceId, userId, query, cancellationToken));
-        var attachmentSnippetsResult = await BuildAttachmentSnippetsAsync(channel.WorkspaceId, channelId, query, attachmentId, cancellationToken);
+        if (!channelOnly)
+        {
+            snippets.AddRange(await BuildWorkspaceMessageSnippetsAsync(channel.WorkspaceId, userId, query, cancellationToken));
+        }
+
+        var attachmentSnippetsResult = await BuildAttachmentSnippetsAsync(channel.WorkspaceId, channelId, query, attachmentIds, cancellationToken);
         if (!attachmentSnippetsResult.Success || attachmentSnippetsResult.Data is null)
         {
             return ApiResponse.Fail<AiChannelContext>(
@@ -66,7 +74,10 @@ public class AiContextService(
                 attachmentSnippetsResult.Errors);
         }
         snippets.AddRange(attachmentSnippetsResult.Data);
-        snippets.AddRange(await BuildProjectTaskSnippetsAsync(channel.WorkspaceId, cancellationToken));
+        if (!channelOnly)
+        {
+            snippets.AddRange(await BuildProjectTaskSnippetsAsync(channel.WorkspaceId, cancellationToken));
+        }
 
         var selected = RankSnippets(snippets, query, maxResults: 14)
             .GroupBy(snippet => $"{snippet.Source}\n{snippet.Text}", StringComparer.OrdinalIgnoreCase)
@@ -74,7 +85,9 @@ public class AiContextService(
             .ToArray();
 
         var retrievedContext = selected.Length == 0
-            ? "No accessible workspace messages, indexed attachment chunks, projects, or tasks matched this request."
+            ? channelOnly
+                ? "No indexed attachment chunks matched this channel summary request."
+                : "No accessible workspace messages, indexed attachment chunks, projects, or tasks matched this request."
             : string.Join(Environment.NewLine + Environment.NewLine, selected.Select((snippet, index) =>
                 $"{index + 1}. Source: {snippet.Source}{Environment.NewLine}{snippet.Text}"));
 
@@ -105,6 +118,7 @@ public class AiContextService(
             .Where(message =>
                 message.Channel!.WorkspaceId == workspaceId
                 && !message.IsDeleted
+                && !message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix)
                 && (!message.Channel!.IsPrivate || message.Channel.Members.Any(member => member.UserId == userId)))
             .OrderByDescending(message => message.CreatedAtUtc)
             .Take(WorkspaceMessageScanLimit)
@@ -128,32 +142,84 @@ public class AiContextService(
         Guid workspaceId,
         Guid channelId,
         string queryText,
-        Guid? attachmentId,
+        IReadOnlyCollection<Guid>? attachmentIds,
         CancellationToken cancellationToken)
     {
         var query = dbContext.ChannelKnowledgeChunks
             .AsNoTracking()
-            .Where(chunk => chunk.WorkspaceId == workspaceId && chunk.ChannelId == channelId);
+            .Where(chunk =>
+                chunk.WorkspaceId == workspaceId
+                && chunk.ChannelId == channelId
+                && (chunk.Attachment == null
+                    || chunk.Attachment.Message == null
+                    || !chunk.Attachment.Message.Content.StartsWith(IAiCommandService.ChannelAiMessagePrefix)));
 
-        if (attachmentId.HasValue)
+        if (attachmentIds is not null)
         {
-            query = query.Where(chunk => chunk.AttachmentId == attachmentId.Value);
-        }
+            var selectedAttachmentIds = NormalizeAttachmentIds(attachmentIds);
+            if (selectedAttachmentIds.Length == 0)
+            {
+                return ApiResponse.Ok<IReadOnlyCollection<ContextSnippet>>([]);
+            }
 
-        if (attachmentId.HasValue)
-        {
-            var selectedAttachmentSnippets = await query
-                .OrderBy(chunk => chunk.CreatedAtUtc)
-                .Take(SelectedAttachmentChunkLimit)
-                .Select(chunk => new ContextSnippet(
-                    $"{chunk.SourceType}: {chunk.SourceLabel}",
-                    chunk.Content))
+            var selectedAttachments = await dbContext.ChannelAttachments
+                .AsNoTracking()
+                .Include(attachment => attachment.Message)
+                .Where(attachment =>
+                    selectedAttachmentIds.Contains(attachment.Id)
+                    && attachment.WorkspaceId == workspaceId
+                    && attachment.ChannelId == channelId)
+                .ToListAsync(cancellationToken);
+            if (selectedAttachments.Count != selectedAttachmentIds.Length)
+            {
+                return ApiResponse.Fail<IReadOnlyCollection<ContextSnippet>>(
+                    "Attachment not found in this channel.",
+                    StatusCodes.Status404NotFound);
+            }
+
+            if (selectedAttachments.Any(attachment => IsAiGeneratedContent(attachment.Message?.Content)))
+            {
+                return ApiResponse.Fail<IReadOnlyCollection<ContextSnippet>>(
+                    "AI-generated outputs cannot be selected as channel context.",
+                    StatusCodes.Status400BadRequest);
+            }
+
+            if (selectedAttachments.Any(attachment => !attachment.IsAiIndexed))
+            {
+                return ApiResponse.Fail<IReadOnlyCollection<ContextSnippet>>(
+                    "Only indexed attachments can be selected as AI context.",
+                    StatusCodes.Status400BadRequest);
+            }
+
+            var selectedAttachmentRows = await query
+                .Where(chunk => chunk.AttachmentId.HasValue && selectedAttachmentIds.Contains(chunk.AttachmentId.Value))
+                .OrderBy(chunk => chunk.SourceLabel)
+                .ThenBy(chunk => chunk.CreatedAtUtc)
+                .Select(chunk => new
+                {
+                    chunk.AttachmentId,
+                    Snippet = new ContextSnippet(
+                        $"{chunk.SourceType}: {chunk.SourceLabel}",
+                        chunk.Content)
+                })
                 .ToListAsync(cancellationToken);
 
-            return ApiResponse.Ok<IReadOnlyCollection<ContextSnippet>>(selectedAttachmentSnippets);
+            IReadOnlyCollection<ContextSnippet> selectedAttachmentSnippets = selectedAttachmentRows
+                .GroupBy(row => row.AttachmentId)
+                .SelectMany(group => group.Take(SelectedAttachmentChunkLimit))
+                .Select(row => row.Snippet)
+                .ToArray();
+
+            return ApiResponse.Ok(selectedAttachmentSnippets);
         }
 
-        if (!await query.AnyAsync(cancellationToken))
+        var allowedAttachmentIds = await query
+            .Where(chunk => chunk.AttachmentId.HasValue)
+            .Select(chunk => chunk.AttachmentId!.Value)
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+
+        if (allowedAttachmentIds.Length == 0)
         {
             return ApiResponse.Ok<IReadOnlyCollection<ContextSnippet>>([]);
         }
@@ -173,12 +239,13 @@ public class AiContextService(
             var matches = await pineconeVectorStore.SearchAsync(
                 workspaceId,
                 channelId,
-                attachmentId,
+                null,
                 embedding,
                 ChannelChunkLimit,
                 cancellationToken);
 
             IReadOnlyCollection<ContextSnippet> snippets = matches
+                .Where(match => match.AttachmentId.HasValue && allowedAttachmentIds.Contains(match.AttachmentId.Value))
                 .Select(match => new ContextSnippet(match.Source, match.Text))
                 .ToArray();
             return ApiResponse.Ok(snippets);
@@ -191,6 +258,20 @@ public class AiContextService(
         {
             return ApiResponse.Fail<IReadOnlyCollection<ContextSnippet>>(ex.Message, StatusCodes.Status502BadGateway);
         }
+    }
+
+    private static Guid[] NormalizeAttachmentIds(IEnumerable<Guid> attachmentIds)
+    {
+        return attachmentIds
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToArray();
+    }
+
+    private static bool IsAiGeneratedContent(string? content)
+    {
+        return !string.IsNullOrWhiteSpace(content)
+            && content.StartsWith(IAiCommandService.ChannelAiMessagePrefix, StringComparison.Ordinal);
     }
 
     private async Task<IReadOnlyCollection<ContextSnippet>> BuildProjectTaskSnippetsAsync(Guid workspaceId, CancellationToken cancellationToken)
@@ -327,6 +408,19 @@ public class AiContextService(
 
     private string ResolveEmbeddingModel(AiProviderRuntime provider)
     {
+        if (provider.ProviderName.Contains("Google", StringComparison.OrdinalIgnoreCase)
+            || provider.ProviderName.Contains("Gemini", StringComparison.OrdinalIgnoreCase)
+            || provider.BaseUrl.Contains("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return configuration["AI:GeminiEmbeddingModel"] ?? "gemini-embedding-001";
+        }
+
+        if (provider.ProviderName.Contains("GitHub", StringComparison.OrdinalIgnoreCase)
+            || provider.BaseUrl.Contains("models.github.ai", StringComparison.OrdinalIgnoreCase))
+        {
+            return configuration["AI:GitHubEmbeddingModel"] ?? "openai/text-embedding-3-small";
+        }
+
         return configuration["AI:EmbeddingModel"] ?? configuration["AI:Model"] ?? provider.Model;
     }
 

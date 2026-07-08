@@ -34,7 +34,8 @@ public sealed record PineconeKnowledgeChunk(
 public sealed record PineconeKnowledgeMatch(
     string Source,
     string Text,
-    double? Score);
+    double? Score,
+    Guid? AttachmentId);
 
 public class PineconeVectorStoreException(string message, Exception? innerException = null)
     : Exception(message, innerException);

@@ -21,7 +21,9 @@ public class AiProviderService(
     private static readonly string[] DefaultAllowedBaseUrls =
     [
         "https://api.openai.com/v1",
-        "https://api.siliconflow.cn/v1"
+        "https://api.siliconflow.cn/v1",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "https://models.github.ai/inference"
     ];
 
     public async Task<ApiResponse<AiProviderResponse>> SaveProviderAsync(SaveAiProviderRequest request, CancellationToken cancellationToken = default)
@@ -305,6 +307,17 @@ public class AiProviderService(
         if (providerName.Contains("Silicon", StringComparison.OrdinalIgnoreCase))
         {
             return "https://api.siliconflow.cn/v1";
+        }
+
+        if (providerName.Contains("Google", StringComparison.OrdinalIgnoreCase)
+            || providerName.Contains("Gemini", StringComparison.OrdinalIgnoreCase))
+        {
+            return "https://generativelanguage.googleapis.com/v1beta/openai";
+        }
+
+        if (providerName.Contains("GitHub", StringComparison.OrdinalIgnoreCase))
+        {
+            return "https://models.github.ai/inference";
         }
 
         return configuration["AI:BaseUrl"]

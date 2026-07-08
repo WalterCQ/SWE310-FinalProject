@@ -41,16 +41,8 @@ def flatten_positional_tspans(
 
     Returns True if any tspan was rewritten.
     """
-    if not any(element.tag.endswith("tspan") for element in tree.iter()):
-        return False
-
     scripts_dir = Path(__file__).resolve().parent.parent
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
-    try:
-        from svg_finalize.flatten_tspan import flatten_text_with_tspans  # type: ignore
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "svg_finalize is required only when SVG input contains positional tspan elements."
-        ) from exc
+    from svg_finalize.flatten_tspan import flatten_text_with_tspans  # type: ignore
     return flatten_text_with_tspans(tree, merge_paragraphs=merge_paragraphs)

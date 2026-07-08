@@ -62,6 +62,8 @@ public class AiChannelCommandRequest
     public string Command { get; set; } = string.Empty;
 
     public Guid? AttachmentId { get; set; }
+
+    public IReadOnlyCollection<Guid>? AttachmentIds { get; set; }
 }
 
 public class AiChannelCommandResponse
@@ -78,6 +80,20 @@ public class AiChannelCommandResponse
     public Guid? CreatedTaskId { get; set; }
     public string? CreatedTaskTitle { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class AiChannelShareRequest
+{
+    [Required, StringLength(20000), NonWhiteSpace]
+    public string Result { get; set; } = string.Empty;
+
+    [StringLength(80)]
+    public string ArtifactType { get; set; } = "answer";
+
+    public Guid? AgentJobId { get; set; }
+    public bool RequiresApproval { get; set; }
+    public IReadOnlyCollection<string> Sources { get; set; } = [];
+    public IReadOnlyCollection<string> SuggestedTasks { get; set; } = [];
 }
 
 public class ChannelAttachmentResponse

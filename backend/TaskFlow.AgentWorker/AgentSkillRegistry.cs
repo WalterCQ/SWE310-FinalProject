@@ -8,7 +8,7 @@ public class AgentSkillRegistry(IConfiguration configuration, ILogger<AgentSkill
     public IReadOnlyCollection<string> RegisteredSkillIds { get; } =
     [
         "ppt-master",
-        "md-to-docx",
+        "taskflow-docx-report",
         "openxml-docx"
     ];
 
@@ -82,14 +82,15 @@ public class AgentSkillRegistry(IConfiguration configuration, ILogger<AgentSkill
         string markdown,
         CancellationToken cancellationToken)
     {
-        var preferred = configuration["AgentSkills:DocxSkill"];
-        if (string.IsNullOrWhiteSpace(preferred)
-            || string.Equals(preferred, "md-to-docx", StringComparison.OrdinalIgnoreCase))
-        {
-            return await BuildDocxWithMarkdownSkillAsync(markdown, cancellationToken);
-        }
-
-        throw new InvalidOperationException("Only the md-to-docx runtime skill is enabled for report artifacts.");
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        var content = AgentArtifactDocumentBuilder.BuildReportDocxFromMarkdown(markdown);
+        return new SkillBinaryResult(
+            "taskflow-docx-report",
+            "taskflow-ai-report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            content,
+            "TaskFlow OpenXML report renderer completed.");
     }
 
     public string BuildMarkdown(string title, string goal, IReadOnlyCollection<string> contextLines)

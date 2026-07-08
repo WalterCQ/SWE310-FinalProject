@@ -284,6 +284,7 @@ export function mapMessage(message) {
     sender: isAi ? translateKey("channel.aiMember") : (message.senderName || shortId(message.senderId)),
     text: isAi ? rawContent.slice(aiPrefix.length) : rawContent,
     isAi,
+    artifactType: message.aiArtifactType || message.artifactType || "answer",
     sources: asArray(message.sources),
     suggestedTasks: asArray(message.suggestedTasks),
     createdTaskTitle: message.createdTaskTitle || "",

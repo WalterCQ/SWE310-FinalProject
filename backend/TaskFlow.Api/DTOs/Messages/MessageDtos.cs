@@ -35,5 +35,12 @@ public class MessageResponse
     public bool IsDeleted { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? EditedAtUtc { get; set; }
+    public string? AiArtifactType { get; set; }
+    public Guid? AgentJobId { get; set; }
+    public bool RequiresApproval { get; set; }
+    public IReadOnlyCollection<string> Sources { get; set; } = [];
+    public IReadOnlyCollection<string> SuggestedTasks { get; set; } = [];
+    public Guid? CreatedTaskId { get; set; }
+    public string? CreatedTaskTitle { get; set; }
     public IReadOnlyCollection<ChannelAttachmentResponse> Attachments { get; set; } = [];
 }

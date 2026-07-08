@@ -220,7 +220,12 @@ public class ApiDocumentationOperationFilter : IOperationFilter
                 typeof(ChannelAttachmentResponse)),
             ["Channels.RunChannelAi"] = new(
                 "Run a channel AI command",
-                "Executes an @TaskFlow AI command against recent channel messages and optional indexed attachment context. Requires channel access and workspace AI permission, then returns grounded sources, suggested tasks, or generated artifacts.",
+                "Executes an @TaskFlow AI command against recent channel messages and optional indexed attachment context. Requires channel access and workspace AI permission, then returns a preview with grounded sources, suggested tasks, or generated artifact content without posting it into the channel.",
+                StatusCodes.Status200OK,
+                typeof(AiChannelCommandResponse)),
+            ["Channels.ShareChannelAi"] = new(
+                "Share an approved channel AI result",
+                "Posts a previously previewed TaskFlow AI result into the channel only after user confirmation. Report and PPT previews are converted into downloadable DOCX or PPTX attachments at this approval step.",
                 StatusCodes.Status200OK,
                 typeof(AiChannelCommandResponse)),
             ["Channels.GetChannelMembers"] = new(

@@ -44,6 +44,7 @@ public class AgentJob
     public Guid? ProviderCredentialId { get; set; }
     public Guid? ChannelId { get; set; }
     public Guid? AttachmentId { get; set; }
+    public string? ContextAttachmentIdsJson { get; set; }
     public Guid? GitHubRepositoryConnectionId { get; set; }
     public string? ArtifactTarget { get; set; }
     public string Goal { get; set; } = string.Empty;

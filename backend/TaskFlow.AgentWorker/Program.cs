@@ -26,6 +26,7 @@ builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAiProviderService, AiProviderService>();
 builder.Services.AddScoped<IAiContextService, AiContextService>();
+builder.Services.AddScoped<IPineconeVectorStore, PineconeVectorStore>();
 builder.Services.AddScoped<IGitHubRepositoryService, GitHubRepositoryService>();
 builder.Services.AddScoped<AgentSkillRegistry>();
 builder.Services.AddScoped<AgentJobProcessor>();

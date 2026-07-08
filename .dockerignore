@@ -1,0 +1,14 @@
+.git
+.github
+artifacts
+frontend/node_modules
+frontend/dist
+backend/**/bin
+backend/**/obj
+tools/**/bin
+tools/**/obj
+logs.zip
+logs_extracted
+**/.DS_Store
+**/__pycache__
+**/.pytest_cache

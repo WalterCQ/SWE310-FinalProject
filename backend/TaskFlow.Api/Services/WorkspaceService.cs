@@ -334,6 +334,11 @@ public class WorkspaceService(
 
     private async Task<bool> CanCurrentUserCreateWorkspace(Guid userId)
     {
+        if (currentUser.GetGlobalRole() == GlobalRole.Administrator)
+        {
+            return true;
+        }
+
         return await dbContext.WorkspaceMembers.AnyAsync(member =>
             member.UserId == userId && member.Role == WorkspaceRole.Manager);
     }

@@ -22,7 +22,7 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
 
         try
         {
-            var index = GetIndex();
+            var index = GetIndex(chunks.First().Embedding.Length);
             var @namespace = ResolveNamespace(workspaceId);
             var vectors = chunks.Select(chunk => new Vector
             {
@@ -87,7 +87,7 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
                 filter["attachmentId"] = new Metadata { ["$eq"] = attachmentId.Value.ToString("D") };
             }
 
-            var response = await GetIndex().QueryAsync(new QueryRequest
+            var response = await GetIndex(queryEmbedding.Length).QueryAsync(new QueryRequest
             {
                 Namespace = ResolveNamespace(workspaceId),
                 Vector = queryEmbedding,
@@ -105,11 +105,15 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
                     var sourceLabel = GetMetadataString(metadata, "sourceLabel", "attachment");
                     var channelName = GetMetadataString(metadata, "channelName", "channel");
                     var chunkIndex = GetMetadataString(metadata, "chunkIndex", "");
+                    var attachmentIdText = GetMetadataString(metadata, "attachmentId", "");
+                    var attachmentId = Guid.TryParse(attachmentIdText, out var parsedAttachmentId)
+                        ? parsedAttachmentId
+                        : (Guid?)null;
                     var text = GetMetadataString(metadata, "text", "");
                     var source = string.IsNullOrWhiteSpace(chunkIndex)
                         ? $"{sourceType}: {sourceLabel} in #{channelName}"
                         : $"{sourceType}: {sourceLabel} chunk {chunkIndex} in #{channelName}";
-                    return new PineconeKnowledgeMatch(source, text, match.Score);
+                    return new PineconeKnowledgeMatch(source, text, match.Score, attachmentId);
                 })
                 .Where(match => !string.IsNullOrWhiteSpace(match.Text))
                 .ToArray();
@@ -130,14 +134,24 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
     {
         try
         {
-            await GetIndex().DeleteAsync(new DeleteRequest
+            foreach (var index in GetIndexes())
             {
-                Namespace = ResolveNamespace(workspaceId),
-                Filter = new Metadata
+                try
                 {
-                    ["attachmentId"] = new Metadata { ["$eq"] = attachmentId.ToString("D") }
+                    await index.DeleteAsync(new DeleteRequest
+                    {
+                        Namespace = ResolveNamespace(workspaceId),
+                        Filter = new Metadata
+                        {
+                            ["attachmentId"] = new Metadata { ["$eq"] = attachmentId.ToString("D") }
+                        }
+                    });
                 }
-            });
+                catch (Exception ex) when (IsNamespaceNotFound(ex))
+                {
+                    // The namespace is already absent in this index, so the delete is complete.
+                }
+            }
         }
         catch (PineconeVectorStoreException)
         {
@@ -153,7 +167,17 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
     {
         try
         {
-            await GetIndex().DeleteNamespaceAsync(ResolveNamespace(workspaceId));
+            foreach (var index in GetIndexes())
+            {
+                try
+                {
+                    await index.DeleteNamespaceAsync(ResolveNamespace(workspaceId));
+                }
+                catch (Exception ex) when (IsNamespaceNotFound(ex))
+                {
+                    // The namespace is already absent in this index, so the delete is complete.
+                }
+            }
         }
         catch (PineconeVectorStoreException)
         {
@@ -165,7 +189,7 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
         }
     }
 
-    private IndexClient GetIndex()
+    private IndexClient GetIndex(int? embeddingDimension = null)
     {
         if (!configuration.GetValue("Pinecone:Enabled", false))
         {
@@ -178,13 +202,74 @@ public class PineconeVectorStore(IConfiguration configuration) : IPineconeVector
             throw new PineconeVectorStoreException("Pinecone API key is not configured.");
         }
 
-        var indexName = configuration["Pinecone:IndexName"];
+        var indexName = ResolveIndexName(embeddingDimension);
         if (string.IsNullOrWhiteSpace(indexName))
         {
             throw new PineconeVectorStoreException("Pinecone index name is not configured.");
         }
 
         return new PineconeClient(apiKey).Index(indexName);
+    }
+
+    private IReadOnlyCollection<IndexClient> GetIndexes()
+    {
+        var apiKey = configuration["Pinecone:ApiKey"];
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new PineconeVectorStoreException("Pinecone API key is not configured.");
+        }
+
+        var client = new PineconeClient(apiKey);
+        return ResolveConfiguredIndexNames()
+            .Select(indexName => client.Index(indexName))
+            .ToArray();
+    }
+
+    private string? ResolveIndexName(int? embeddingDimension)
+    {
+        if (embeddingDimension == 1536)
+        {
+            return configuration["Pinecone:IndexName1536"]
+                ?? configuration["Pinecone:GitHubIndexName"]
+                ?? configuration["Pinecone:IndexName"];
+        }
+
+        if (embeddingDimension == 3072)
+        {
+            return configuration["Pinecone:IndexName3072"]
+                ?? configuration["Pinecone:GeminiIndexName"]
+                ?? configuration["Pinecone:IndexName"];
+        }
+
+        return configuration["Pinecone:IndexName"];
+    }
+
+    private IReadOnlyCollection<string> ResolveConfiguredIndexNames()
+    {
+        return new[]
+            {
+                configuration["Pinecone:IndexName"],
+                configuration["Pinecone:IndexName1536"],
+                configuration["Pinecone:GitHubIndexName"],
+                configuration["Pinecone:IndexName3072"],
+                configuration["Pinecone:GeminiIndexName"]
+            }
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsNamespaceNotFound(Exception exception)
+    {
+        if (exception is PineconeApiException pineconeApiException)
+        {
+            var body = Convert.ToString(pineconeApiException.Body);
+            return pineconeApiException.StatusCode == 5
+                && (body?.Contains("namespace", StringComparison.OrdinalIgnoreCase) ?? false);
+        }
+
+        return exception.InnerException is not null && IsNamespaceNotFound(exception.InnerException);
     }
 
     private string ResolveNamespace(Guid workspaceId)

@@ -269,6 +269,7 @@ export const admin = {
 export const ai = {
   command: (payload) => request({ method: "POST", url: "/api/ai/command", data: payload }),
   channelCommand: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/ai`, data: payload }),
+  shareChannelResult: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/ai/share`, data: payload }),
   channelAttachments: (channelId) => request({ method: "GET", url: `/api/channels/${channelId}/attachments` }),
   uploadChannelAttachment: (channelId, payload) => request({ method: "POST", url: `/api/channels/${channelId}/attachments`, data: payload }),
   reindexChannelAttachment: (channelId, attachmentId) => request({ method: "POST", url: `/api/channels/${channelId}/attachments/${attachmentId}/index` }),
