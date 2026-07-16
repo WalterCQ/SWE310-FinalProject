@@ -51,3 +51,8 @@ tools/agent-skills/ppt-master/scripts/image_gen.py
 tools/agent-skills/ppt-master/scripts/notes_to_audio.py
 tools/agent-skills/ppt-master/scripts/pptx_intake.py
 tools/agent-skills/md-to-docx/
+
+# Local coursework submission copies and runtime keys
+/SWE310_Team5_GroupProject/
+/SWE310_Team5_GroupProject.zip
+/backend/DataProtectionKeys/
