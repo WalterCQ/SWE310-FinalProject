@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const apiTarget = env.VITE_DEV_PROXY_TARGET || "https://taskflow-connect-06221341-feb9.azurewebsites.net";
+  const apiTarget = env.VITE_DEV_PROXY_TARGET || "http://localhost:5134";
 
   return {
     server: {

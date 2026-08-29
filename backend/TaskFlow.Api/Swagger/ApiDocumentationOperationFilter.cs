@@ -407,7 +407,7 @@ public class ApiDocumentationOperationFilter : IOperationFilter
         operation.Responses.Clear();
         operation.Responses.Add(doc.SuccessStatusCode.ToString(), CreateResponse(doc.SuccessDescription, doc.DataType, context));
         operation.Responses.Add("400", CreateResponse("Validation failed. Check required fields, string length limits, enum values, email format, GUID route values, and business rules such as assignee project membership or duplicate membership.", ErrorResponseType, context));
-        operation.Responses.Add("401", CreateResponse("Authentication is required. In production this should be a valid Bearer JWT; local development may use the configured fallback user.", ErrorResponseType, context));
+        operation.Responses.Add("401", CreateResponse("Authentication is required. Use a valid Bearer JWT unless the local development fallback is explicitly enabled.", ErrorResponseType, context));
         operation.Responses.Add("403", CreateResponse("The current user is authenticated but does not have the required workspace, project, channel, or task permission.", ErrorResponseType, context));
         operation.Responses.Add("404", CreateResponse("The resource was not found or is intentionally hidden because the current user cannot access it.", ErrorResponseType, context));
     }

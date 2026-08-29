@@ -37,7 +37,7 @@ const notificationMessageKeys = {
     "notifications.seed.newMessageDemoChatMessage",
   "Projects, task board, channels, and dashboard charts are ready for the frontend demo.":
     "notifications.seed.workspaceDemoDataLoadedMessage",
-  "Open Dashboard, Projects, Tasks, Channels, AI Assistant, and Notifications to show live Azure data.":
+  "Open Dashboard, Projects, Tasks, Channels, AI Assistant, and Notifications to review the complete collaboration workflow.":
     "notifications.seed.demoWorkspaceReadyMessage",
   "Record the dashboard, task creation, chat, notification read state, and AI project summary.":
     "notifications.seed.presentationChecklistMessage",

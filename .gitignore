@@ -30,7 +30,7 @@ appsettings.Development.json
 # Dependency directories
 node_modules/
 
-# 作业无关，建议不上传
+# Local coursework artifacts
 artifacts/
 logs.zip
 logs_extracted/
@@ -39,7 +39,7 @@ presentation/
 *.pdf
 demo_video.mp4
 
-# AI 功能不需要的工具资料，建议不上传
+# Optional tool reference material
 tools/agent-skills/ppt-master/references/
 tools/agent-skills/ppt-master/workflows/
 tools/agent-skills/ppt-master/templates/

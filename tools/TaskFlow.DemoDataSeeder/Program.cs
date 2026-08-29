@@ -8,7 +8,7 @@ using TaskFlow.Api.Services.Interfaces;
 var connectionString = Environment.GetEnvironmentVariable("TASKFLOW_AZURE_SQL_CONNECTION_STRING");
 if (string.IsNullOrWhiteSpace(connectionString))
 {
-    Console.Error.WriteLine("Missing TASKFLOW_AZURE_SQL_CONNECTION_STRING. Set it to the Azure SQL connection string before running this seeder.");
+    Console.Error.WriteLine("Missing TASKFLOW_AZURE_SQL_CONNECTION_STRING. Set it to the target SQL Server connection string before running this seeder.");
     return 1;
 }
 
@@ -164,7 +164,7 @@ static async Task SeedWorkspaceAsync(AppDbContext dbContext, Guid ownerUserId)
     }
 
     workspace.Name = DemoDataIds.WorkspaceName;
-    workspace.Description = "Shared Azure demo workspace for the SWE310 TaskFlow final project.";
+    workspace.Description = "Shared demo workspace for the SWE310 TaskFlow final project.";
     workspace.CreatedByUserId = ownerUserId;
     workspace.UpdatedAtUtc = DateTime.UtcNow;
 }
@@ -175,7 +175,7 @@ static async Task SeedChannelsAsync(AppDbContext dbContext, Guid ownerUserId)
     {
         new SeedChannel(DemoDataIds.GeneralChannelId, "general", "Daily delivery notes and presentation coordination.", false, -9),
         new SeedChannel(DemoDataIds.FrontendChannelId, "frontend", "Dashboard, task board, and validation UI discussion.", false, -8),
-        new SeedChannel(DemoDataIds.ApiChannelId, "api-integration", "Backend endpoint, Azure, and Swagger integration updates.", false, -7),
+        new SeedChannel(DemoDataIds.ApiChannelId, "api-integration", "Backend endpoint, authentication, and Swagger integration updates.", false, -7),
         new SeedChannel(DemoDataIds.ReviewChannelId, "demo-review", "Private rehearsal notes for the final recording.", true, -6)
     };
 
@@ -207,12 +207,12 @@ static async Task SeedProjectsAsync(AppDbContext dbContext, Guid ownerUserId)
         new SeedProject(
             DemoDataIds.FrontendProjectId,
             "Frontend walkthrough",
-            "Show live Azure data across dashboard, workspace cards, task forms, and notification states.",
+            "Show shared workspace data across dashboard, workspace cards, task forms, and notification states.",
             ProjectStatus.Active,
             DateTime.UtcNow.AddDays(4)),
         new SeedProject(
             DemoDataIds.BackendProjectId,
-            "API and Azure integration",
+            "API and data integration",
             "Keep authentication, authorization, SQL Server data, and Swagger behavior stable for the final demo.",
             ProjectStatus.Active,
             DateTime.UtcNow.AddDays(2)),
@@ -261,7 +261,7 @@ static async Task SeedTasksAsync(AppDbContext dbContext, IReadOnlyDictionary<str
             Guid.Parse("e5752ed6-70a2-4685-aa6e-7e7a9d37b632"),
             DemoDataIds.FrontendProjectId,
             "Record dashboard walkthrough",
-            "Show stats, status chart, priority chart, recent activity, and active project progress using Azure data.",
+            "Show stats, status chart, priority chart, recent activity, and active project progress using seeded data.",
             TaskItemStatus.InProgress,
             TaskPriority.High,
             "oday@taskflow.com",
@@ -297,7 +297,7 @@ static async Task SeedTasksAsync(AppDbContext dbContext, IReadOnlyDictionary<str
             Guid.Parse("ba47a50d-a65e-4479-9a87-5c07fc16f8f7"),
             DemoDataIds.AiProjectId,
             "Prepare AI risk summary prompt",
-            "Use overdue tasks and completion percentage to demonstrate deterministic AI fallback output.",
+            "Use overdue tasks and completion percentage to demonstrate TaskFlow AI risk summaries.",
             TaskItemStatus.InProgress,
             TaskPriority.Medium,
             "sarah@taskflow.com",
@@ -361,11 +361,11 @@ static async Task SeedMessagesAsync(AppDbContext dbContext, IReadOnlyDictionary<
 {
     var messages = new[]
     {
-        new SeedMessage(Guid.Parse("3bcb1bb4-792c-4bd2-a7d9-9f6e48eaf4e5"), DemoDataIds.GeneralChannelId, "demo@taskflow.com", "Azure demo data is loaded. Use the shared workspace for every feature screen.", -180),
+        new SeedMessage(Guid.Parse("3bcb1bb4-792c-4bd2-a7d9-9f6e48eaf4e5"), DemoDataIds.GeneralChannelId, "demo@taskflow.com", "Demo data is loaded. Use the shared workspace for every feature screen.", -180),
         new SeedMessage(Guid.Parse("1e54589c-5e96-466c-979b-fb2a3b98e746"), DemoDataIds.GeneralChannelId, "oday@taskflow.com", "Dashboard charts now have task status, priority, overdue, and activity examples.", -150),
         new SeedMessage(Guid.Parse("90dfdbdb-120b-4c2a-b05a-3355f7ec9607"), DemoDataIds.FrontendChannelId, "oday@taskflow.com", "I will show login, dashboard, task creation, channels, notifications, and AI in that order.", -110),
         new SeedMessage(Guid.Parse("2a64a8dd-8c9c-40e7-b950-d30ccce94ffc"), DemoDataIds.ApiChannelId, "john@taskflow.com", "The seeder grants workspace, project, and channel access to all existing users.", -90),
-        new SeedMessage(Guid.Parse("69f43fc7-d795-4f98-8b90-82134229ed9d"), DemoDataIds.ApiChannelId, "sarah@taskflow.com", "AI fallback can summarize project risk from the seeded completion and overdue counts.", -60),
+        new SeedMessage(Guid.Parse("69f43fc7-d795-4f98-8b90-82134229ed9d"), DemoDataIds.ApiChannelId, "sarah@taskflow.com", "TaskFlow AI can summarize project risk from the seeded completion and overdue counts.", -60),
         new SeedMessage(Guid.Parse("455e8a7a-9339-4a7e-a360-95ff2686b70a"), DemoDataIds.ReviewChannelId, "demo@taskflow.com", "Private channel access is included so reviewers can see the private chat path too.", -30)
     };
 
@@ -395,7 +395,7 @@ static async Task SeedActivityLogsAsync(AppDbContext dbContext, Guid ownerUserId
     var activityLogs = new[]
     {
         new SeedActivityLog(Guid.Parse("96d24d41-cd05-4f8b-b113-f149277c2feb"), "Created", "Workspace", DemoDataIds.WorkspaceId, "Demo workspace prepared for all users.", -5),
-        new SeedActivityLog(Guid.Parse("79a3070f-2df0-4efe-9c7c-30ce713a174d"), "Updated", "Project", DemoDataIds.BackendProjectId, "Azure API smoke-test task moved to blocked for risk evidence.", -4),
+        new SeedActivityLog(Guid.Parse("79a3070f-2df0-4efe-9c7c-30ce713a174d"), "Updated", "Project", DemoDataIds.BackendProjectId, "API smoke-test task moved to blocked for risk evidence.", -4),
         new SeedActivityLog(Guid.Parse("7f5bec67-85e5-45d3-a8b1-c0453766375f"), "Completed", "Task", Guid.Parse("76e549e6-f432-4d95-bc18-213c0cc955c1"), "Confirmed demo workspace membership coverage.", -3),
         new SeedActivityLog(Guid.Parse("8288f8ef-c089-4574-bd55-2c52de0eda76"), "Added", "Message", DemoDataIds.GeneralChannelId, "Frontend route order confirmed for recording.", -2),
         new SeedActivityLog(Guid.Parse("25d08c2c-1785-498f-a9e6-4ce2a3c86c16"), "Generated", "AI Summary", DemoDataIds.AiProjectId, "AI context now includes messages, tasks, and project dashboard counts.", -1)

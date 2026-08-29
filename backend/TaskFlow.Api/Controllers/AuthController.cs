@@ -44,7 +44,7 @@ public class AuthController (AppDbContext dbContext, IConfiguration configuratio
 
         var message = demoAccessGranted
             ? "Registration successful. Please log in."
-            : "Registration successful. Demo workspace is not available yet; run the Azure demo data seeder before showcasing shared data.";
+            : "Registration successful. Demo workspace is not available; run the demo data seeder before showcasing shared data.";
 
         return Ok(ApiResponse.NoData(message));
     }

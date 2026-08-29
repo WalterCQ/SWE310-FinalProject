@@ -45,7 +45,7 @@ builder.Services.AddSwaggerGen(options =>
     });
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Example: Bearer {token}. Development can use the configured fallback user until the login module is connected.",
+        Description = "JWT Authorization header using the Bearer scheme. Example: Bearer {token}. A valid token is required unless the local development fallback is explicitly enabled.",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.Http,

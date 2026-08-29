@@ -129,7 +129,7 @@ public static class DemoDataAccess
         {
             new NotificationTemplate(
                 "Demo workspace is ready",
-                "Open Dashboard, Projects, Tasks, Channels, AI Assistant, and Notifications to show live Azure data.",
+                "Open Dashboard, Projects, Tasks, Channels, AI Assistant, and Notifications to review the complete collaboration workflow.",
                 NotificationType.General,
                 false,
                 now.AddMinutes(-12)),
